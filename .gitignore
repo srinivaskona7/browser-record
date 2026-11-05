@@ -1,0 +1,25 @@
+# Dependencies and build output
+/node_modules/
+/dist/
+/coverage/
+*.tsbuildinfo
+
+# Local recordings, originals, proxies and exports are never committed.
+/recordings/
+/exports/
+/media/originals/
+/media/proxies/
+/.local/
+
+# OS and editor noise
+.DS_Store
+*.local
+*.log
+.idea/
+.vscode/
+
+# Workspace manifests written by the studio at runtime
+/projects/
+
+# Playwright MCP session artifacts (console logs, page snapshots, screenshots)
+.playwright-mcp/

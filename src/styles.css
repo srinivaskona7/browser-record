@@ -1,0 +1,1412 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Inter var', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --color-ink-950: #080a0c;
+  --color-ink-900: #0c1013;
+  --color-ink-850: #11161a;
+  --color-ink-800: #161c21;
+  --color-ink-700: #1f272e;
+  --color-ink-600: #2c363f;
+  --color-ink-500: #47535e;
+  --color-ink-400: #6b7783;
+  --color-ink-300: #98a3ae;
+  --color-ink-200: #c4ccd4;
+  --color-ink-100: #e6eaee;
+  --color-accent-500: #ffb020;
+  --color-accent-400: #ffc44d;
+  --color-accent-300: #ffd47a;
+  --color-cyan-500: #3ac8d4;
+  --color-danger-500: #ef5b5b;
+  --color-ok-500: #4ec9a6;
+}
+
+:root {
+  color-scheme: dark;
+  --surface-0: #0a0d10;
+  --surface-1: #10151a;
+  --surface-2: #161d23;
+  --surface-3: #1d262d;
+  --line: #263039;
+  --text-1: #eef2f5;
+  --text-2: #a7b2bb;
+  --text-3: #7c8792;
+  --accent: #ffb020;
+  --accent-ink: #1a1206;
+  --cyan: #3ac8d4;
+  --danger: #ef5b5b;
+  --ok: #4ec9a6;
+  --shadow: 0 18px 40px -22px rgba(0, 0, 0, 0.85);
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --surface-0: #f4f6f8;
+  --surface-1: #ffffff;
+  --surface-2: #eef1f4;
+  --surface-3: #e3e8ed;
+  --line: #d3dae1;
+  --text-1: #10161b;
+  --text-2: #48545f;
+  --text-3: #77838e;
+  --accent: #b46f00;
+  --accent-ink: #fffaf0;
+  --cyan: #0a7d88;
+  --danger: #c33131;
+  --ok: #17795f;
+  --shadow: 0 16px 34px -24px rgba(13, 24, 33, 0.45);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--surface-0);
+  color: var(--text-1);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'cv02', 'cv03', 'cv04';
+}
+
+::selection {
+  background: color-mix(in oklab, var(--accent) 45%, transparent);
+  color: var(--text-1);
+}
+
+:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, var(--surface-1), var(--surface-0));
+  flex: 0 0 auto;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.brand-mark {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: radial-gradient(circle at 30% 25%, #ffd47a, #ffb020 45%, #b46f00 100%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+  position: relative;
+}
+
+.brand-mark::after {
+  content: '';
+  position: absolute;
+  inset: 7px;
+  border-radius: 50%;
+  border: 2px solid rgba(26, 18, 6, 0.75);
+}
+
+.nav-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+
+.nav-tab {
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  padding: 6px 14px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.nav-tab[aria-current='page'] {
+  background: var(--surface-0);
+  color: var(--text-1);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06), 0 4px 10px -8px rgba(0, 0, 0, 0.8);
+}
+
+.nav-tab:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.page {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 24px clamp(16px, 3vw, 40px) 48px;
+}
+
+.page-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 22px;
+  flex-wrap: wrap;
+}
+
+.page-title {
+  font-size: clamp(22px, 2.4vw, 30px);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  margin: 0 0 4px;
+}
+
+.page-subtitle {
+  color: var(--text-2);
+  font-size: 13.5px;
+  max-width: 74ch;
+  line-height: 1.55;
+  margin: 0;
+}
+
+.panel {
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.panel-title {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.panel-body {
+  padding: 16px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text-1);
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
+  white-space: nowrap;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--surface-3);
+  border-color: color-mix(in oklab, var(--line) 60%, var(--text-3));
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: color-mix(in oklab, var(--accent) 70%, black);
+  color: var(--accent-ink);
+  font-weight: 650;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--accent) 88%, white);
+}
+
+.btn-danger {
+  background: transparent;
+  border-color: color-mix(in oklab, var(--danger) 50%, var(--line));
+  color: var(--danger);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--danger) 14%, transparent);
+}
+
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-2);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+
+.btn-sm {
+  padding: 5px 10px;
+  font-size: 12px;
+  border-radius: 7px;
+}
+
+.btn-icon {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-2);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.field-hint {
+  font-size: 12.5px;
+  color: var(--text-3);
+  line-height: 1.45;
+}
+
+.input,
+.select,
+.textarea {
+  background: var(--surface-0);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--text-1);
+  width: 100%;
+  transition: border-color 120ms ease;
+}
+
+.input:focus,
+.select:focus,
+.textarea:focus {
+  border-color: var(--cyan);
+  outline: none;
+}
+
+.input[type='range'] {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  accent-color: var(--accent);
+}
+
+.textarea {
+  resize: vertical;
+  min-height: 72px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.grid-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.hint-card {
+  background: color-mix(in oklab, var(--cyan) 7%, var(--surface-1));
+  border: 1px solid color-mix(in oklab, var(--cyan) 25%, var(--line));
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-2);
+}
+
+.warn-card {
+  background: color-mix(in oklab, var(--accent) 8%, var(--surface-1));
+  border: 1px solid color-mix(in oklab, var(--accent) 30%, var(--line));
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-2);
+}
+
+.danger-card {
+  background: color-mix(in oklab, var(--danger) 8%, var(--surface-1));
+  border: 1px solid color-mix(in oklab, var(--danger) 32%, var(--line));
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-2);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--line);
+  color: var(--text-2);
+  background: var(--surface-2);
+  letter-spacing: 0.02em;
+}
+
+.badge-ok {
+  color: var(--ok);
+  border-color: color-mix(in oklab, var(--ok) 40%, var(--line));
+  background: color-mix(in oklab, var(--ok) 10%, transparent);
+}
+
+.badge-warn {
+  color: var(--accent);
+  border-color: color-mix(in oklab, var(--accent) 40%, var(--line));
+  background: color-mix(in oklab, var(--accent) 10%, transparent);
+}
+
+.badge-danger {
+  color: var(--danger);
+  border-color: color-mix(in oklab, var(--danger) 40%, var(--line));
+  background: color-mix(in oklab, var(--danger) 10%, transparent);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.timecode {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stat-label {
+  font-size: 11px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  font-weight: 600;
+}
+
+.stat-value {
+  font-size: 15px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+table.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+table.table th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-3);
+  font-weight: 650;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+table.table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid color-mix(in oklab, var(--line) 60%, transparent);
+  color: var(--text-2);
+  vertical-align: top;
+}
+
+table.table td:first-child {
+  color: var(--text-1);
+  font-weight: 500;
+}
+
+/* ---------------- Editor layout ---------------- */
+
+.editor {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr) 300px;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+  padding: 10px;
+}
+
+.editor-side {
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.editor-center {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.preview-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at 50% 0%, #141c22, #07090b 70%);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  position: relative;
+}
+
+.preview-canvas {
+  max-width: 100%;
+  max-height: 100%;
+  display: block;
+  box-shadow: 0 20px 60px -30px rgba(0, 0, 0, 0.9);
+}
+
+.transport {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  flex-wrap: wrap;
+}
+
+.timeline-shell {
+  grid-column: 1 / -1;
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 220px;
+  height: 34vh;
+}
+
+.timeline-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+  background: var(--surface-1);
+}
+
+.timeline-scroll {
+  flex: 1 1 auto;
+  overflow: auto;
+  position: relative;
+}
+
+.timeline-grid {
+  position: relative;
+  min-width: 100%;
+}
+
+.track-row {
+  display: flex;
+  border-bottom: 1px solid color-mix(in oklab, var(--line) 70%, transparent);
+  position: relative;
+}
+
+.track-head {
+  width: 150px;
+  flex: 0 0 150px;
+  padding: 6px 10px;
+  border-right: 1px solid var(--line);
+  background: var(--surface-1);
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  justify-content: center;
+}
+
+.track-name {
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.track-lane {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 56px;
+}
+
+.clip {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  border-radius: 7px;
+  border: 1px solid color-mix(in oklab, var(--cyan) 35%, var(--line));
+  background: linear-gradient(180deg, color-mix(in oklab, var(--cyan) 24%, var(--surface-2)), color-mix(in oklab, var(--cyan) 10%, var(--surface-2)));
+  overflow: hidden;
+  cursor: grab;
+  user-select: none;
+  display: flex;
+  flex-direction: column;
+  min-width: 2px;
+}
+
+.clip[data-selected='true'] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 16px -6px var(--accent);
+}
+
+.clip[data-kind='title'] {
+  background: linear-gradient(180deg, color-mix(in oklab, var(--accent) 30%, var(--surface-2)), color-mix(in oklab, var(--accent) 12%, var(--surface-2)));
+  border-color: color-mix(in oklab, var(--accent) 45%, var(--line));
+}
+
+.clip[data-track='audio'] {
+  background: linear-gradient(180deg, color-mix(in oklab, var(--ok) 26%, var(--surface-2)), color-mix(in oklab, var(--ok) 8%, var(--surface-2)));
+  border-color: color-mix(in oklab, var(--ok) 42%, var(--line));
+}
+
+.clip-label {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 6px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-1);
+}
+
+.clip-waveform {
+  flex: 1 1 auto;
+  min-height: 0;
+  opacity: 0.55;
+}
+
+.clip-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  cursor: ew-resize;
+  background: color-mix(in oklab, var(--accent) 45%, transparent);
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.clip:hover .clip-handle {
+  opacity: 1;
+}
+
+.ruler {
+  height: 28px;
+  font-size: 12px;
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--accent);
+  z-index: 6;
+  pointer-events: none;
+}
+
+.playhead::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -5px;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 7px solid var(--accent);
+}
+
+.meter {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+  position: relative;
+}
+
+.meter-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--ok), var(--accent) 75%, var(--danger));
+  transition: width 60ms linear;
+}
+
+.progress {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--cyan), var(--accent));
+  transition: width 140ms linear;
+}
+
+.list-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+}
+
+.list-item:hover {
+  background: var(--surface-2);
+}
+
+.list-item[data-active='true'] {
+  background: var(--surface-2);
+  border-color: var(--line);
+}
+
+.cue {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.cue:hover {
+  background: var(--surface-2);
+}
+
+.cue[data-active='true'] {
+  border-color: color-mix(in oklab, var(--accent) 45%, var(--line));
+  background: color-mix(in oklab, var(--accent) 8%, var(--surface-2));
+}
+
+.cue-time {
+  font-size: 10.5px;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+}
+
+.cue-text {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text-1);
+}
+
+.toast {
+  position: fixed;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+  color: var(--text-1);
+  padding: 10px 16px;
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  font-size: 13px;
+  z-index: 200;
+  max-width: min(560px, 92vw);
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.toast[data-tone='error'] {
+  border-color: color-mix(in oklab, var(--danger) 55%, var(--line));
+}
+
+.toast[data-tone='success'] {
+  border-color: color-mix(in oklab, var(--ok) 55%, var(--line));
+}
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(3, 6, 8, 0.68);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 150;
+  padding: 20px;
+}
+
+.dialog {
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: 0 40px 80px -40px black;
+  width: min(560px, 100%);
+  max-height: 88vh;
+  overflow: auto;
+}
+
+.dialog-wide {
+  width: min(880px, 100%);
+}
+
+kbd {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.matrix-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.dot-ok {
+  background: var(--ok);
+  box-shadow: 0 0 8px color-mix(in oklab, var(--ok) 60%, transparent);
+}
+
+.dot-warn {
+  background: var(--accent);
+  box-shadow: 0 0 8px color-mix(in oklab, var(--accent) 60%, transparent);
+}
+
+.dot-off {
+  background: var(--text-3);
+}
+
+.scroll-thin::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: var(--surface-3);
+  border-radius: 999px;
+  border: 2px solid var(--surface-1);
+}
+
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (max-width: 1180px) {
+  .editor {
+    grid-template-columns: 210px minmax(0, 1fr);
+  }
+  .editor-right {
+    display: none;
+  }
+}
+
+@media (max-width: 780px) {
+  .editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .editor-side {
+    display: none;
+  }
+}
+
+/* Application chrome */
+.app-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar-meta {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.topbar-workspace {
+  font-size: 11.5px;
+  color: var(--text-3);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toast-stack {
+  position: fixed;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 200;
+  pointer-events: none;
+}
+
+.toast-stack .toast {
+  position: static;
+  transform: none;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+/* The floating take bar owns the bottom edge while a take runs; lift toasts
+   above it so a warning never buries Stop. */
+.app-shell:has(.rec-dock) .toast-stack {
+  bottom: 104px;
+}
+
+@media (max-width: 860px) {
+  .topbar {
+    flex-wrap: wrap;
+  }
+  .topbar-meta {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
+
+/* Two-column working areas collapse before they squeeze content. */
+.split-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: 16px;
+  align-items: start;
+  max-width: 1280px;
+}
+
+@media (max-width: 980px) {
+  .split-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Tables stay readable on narrow screens without breaking the page width. */
+.table-scroll {
+  overflow-x: auto;
+}
+
+/* Live recording bar: pinned while a take runs so the stop control and the
+   live source state never scroll out of reach. */
+.rec-bar {
+  position: sticky;
+  top: 8px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in oklab, var(--danger) 42%, var(--line));
+  background: color-mix(in oklab, var(--danger) 9%, var(--surface-1));
+  backdrop-filter: blur(10px);
+}
+
+.rec-bar.paused {
+  border-color: color-mix(in oklab, var(--warn, #d9a441) 45%, var(--line));
+  background: color-mix(in oklab, var(--warn, #d9a441) 8%, var(--surface-1));
+}
+
+/* Self-view bubble during a take: the monitor can scroll out of sight, this cannot. */
+.rec-selfview {
+  position: fixed;
+  right: 20px;
+  bottom: 88px;
+  width: 148px;
+  height: 148px;
+  z-index: 55;
+  overflow: hidden;
+  background: #11161a;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  /* Draggable like Cap's camera bubble; touch-action stops a phone drag from scrolling the page. */
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.rec-selfview:active {
+  cursor: grabbing;
+}
+
+.rec-selfview video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Floating Loom/Cap-style mini bar: always in view without covering the page. */
+.rec-dock {  position: fixed;
+  left: 50%;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  top: auto;
+  transform: translateX(-50%);
+  z-index: 60;
+  margin: 0;
+  padding: 8px 10px;
+  flex-wrap: nowrap;
+  gap: 10px;
+  max-width: calc(100vw - 16px);
+  border-radius: 999px;
+  border-color: var(--line);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(10px);
+}
+
+.rec-dock-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.rec-dock .rec-timer {
+  font-size: 18px;
+  letter-spacing: 0.02em;
+}
+
+.rec-markers {
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.rec-dock .rec-restart {
+  font-size: 16px;
+  line-height: 1;
+  padding-inline: 8px;
+}
+
+.rec-dock-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.rec-dock-actions::-webkit-scrollbar {
+  display: none;
+}
+
+.rec-dock-actions .btn {
+  flex: none;
+}
+
+/* One treatment for every control in the bar: visible chips, and red reserved
+   for the single destructive action so Stop reads as primary. */
+.rec-dock-actions .btn-ghost {
+  background: var(--surface-2);
+  border-color: var(--line);
+  color: var(--text-1);
+}
+
+.rec-dock-actions .btn-danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--accent-ink);
+  font-weight: 650;
+}
+
+.rec-dock-actions .btn-danger:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--danger) 88%, white);
+  border-color: color-mix(in oklab, var(--danger) 88%, white);
+}
+
+/* Keep the floating bar from covering the last row of the page. */
+.page:has(.rec-dock) {
+  padding-bottom: 96px;
+}
+
+@media (max-width: 640px) {
+  .rec-dock {
+    left: 8px;
+    right: 8px;
+    bottom: 10px;
+    transform: none;
+    max-width: none;
+    flex-wrap: wrap;
+    border-radius: 16px;
+    gap: 6px;
+    padding: 6px 8px;
+  }
+
+  .rec-dock-status {
+    flex: 1 1 auto;
+  }
+
+  .rec-dock-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: center;
+    row-gap: 6px;
+    overflow: visible;
+  }
+
+  .rec-dock .field-hint {
+    display: none;
+  }
+
+  .rec-dock .rec-timer {
+    font-size: 16px;
+  }
+
+  .rec-dock-actions .btn {
+    padding-inline: 10px;
+    min-height: 44px;
+  }
+
+  .rec-dock-actions .btn-danger {
+    margin-left: auto;
+  }
+
+  .app-shell:has(.rec-dock) .toast-stack {
+    bottom: 118px;
+  }
+
+  .rec-selfview {
+    width: 96px;
+    height: 96px;
+    right: 12px;
+    bottom: 122px;
+  }
+}
+
+.rec-state {
+  font-size: 12px;
+  letter-spacing: 0.09em;
+}
+
+.rec-timer {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+}
+
+.rec-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.rec-dot {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--danger);
+  animation: rec-pulse 1.4s ease-in-out infinite;
+}
+
+.rec-dot.small {
+  width: 7px;
+  height: 7px;
+}
+
+.rec-dot.still {
+  animation: none;
+  opacity: 0.75;
+  background: var(--text-3);
+}
+
+.rec-bar.paused .rec-dot {
+  background: var(--warn, #d9a441);
+}
+
+@keyframes rec-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rec-dot {
+    animation: none;
+  }
+}
+
+/* Countdown covers the monitor so the presenter sees the number where the
+   recording will appear. */
+.rec-countdown {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-mono);
+  font-size: clamp(56px, 12vw, 120px);
+  font-weight: 700;
+  color: #fff;
+  background: rgb(4 8 12 / 45%);
+  pointer-events: none;
+}
+
+.rec-monitor-tag {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: #fff;
+  background: rgb(12 6 6 / 72%);
+  border: 1px solid color-mix(in oklab, var(--danger) 55%, transparent);
+}
+
+.rec-monitor-tag.paused {
+  border-color: color-mix(in oklab, var(--warn, #d9a441) 55%, transparent);
+}
+
+/* Primary action for a long form: the Record page is taller than the viewport,
+   so Start stays reachable without scrolling to the bottom. */
+.start-dock {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 90;
+  padding: 8px;
+  border-radius: 14px;
+  background: color-mix(in oklab, var(--surface-1) 88%, transparent);
+  border: 1px solid var(--line);
+  box-shadow: 0 18px 40px -18px black;
+  backdrop-filter: blur(8px);
+}
+
+@media (max-width: 640px) {
+  .start-dock {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+  }
+  .start-dock .btn {
+    width: 100%;
+  }
+}
+
+/* Leave room to scroll past the fixed Start button. */
+.page:has(.start-dock) {
+  padding-bottom: 92px;
+}
+
+/* Dialog actions wrap instead of being clipped: the take-complete dialog has
+   six actions and a fixed 560px width, so a single no-wrap row pushed three of
+   them outside the dialog. */
+.dialog-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.dialog-footer .btn {
+  flex: 0 1 auto;
+}
+
+/* A disabled select looked identical to an enabled one during a take. */
+.select:disabled,
+.input:disabled,
+.textarea:disabled,
+select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  color: var(--text-2);
+}
+
+/* The countdown belongs to the viewport, not the monitor box: when Start is
+   below the fold the monitor was scrolled out of view and the numbers played
+   off-screen. */
+.rec-countdown {
+  position: fixed;
+  z-index: 120;
+  background: rgb(4 8 12 / 62%);
+  backdrop-filter: blur(2px);
+}
+
+/* Narrow screens: keep chrome and the recording bar from eating the viewport. */
+@media (max-width: 640px) {
+  .topbar {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .topbar-meta {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .topbar-meta > * {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+  .nav-tabs {
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .nav-tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .nav-tab {
+    padding: 6px 10px;
+    white-space: nowrap;
+  }
+  .app-main,
+  .page {
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
+  .rec-bar:not(.rec-dock) {
+    gap: 8px;
+    padding: 8px 10px;
+  }
+  /* Three per-source byte chips wrap the bar into five rows at 390px. */
+  .rec-source {
+    display: none;
+  }
+  .rec-timer {
+    font-size: 18px;
+  }
+}
