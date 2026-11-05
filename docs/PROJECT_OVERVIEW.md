@@ -27,7 +27,7 @@ Constraints (from the original spec):
 | Storage | Folder-backed projects (File System Access) with OPFS fallback |
 | Audio | Web Audio chain; silence detection in `src/audio/mixdown.ts` |
 | Captions | Local Whisper via Transformers.js in a module worker |
-| Tests | Vitest (164 passing across 18 test files), `tsc --noEmit`, eslint |
+| Tests | Vitest (172 passing across 19 test files), `tsc --noEmit`, eslint |
 
 Key modules:
 
@@ -149,6 +149,39 @@ All 18 items from the YouTube/Instagram DevOps list and follow-up suggestions ar
 | 17 | Diagram reveal (`addDiagramReveal` + `diagramRevealProgress` step reveal) | Implemented (unit-tested) |
 | 18 | Keyboard overlay for shell and IDE walkthroughs (`addKeystrokeOverlay`) | Implemented (unit-tested) |
 
+### 6b. 30 Creator Editing, Layer, Sound, Look & Social Features (`tests/features30.test.ts`)
+
+1. **Layer Blend Modes (`setClipBlendMode`)** — `normal`, `screen`, `multiply`, `overlay` compositing.
+2. **PiP Placement Presets (`applyPipPreset`)** — `top-left`, `top-right`, `bottom-left`, `bottom-right`, `floating-center`, `cinema-bar`.
+3. **Drop-Shadow & Neon Glow Presets (`applyShadowGlowPreset`)** — `none`, `soft-card`, `deep-studio`, `neon-cyan`, `neon-amber`.
+4. **Track Solo & Unmute All (`soloTrack`, `unmuteAllTracks`)** — Multi-track layer isolation and reset.
+5. **Magnetic Gap Closer (`closeTrackGaps`)** — Ripple-packs clips on unlocked tracks to eliminate black gaps.
+6. **Voice EQ & Mastering Presets (`applyVoicePreset`, `voicePresetOptions`)** — `podcast-warm`, `crisp-tech`, `broadcast-punch`, `de-reverb-tight`, `flat`.
+7. **Procedural Creator SFX Synthesizer (`src/audio/sfx.ts`, `addProceduralSfxClip`)** — Local 16-bit PCM WAV synthesis for `whoosh`, `pop`, `ding`, `keyclick`, `riser`, `success-chime`.
+8. **Auto Audio Fades (`applyAudioFades`)** — Smooth fade-in and fade-out across clips to prevent audio clicks.
+9. **Music Bed Auto-Ducking Setup (`prepareMusicBedTrack`)** — `-14 dB` music bed track with soft fades and sidechain ducking under narration.
+10. **Peak Gain Normalizer (`computeNormalizeGain`, `normalizeClipGain`)** — Target peak dBFS gain calculation and clip normalization.
+11. **Colour Grading Look Presets (`applyColorLookPreset`)** — `neutral`, `cinema-teal`, `warm-creator`, `high-contrast-terminal`, `crisp-daylight`, `noir-mono`, `vibrant-reel`.
+12. **Radial Vignette (`setClipVignette`)** — Adjustable `0..1` edge darkening in `compose.ts`.
+13. **Screen Studio Frame (`applyScreenStudioFrame`)** — Rounded inset desktop frame with studio backdrop padding.
+14. **Watch-Progress Bar Overlay (`addProgressBarOverlay`)** — Top/bottom animated progress bar (`kind: 'progressbar'`).
+15. **Auto Chapter Bumpers from Markers (`addChapterBumpersFromMarkers`)** — Generates numbered section title cards at every marker.
+16. **Batch Cut Transitions (`applyTransitionToAllCuts`)** — Applies `dissolve` / `fade` / `slide` across all cuts on unlocked video tracks.
+17. **Ken Burns Slow Drift (`addKenBurnsDrift`)** — Smooth zoom + pan keyframes for static diagrams and talking heads.
+18. **Spotlight Dimmer Mask (`addSpotlightMask`)** — Darkens the frame outside a highlighted rectangle (`mode: 'spotlight'`).
+19. **Animated Click-Pulse Ring (`addClickPulse`)** — Expanding concentric ripple highlight (`kind: 'pulse'`).
+20. **Camera Bubble Corner Cycling (`cycleCameraCornersOnMarkers`)** — Alternates presenter bubble corners at marker boundaries.
+21. **Auto-Incrementing Step Badge (`addStepBadge`)** — `STEP 1`, `STEP 2`, … badges in the upper-left corner.
+22. **GitHub/DevOps Alert Banners (`addAlertBanner`)** — `warning`, `danger`, `tip`, and `note` admonition callouts.
+23. **Social Handle Follow Pills (`addSocialFollowPill`)** — Branded pills for YouTube, Instagram, GitHub, LinkedIn, and X.
+24. **Lower-Third Topic Ticker (`addTopicTicker`)** — Persistent monospace demo/topic bar.
+25. **Live Countdown Timer Overlay (`addCountdownOverlay`)** — Real-time `MM:SS` ticking countdown (`kind: 'countdown'`).
+26. **1:1 Square Reframe (`reframe1x1`)** — `1080×1080` square layout for Instagram carousels and feeds.
+27. **4:5 Portrait Reframe (`reframe4x5`)** — `1080×1350` vertical feed layout for Instagram and LinkedIn.
+28. **Instagram 1:1, 4:5 & 4K60 Master Export Presets (`insta-square-1080`, `insta-portrait-4x5`, `4k60-master`)** in `src/export/presets.ts`.
+29. **Auto Marker Generator from Captions (`generateMarkersFromCaptions`)** — Detects steps and questions in captions to build chapter markers.
+30. **Creator Pacing & Retention Audit (`auditVideoPacing`)** — 0–100 scorecard evaluating hook placement, cut frequency, overlays, and caption coverage.
+
 ## 7. UI status
 
 - Dense three-column Edit layout (bin, preview and inspector, timeline).
@@ -181,7 +214,7 @@ All 18 items from the YouTube/Instagram DevOps list and follow-up suggestions ar
 ## 10. Verification status
 
 - `npx tsc --noEmit`: clean.
-- `npx vitest run`: 164 passing (18 test files).
+- `npx vitest run`: 172 passing (19 test files).
 - Dev server: `npx vite --port 5199 --strictPort`.
 - Review gate (CLAUDE.md): adversarial reviews run on the last two batches;
   findings fixed. The spec-compliance check is still open because it needs the

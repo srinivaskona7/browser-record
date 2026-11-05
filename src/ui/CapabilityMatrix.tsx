@@ -160,10 +160,28 @@ export const CAPABILITY_ROWS: CapabilityRow[] = [
     detail: 'Switches composition to 1080×1920, places screen above portrait presenter card, and optionally keyframes horizontal panX to follow the presenter.',
   },
   {
+    area: 'Edit',
+    capability: 'Layer blend modes, PiP corner presets, shadow/glow presets, Studio frame & spotlight masks',
+    status: 'implemented',
+    detail: 'Blend modes (normal, screen, multiply, overlay), 6 PiP placement presets, 5 shadow/neon-glow presets, Screen Studio padded desktop frame, radial vignette, Ken Burns drift, and spotlight dimmer masks.',
+  },
+  {
+    area: 'Audio',
+    capability: 'Procedural SFX synthesizer, voice mastering presets & music-bed auto-ducking',
+    status: 'implemented',
+    detail: 'Local 16-bit PCM WAV synthesis for 6 creator SFX (whoosh, pop, ding, keyclick, riser, deploy-chime), 5 voice EQ/compressor presets, soft clip fades, peak gain normalization, and -14 dB music bed setup.',
+  },
+  {
+    area: 'Edit',
+    capability: 'Creator overlays, auto-chapters from captions & retention pacing audit',
+    status: 'implemented',
+    detail: 'Step badges, GitHub admonition alert banners, social follow pills, topic tickers, live countdown overlays, watch-progress bars, click-pulse rings, chapter bumpers, and a 0–100 pacing scorecard.',
+  },
+  {
     area: 'Export',
     capability: 'Shorts / Reels 9:16 preset, marker segment picker & 1280×720 thumbnail PNG',
     status: 'implemented',
-    detail: '1080×1920 MP4 preset with 60 s cap and 60 MB ceiling warnings, marker-to-marker segment extraction for Shorts, and one-click 1280×720 YouTube thumbnail PNG export.',
+    detail: '1080×1920 MP4 preset with 60 s cap and 60 MB ceiling warnings, Instagram 4:5 (1080×1350) and 1:1 (1080×1080) presets, 4K Studio Master (28 Mbps), marker-to-marker segment extraction, and 1280×720 thumbnail PNG export.',
   },
   {
     area: 'Audio',

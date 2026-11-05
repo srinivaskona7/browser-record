@@ -142,3 +142,79 @@ export function dbToLinear(db: number): number {
 export function meterLabel(): string {
   return 'Sample peak / RMS (not integrated LUFS)';
 }
+
+export type VoiceChainPresetId = 'podcast-warm' | 'crisp-tech' | 'broadcast-punch' | 'de-reverb-tight' | 'flat';
+
+/**
+ * Curated voice mastering presets for YouTube tutorials and Instagram Reels.
+ */
+export function voicePresetOptions(preset: VoiceChainPresetId): ProcessingChainOptions {
+  switch (preset) {
+    case 'podcast-warm':
+      return {
+        highPassHz: 75,
+        eq: [
+          { frequency: 140, gainDb: 2.0, q: 0.8, type: 'lowshelf' },
+          { frequency: 320, gainDb: -2.0, q: 1.1, type: 'peaking' },
+          { frequency: 3200, gainDb: 1.8, q: 1.0, type: 'peaking' },
+          { frequency: 8500, gainDb: 1.2, q: 0.7, type: 'highshelf' },
+        ],
+        compressor: { thresholdDb: -22, ratio: 3.2, attack: 0.005, release: 0.16, knee: 6 },
+        limiter: { thresholdDb: -2, ceilingDb: -1 },
+        enabled: true,
+      };
+    case 'crisp-tech':
+      return {
+        highPassHz: 95,
+        eq: [
+          { frequency: 240, gainDb: -2.5, q: 1.0, type: 'peaking' },
+          { frequency: 2800, gainDb: 2.5, q: 1.1, type: 'peaking' },
+          { frequency: 7500, gainDb: 2.0, q: 0.8, type: 'highshelf' },
+        ],
+        compressor: { thresholdDb: -20, ratio: 3.5, attack: 0.004, release: 0.14, knee: 5 },
+        limiter: { thresholdDb: -2, ceilingDb: -1 },
+        enabled: true,
+      };
+    case 'broadcast-punch':
+      return {
+        highPassHz: 85,
+        eq: [
+          { frequency: 120, gainDb: 2.5, q: 0.9, type: 'peaking' },
+          { frequency: 400, gainDb: -2.5, q: 1.2, type: 'peaking' },
+          { frequency: 3500, gainDb: 3.0, q: 1.0, type: 'peaking' },
+        ],
+        compressor: { thresholdDb: -24, ratio: 4.5, attack: 0.003, release: 0.12, knee: 4 },
+        limiter: { thresholdDb: -1.5, ceilingDb: -0.8 },
+        enabled: true,
+      };
+    case 'de-reverb-tight':
+      return {
+        highPassHz: 115,
+        eq: [
+          { frequency: 300, gainDb: -3.5, q: 1.2, type: 'peaking' },
+          { frequency: 550, gainDb: -2.0, q: 1.1, type: 'peaking' },
+          { frequency: 3000, gainDb: 2.0, q: 1.0, type: 'peaking' },
+        ],
+        compressor: { thresholdDb: -18, ratio: 2.5, attack: 0.008, release: 0.22, knee: 6 },
+        limiter: { thresholdDb: -3, ceilingDb: -1 },
+        enabled: true,
+      };
+    case 'flat':
+      return {
+        ...DEFAULT_CHAIN,
+        eq: [],
+        enabled: false,
+      };
+  }
+}
+
+/**
+ * Compute linear gain multiplier to normalize a measured peak dBFS to `targetPeakDb`
+ * (default -1 dBFS), clamped to a safe range [0.1, 4.0].
+ */
+export function computeNormalizeGain(measuredPeakDb: number, targetPeakDb = -1): number {
+  if (!Number.isFinite(measuredPeakDb) || measuredPeakDb <= -80) return 1;
+  const deltaDb = targetPeakDb - measuredPeakDb;
+  const linear = dbToLinear(deltaDb);
+  return Number(Math.max(0.1, Math.min(4, linear)).toFixed(3));
+}

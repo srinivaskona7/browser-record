@@ -64,7 +64,10 @@ export function renderFrame(ctx: Ctx2D, project: Project, options: RenderOptions
       clip.kind === 'sticker' ||
       clip.kind === 'contact' ||
       clip.kind === 'keystroke' ||
-      clip.kind === 'endscreen'
+      clip.kind === 'endscreen' ||
+      clip.kind === 'progressbar' ||
+      clip.kind === 'pulse' ||
+      clip.kind === 'countdown'
     ) {
       overlayClips.push(clip);
       continue;
@@ -115,6 +118,9 @@ export function renderFrame(ctx: Ctx2D, project: Project, options: RenderOptions
     else if (clip.kind === 'contact') drawContactClip(ctx, project, clip, ticks);
     else if (clip.kind === 'keystroke') drawKeystrokeClip(ctx, project, clip, ticks);
     else if (clip.kind === 'endscreen') drawEndScreenClip(ctx, project, clip, ticks);
+    else if (clip.kind === 'progressbar') drawProgressBarClip(ctx, project, clip, ticks);
+    else if (clip.kind === 'pulse') drawPulseClip(ctx, project, clip, ticks);
+    else if (clip.kind === 'countdown') drawCountdownClip(ctx, project, clip, ticks);
   }
 
   if (options.captionsEnabled !== false) {
@@ -159,7 +165,23 @@ function drawMediaClip(
   const opacity = clipOpacity(clip, ticks);
   if (opacity <= 0) return;
 
+  if (clip.effects.backdropPadding && clip.effects.backdropPadding > 0) {
+    ctx.save();
+    ctx.globalAlpha = opacity;
+    ctx.fillStyle = clip.effects.backdropColor ?? '#161b22';
+    ctx.fillRect(region.x, region.y, region.width, region.height);
+    ctx.restore();
+  }
+
   ctx.save();
+  if (clip.transform.blendMode && clip.transform.blendMode !== 'normal') {
+    ctx.globalCompositeOperation =
+      clip.transform.blendMode === 'screen'
+        ? 'screen'
+        : clip.transform.blendMode === 'multiply'
+          ? 'multiply'
+          : 'overlay';
+  }
   ctx.beginPath();
   const radius = Math.min(clip.transform.radius, placement.width / 2, placement.height / 2);
   const reveal =
@@ -196,6 +218,21 @@ function drawMediaClip(
     ctx.restore();
   }
 
+  if (clip.effects.vignette && clip.effects.vignette > 0) {
+    ctx.save();
+    ctx.globalAlpha = opacity * clamp(clip.effects.vignette, 0, 1);
+    const borderW = Math.max(8, Math.min(region.width, region.height) * 0.08);
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
+    ctx.lineWidth = borderW;
+    ctx.strokeRect(
+      region.x + borderW / 2,
+      region.y + borderW / 2,
+      region.width - borderW,
+      region.height - borderW,
+    );
+    ctx.restore();
+  }
+
   for (const mask of clip.masks) drawMask(ctx, mask, region, opacity);
 }
 
@@ -226,7 +263,24 @@ function drawMask(
   if (rect.width <= 0 || rect.height <= 0) return;
   ctx.save();
   ctx.globalAlpha = opacity;
-  if (mask.mode === 'pixelate') {
+  if (mask.mode === 'spotlight') {
+    const dimAlpha = clamp(mask.strength / 100, 0.25, 0.88);
+    ctx.fillStyle = `rgba(0, 0, 0, ${dimAlpha})`;
+    // Top band
+    ctx.fillRect(region.x, region.y, width, Math.max(0, rect.y - region.y));
+    // Bottom band
+    const bottomY = rect.y + rect.height;
+    ctx.fillRect(region.x, bottomY, width, Math.max(0, region.y + height - bottomY));
+    // Left band
+    ctx.fillRect(region.x, rect.y, Math.max(0, rect.x - region.x), rect.height);
+    // Right band
+    const rightX = rect.x + rect.width;
+    ctx.fillRect(rightX, rect.y, Math.max(0, region.x + width - rightX), rect.height);
+
+    ctx.strokeStyle = '#ffd166';
+    ctx.lineWidth = Math.max(2, width / 640);
+    ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+  } else if (mask.mode === 'pixelate') {
     const scale = Math.max(4, mask.strength);
     const w = Math.max(1, Math.floor(rect.width / scale));
     const h = Math.max(1, Math.floor(rect.height / scale));
@@ -812,6 +866,97 @@ function drawEndScreenGuide(ctx: Ctx2D, project: Project, ticks: Tick): void {
   ctx.fillText('Subscribe slot', zones.subscribe.x + zones.subscribe.width / 2, zones.subscribe.y - 6);
   ctx.fillText('Video slot 1 (20s end screen)', zones.leftVideo.x + zones.leftVideo.width / 2, zones.leftVideo.y - 6);
   ctx.fillText('Video slot 2 (20s end screen)', zones.rightVideo.x + zones.rightVideo.width / 2, zones.rightVideo.y - 6);
+  ctx.restore();
+}
+
+function drawProgressBarClip(ctx: Ctx2D, project: Project, clip: Clip, ticks: Tick): void {
+  const bar = clip.progressBar;
+  if (!bar) return;
+  const opacity = clipOpacity(clip, ticks);
+  if (opacity <= 0) return;
+  const width = project.canvas.width;
+  const height = project.canvas.height;
+  const barH = Math.max(4, height * bar.height);
+  const y = bar.position === 'top' ? 0 : height - barH;
+  const progress = clamp((ticks - clip.startTicks) / Math.max(1, clip.durationTicks), 0, 1);
+
+  ctx.save();
+  ctx.globalAlpha = opacity;
+  ctx.fillStyle = bar.backgroundColor;
+  ctx.fillRect(0, y, width, barH);
+  ctx.fillStyle = bar.color;
+  ctx.fillRect(0, y, width * progress, barH);
+  ctx.restore();
+}
+
+function drawPulseClip(ctx: Ctx2D, project: Project, clip: Clip, ticks: Tick): void {
+  const pulse = clip.pulse;
+  if (!pulse) return;
+  const opacity = clipOpacity(clip, ticks);
+  if (opacity <= 0) return;
+  const width = project.canvas.width;
+  const height = project.canvas.height;
+  const cx = width * pulse.x;
+  const cy = height * pulse.y;
+  const progress = clamp((ticks - clip.startTicks) / Math.max(1, clip.durationTicks), 0, 1);
+  const maxR = Math.min(width, height) * 0.085;
+  const rings = Math.max(1, pulse.rings);
+
+  ctx.save();
+  ctx.strokeStyle = pulse.color;
+  for (let i = 0; i < rings; i += 1) {
+    const phase = (progress + i / rings) % 1;
+    const radius = Math.max(4, maxR * phase);
+    ctx.globalAlpha = opacity * (1 - phase);
+    ctx.lineWidth = Math.max(2, (width / 640) * (1 - phase * 0.5));
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = opacity;
+  ctx.fillStyle = pulse.color;
+  ctx.beginPath();
+  ctx.arc(cx, cy, Math.max(5, width * 0.005), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawCountdownClip(ctx: Ctx2D, project: Project, clip: Clip, ticks: Tick): void {
+  const cd = clip.countdown;
+  if (!cd) return;
+  const opacity = clipOpacity(clip, ticks);
+  if (opacity <= 0) return;
+  const width = project.canvas.width;
+  const height = project.canvas.height;
+  const elapsedSec = Math.max(0, (ticks - clip.startTicks) / TICKS_PER_SECOND);
+  const remaining = Math.max(0, Math.ceil(cd.seconds - elapsedSec));
+  const mm = String(Math.floor(remaining / 60)).padStart(2, '0');
+  const ss = String(remaining % 60).padStart(2, '0');
+  const clock = `${mm}:${ss}`;
+  const display = cd.label ? `${cd.label} ${clock}` : clock;
+  const fs = Math.max(14, 42 * (width / 1920));
+
+  ctx.save();
+  ctx.globalAlpha = opacity;
+  ctx.font = fontString({ fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: fs, fontWeight: 800 });
+  const textW = ctx.measureText(display).width;
+  const padX = fs * 0.6;
+  const boxW = textW + padX * 2;
+  const boxH = fs * 1.65;
+  const cx = width * clip.transform.x;
+  const cy = height * clip.transform.y;
+
+  ctx.fillStyle = 'rgba(13, 17, 23, 0.9)';
+  roundRect(ctx, cx - boxW / 2, cy - boxH / 2, boxW, boxH, fs * 0.35);
+  ctx.fill();
+  ctx.strokeStyle = cd.color;
+  ctx.lineWidth = Math.max(2, fs * 0.08);
+  ctx.stroke();
+
+  ctx.fillStyle = cd.color;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(display, cx, cy);
   ctx.restore();
 }
 

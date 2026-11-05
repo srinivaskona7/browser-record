@@ -5,7 +5,45 @@ export const PROJECT_SCHEMA_VERSION = 3;
 
 export type AssetKind = 'video' | 'audio' | 'image';
 export type TrackKind = 'video' | 'audio' | 'caption';
-export type ClipKind = 'media' | 'title' | 'solid' | 'arrow' | 'sticker' | 'contact' | 'keystroke' | 'endscreen';
+export type ClipKind =
+  | 'media'
+  | 'title'
+  | 'solid'
+  | 'arrow'
+  | 'sticker'
+  | 'contact'
+  | 'keystroke'
+  | 'endscreen'
+  | 'progressbar'
+  | 'pulse'
+  | 'countdown';
+
+export type BlendMode = 'normal' | 'screen' | 'multiply' | 'overlay';
+
+export type PipPreset =
+  | 'top-left'
+  | 'top-right'
+  | 'bottom-left'
+  | 'bottom-right'
+  | 'floating-center'
+  | 'cinema-bar';
+
+export type ShadowGlowPreset = 'none' | 'soft-card' | 'deep-studio' | 'neon-cyan' | 'neon-amber';
+
+export type ColorLookPreset =
+  | 'neutral'
+  | 'cinema-teal'
+  | 'warm-creator'
+  | 'high-contrast-terminal'
+  | 'crisp-daylight'
+  | 'noir-mono'
+  | 'vibrant-reel';
+
+export type VoicePreset = 'podcast-warm' | 'crisp-tech' | 'broadcast-punch' | 'de-reverb-tight' | 'flat';
+
+export type AlertBannerTone = 'warning' | 'danger' | 'tip' | 'note';
+
+export type SocialPlatform = 'youtube' | 'instagram' | 'github' | 'linkedin' | 'x';
 
 export type ContactStyle = 'glass' | 'gradient' | 'solid' | 'accent';
 
@@ -101,6 +139,8 @@ export interface Transform {
   shadow: number;
   borderWidth: number;
   borderColor: string;
+  /** Layer composite blend mode. Defaults to 'normal'. */
+  blendMode?: BlendMode;
 }
 
 export type Easing = 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out';
@@ -215,8 +255,30 @@ export interface MaskProps {
   y: number;
   width: number;
   height: number;
-  mode: 'blur' | 'pixelate';
+  mode: 'blur' | 'pixelate' | 'spotlight';
   strength: number;
+}
+
+export interface ProgressBarProps {
+  position: 'top' | 'bottom';
+  /** Height as fraction of canvas height (e.g. 0.008). */
+  height: number;
+  color: string;
+  backgroundColor: string;
+}
+
+export interface PulseProps {
+  /** Normalized 0..1 coordinates on canvas. */
+  x: number;
+  y: number;
+  color: string;
+  rings: number;
+}
+
+export interface CountdownProps {
+  seconds: number;
+  label?: string;
+  color: string;
 }
 
 export interface ClipEffects {
@@ -229,6 +291,11 @@ export interface ClipEffects {
   zoom: number;
   panX: number;
   panY: number;
+  /** Radial darkening around frame edges, 0..1. */
+  vignette?: number;
+  /** Screen Studio style inset padding fraction (0..0.18). */
+  backdropPadding?: number;
+  backdropColor?: string;
   /** When > 1, progressively reveals a diagram clip in discrete steps across its duration. */
   revealSteps?: number;
   revealDirection?: 'left-to-right' | 'top-to-bottom';
@@ -265,6 +332,9 @@ export interface Clip {
   contact?: ContactProps;
   keystroke?: KeystrokeProps;
   endScreen?: EndScreenProps;
+  progressBar?: ProgressBarProps;
+  pulse?: PulseProps;
+  countdown?: CountdownProps;
   presenter?: PresenterProps;
   masks: MaskProps[];
   transitionIn: TransitionProps;
@@ -348,6 +418,8 @@ export interface ProjectSettings {
   /** Directory naming is fixed; this only records the chosen layout version. */
   workspaceLayoutVersion: number;
   autoTranscribeOnImport: boolean;
+  duckingEnabled?: boolean;
+  duckingAmountDb?: number;
   glossary: Record<string, string>;
 }
 

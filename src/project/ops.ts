@@ -1,7 +1,27 @@
 import { TICKS_PER_SECOND, type Tick } from '../core/time';
 import { newId } from '../core/ids';
 import { assetById, createClip, createTrack, defaultEffects, defaultTransform, projectDuration } from './factory';
-import type { BrandKit, CaptionCue, CaptionPreset, CaptionStyle, Clip, Project, StickerKind, TextProps, Track } from './types';
+import type {
+  AlertBannerTone,
+  BlendMode,
+  BrandKit,
+  CaptionCue,
+  CaptionPreset,
+  CaptionStyle,
+  Clip,
+  ColorLookPreset,
+  PipPreset,
+  Project,
+  ShadowGlowPreset,
+  SocialPlatform,
+  StickerKind,
+  TextProps,
+  Track,
+  TransitionProps,
+  VoicePreset,
+} from './types';
+import { voicePresetOptions } from '../audio/chain';
+import { SFX_PRESETS, type SfxKind } from '../audio/sfx';
 import { sourceTicks } from '../render/compositorQuery';
 
 export type EditMode = 'insert' | 'overwrite';
@@ -541,6 +561,9 @@ export function updateClipDeep(
     text?: Partial<NonNullable<Clip['text']>>;
     keystroke?: Partial<NonNullable<Clip['keystroke']>>;
     endScreen?: Partial<NonNullable<Clip['endScreen']>>;
+    progressBar?: Partial<NonNullable<Clip['progressBar']>>;
+    pulse?: Partial<NonNullable<Clip['pulse']>>;
+    countdown?: Partial<NonNullable<Clip['countdown']>>;
     presenter?: Partial<NonNullable<Clip['presenter']>>;
     transitionIn?: Partial<Clip['transitionIn']>;
     transitionOut?: Partial<Clip['transitionOut']>;
@@ -558,6 +581,9 @@ export function updateClipDeep(
       ...(patch.text && current.text ? { text: { ...current.text, ...patch.text } } : {}),
       ...(patch.keystroke && current.keystroke ? { keystroke: { ...current.keystroke, ...patch.keystroke } } : {}),
       ...(patch.endScreen && current.endScreen ? { endScreen: { ...current.endScreen, ...patch.endScreen } } : {}),
+      ...(patch.progressBar && current.progressBar ? { progressBar: { ...current.progressBar, ...patch.progressBar } } : {}),
+      ...(patch.pulse && current.pulse ? { pulse: { ...current.pulse, ...patch.pulse } } : {}),
+      ...(patch.countdown && current.countdown ? { countdown: { ...current.countdown, ...patch.countdown } } : {}),
       ...(patch.presenter
         ? { presenter: { ...(current.presenter ?? { layout: 'bubble' }), ...patch.presenter } as Clip['presenter'] }
         : {}),
@@ -1586,4 +1612,858 @@ export function addKeystrokeOverlay(
   });
   return { project: placeClip(ensured.project, ensured.trackId, clip, 'overwrite'), clipId: clip.id };
 }
+
+// ============================================================================
+// 30 YouTube & Instagram Creator Features (Layers, Sounds, Looks, Motion, Social)
+// ============================================================================
+
+/** 1. Set composite blend mode ('normal' | 'screen' | 'multiply' | 'overlay') on a clip layer. */
+export function setClipBlendMode(project: Project, clipId: string, blendMode: BlendMode): Project {
+  return updateClipDeep(project, clipId, { transform: { blendMode } });
+}
+
+/** 2. One-click Picture-in-Picture corner & floating placement presets for any layer. */
+export function applyPipPreset(project: Project, clipId: string, preset: PipPreset): Project {
+  const map: Record<PipPreset, Partial<Clip['transform']>> = {
+    'top-left': { x: 0.24, y: 0.24, scale: 0.38, radius: 16, shadow: 24, borderWidth: 2, borderColor: '#ffffff' },
+    'top-right': { x: 0.76, y: 0.24, scale: 0.38, radius: 16, shadow: 24, borderWidth: 2, borderColor: '#ffffff' },
+    'bottom-left': { x: 0.24, y: 0.76, scale: 0.38, radius: 16, shadow: 24, borderWidth: 2, borderColor: '#ffffff' },
+    'bottom-right': { x: 0.76, y: 0.76, scale: 0.38, radius: 16, shadow: 24, borderWidth: 2, borderColor: '#ffffff' },
+    'floating-center': { x: 0.5, y: 0.5, scale: 0.72, radius: 20, shadow: 36, borderWidth: 3, borderColor: '#58a6ff' },
+    'cinema-bar': { x: 0.5, y: 0.5, scale: 0.92, radius: 8, shadow: 16, borderWidth: 0, borderColor: '#000000' },
+  };
+  return updateClipDeep(project, clipId, { transform: map[preset] });
+}
+
+/** 3. Drop-shadow & neon border glow presets for code cards, B-roll and overlays. */
+export function applyShadowGlowPreset(project: Project, clipId: string, preset: ShadowGlowPreset): Project {
+  const map: Record<ShadowGlowPreset, Partial<Clip['transform']>> = {
+    none: { shadow: 0, borderWidth: 0, radius: 0 },
+    'soft-card': { shadow: 18, borderWidth: 1, borderColor: '#30363d', radius: 14 },
+    'deep-studio': { shadow: 48, borderWidth: 2, borderColor: '#ffffff', radius: 22 },
+    'neon-cyan': { shadow: 36, borderWidth: 4, borderColor: '#39d0d8', radius: 16 },
+    'neon-amber': { shadow: 36, borderWidth: 4, borderColor: '#ffd166', radius: 16 },
+  };
+  return updateClipDeep(project, clipId, { transform: map[preset] });
+}
+
+/** 4a. Solo a track (mutes all other tracks of the same kind, or unmutes all if already soloed). */
+export function soloTrack(project: Project, trackId: string): Project {
+  const target = project.tracks.find((t) => t.id === trackId);
+  if (!target) return project;
+  const others = project.tracks.filter((t) => t.id !== trackId);
+  const alreadySolo = !target.muted && others.every((t) => t.muted);
+  return {
+    ...project,
+    tracks: project.tracks.map((t) => ({
+      ...t,
+      muted: alreadySolo ? false : t.id !== trackId,
+    })),
+  };
+}
+
+/** 4b. Unmute and unhide all tracks and reset track volumes to 100%. */
+export function unmuteAllTracks(project: Project): Project {
+  return {
+    ...project,
+    tracks: project.tracks.map((t) => ({ ...t, muted: false, hidden: false, volume: 1 })),
+  };
+}
+
+/** 5. Magnetic gap closer: removes empty timeline gaps between clips on unlocked tracks. */
+export function closeTrackGaps(project: Project, trackId?: string): Project {
+  const nextTracks = project.tracks.map((track) => {
+    if (track.locked) return track;
+    if (trackId && track.id !== trackId) return track;
+    const sorted = sortClips(track.clips);
+    let cursor: Tick = 0;
+    const packed = sorted.map((clip) => {
+      const moved = { ...clip, startTicks: cursor };
+      cursor += clip.durationTicks;
+      return moved;
+    });
+    return { ...track, clips: packed };
+  });
+  return withDuration({ ...project, tracks: nextTracks });
+}
+
+/** 6. Apply a curated voice EQ/compressor preset ('podcast-warm' | 'crisp-tech' | 'broadcast-punch' | 'de-reverb-tight' | 'flat') to narration clips. */
+export function applyVoicePreset(project: Project, preset: VoicePreset, clipId?: string): Project {
+  const spec = voicePresetOptions(preset);
+  const gainByPreset: Record<VoicePreset, number> = {
+    'podcast-warm': 1.15,
+    'crisp-tech': 1.2,
+    'broadcast-punch': 1.35,
+    'de-reverb-tight': 1.1,
+    flat: 1.0,
+  };
+  return mapTracks(project, (track) => {
+    if (track.locked) return track;
+    return {
+      ...track,
+      clips: track.clips.map((clip) => {
+        if (clipId && clip.id !== clipId) return clip;
+        if (!clipId && clip.kind !== 'media') return clip;
+        return {
+          ...clip,
+          audio: {
+            ...clip.audio,
+            processed: spec.enabled,
+            gain: gainByPreset[preset],
+          },
+        };
+      }),
+    };
+  });
+}
+
+/** 7. Place a synthesized procedural sound-effect marker/clip on a dedicated 'SFX' audio track. */
+export function addProceduralSfxClip(
+  project: Project,
+  sfxKind: SfxKind,
+  atTicks: Tick,
+): { project: Project; clipId: string; assetId: string } {
+  const spec = SFX_PRESETS.find((item) => item.id === sfxKind) ?? SFX_PRESETS[0]!;
+  const durationTicks = Math.max(Math.round(0.08 * TICKS_PER_SECOND), Math.round(spec.durationSeconds * TICKS_PER_SECOND));
+  const assetId = `asset_sfx_${sfxKind}`;
+  const hasAsset = project.assets.some((a) => a.id === assetId);
+  const nextAssets = hasAsset
+    ? project.assets
+    : [
+        ...project.assets,
+        {
+          id: assetId,
+          kind: 'audio' as const,
+          name: `SFX: ${spec.label}`,
+          path: `media/sfx-${sfxKind}.wav`,
+          durationTicks,
+          sampleRate: 48_000,
+          channels: 1,
+          origin: 'generated' as const,
+          mimeType: 'audio/wav',
+          createdAt: new Date().toISOString(),
+        },
+      ];
+  let working: Project = { ...project, assets: nextAssets };
+  const existingTrack = working.tracks.find((t) => t.kind === 'audio' && t.name === 'SFX' && !t.locked);
+  const sfxTrack = existingTrack ?? createTrack('audio', 'SFX');
+  if (!existingTrack) working = addTrack(working, sfxTrack);
+
+  const clip = createClip({
+    kind: 'media',
+    assetId,
+    startTicks: atTicks,
+    durationTicks,
+    label: `SFX: ${spec.label}`,
+    audio: {
+      gain: 0.9,
+      muted: false,
+      fadeInTicks: Math.round(0.01 * TICKS_PER_SECOND),
+      fadeOutTicks: Math.round(0.03 * TICKS_PER_SECOND),
+      processed: false,
+      pan: 0,
+      duckUnderVoice: false,
+    },
+  });
+  return {
+    project: placeClip(working, sfxTrack.id, clip, 'overwrite'),
+    clipId: clip.id,
+    assetId,
+  };
+}
+
+/** 8. Apply smooth audio fade-in and fade-out to a clip or all media clips across unlocked tracks. */
+export function applyAudioFades(
+  project: Project,
+  fadeSeconds = 0.35,
+  clipId?: string,
+): Project {
+  const fadeTicks = Math.max(0, Math.round(fadeSeconds * TICKS_PER_SECOND));
+  return mapTracks(project, (track) => {
+    if (track.locked) return track;
+    return {
+      ...track,
+      clips: track.clips.map((clip) => {
+        if (clipId && clip.id !== clipId) return clip;
+        if (clip.kind !== 'media') return clip;
+        const maxFade = Math.floor(clip.durationTicks / 3);
+        const clamped = Math.min(fadeTicks, maxFade);
+        return {
+          ...clip,
+          audio: {
+            ...clip.audio,
+            fadeInTicks: clamped,
+            fadeOutTicks: clamped,
+          },
+        };
+      }),
+    };
+  });
+}
+
+/** 9. Configure a background music bed track with -14 dB gain (~0.2 linear), soft fades, and auto-ducking under voice. */
+export function prepareMusicBedTrack(project: Project, assetId?: string): { project: Project; trackId: string } {
+  const existing = project.tracks.find((t) => t.kind === 'audio' && /music/i.test(t.name) && !t.locked);
+  const track = existing ?? createTrack('audio', 'Music Bed');
+  let working: Project = existing ? project : addTrack(project, track);
+  working = {
+    ...working,
+    settings: { ...working.settings, duckingEnabled: true, duckingAmountDb: -10 },
+  };
+  if (assetId) {
+    const asset = assetById(working, assetId);
+    if (asset && asset.kind === 'audio') {
+      const targetDuration = Math.max(working.durationTicks, asset.durationTicks, Math.round(10 * TICKS_PER_SECOND));
+      const clip = createClip({
+        kind: 'media',
+        assetId,
+        startTicks: 0,
+        durationTicks: Math.min(targetDuration, asset.durationTicks),
+        label: `Music: ${asset.name}`,
+        audio: {
+          gain: 0.22,
+          muted: false,
+          fadeInTicks: Math.round(1.0 * TICKS_PER_SECOND),
+          fadeOutTicks: Math.round(1.5 * TICKS_PER_SECOND),
+          processed: false,
+          pan: 0,
+          duckUnderVoice: true,
+        },
+      });
+      working = placeClip(working, track.id, clip, 'overwrite');
+    }
+  }
+  working = mapTracks(working, (t) =>
+    t.id === track.id
+      ? {
+          ...t,
+          volume: 0.25,
+          clips: t.clips.map((c) => ({
+            ...c,
+            audio: {
+              ...c.audio,
+              gain: Math.min(c.audio.gain, 0.25),
+              duckUnderVoice: true,
+              fadeInTicks: Math.max(c.audio.fadeInTicks, Math.round(0.8 * TICKS_PER_SECOND)),
+              fadeOutTicks: Math.max(c.audio.fadeOutTicks, Math.round(1.2 * TICKS_PER_SECOND)),
+            },
+          })),
+        }
+      : t,
+  );
+  return { project: working, trackId: track.id };
+}
+
+/** 10. Normalize clip audio gain to a target linear gain (or peak dBFS). */
+export function normalizeClipGain(project: Project, clipId: string, targetGain = 1.25): Project {
+  const clamped = Math.max(0.1, Math.min(4, Number(targetGain.toFixed(2))));
+  return updateClipDeep(project, clipId, { audio: { gain: clamped, muted: false } });
+}
+
+/** 11. Apply a one-click colour grading look preset to a clip (or all video clips if clipId is omitted). */
+export function applyColorLookPreset(
+  project: Project,
+  preset: ColorLookPreset,
+  clipId?: string,
+): Project {
+  const looks: Record<ColorLookPreset, Partial<Clip['effects']>> = {
+    neutral: { brightness: 0, contrast: 0, saturation: 0, temperature: 0, vibrance: 0, exposure: 0, vignette: 0 },
+    'cinema-teal': { brightness: -0.02, contrast: 0.14, saturation: -0.08, temperature: -0.18, vibrance: 0.12, exposure: 0 },
+    'warm-creator': { brightness: 0.03, contrast: 0.08, saturation: 0.12, temperature: 0.22, vibrance: 0.15, exposure: 0.02 },
+    'high-contrast-terminal': { brightness: -0.03, contrast: 0.24, saturation: 0.08, temperature: -0.05, vibrance: 0.1, exposure: 0 },
+    'crisp-daylight': { brightness: 0.05, contrast: 0.1, saturation: 0.06, temperature: 0.04, vibrance: 0.1, exposure: 0.04 },
+    'noir-mono': { brightness: -0.02, contrast: 0.22, saturation: -1, temperature: 0, vibrance: 0, exposure: 0, vignette: 0.35 },
+    'vibrant-reel': { brightness: 0.04, contrast: 0.16, saturation: 0.28, temperature: 0.08, vibrance: 0.25, exposure: 0.02 },
+  };
+  const patch = looks[preset];
+  if (clipId) return updateClipDeep(project, clipId, { effects: patch });
+  return mapTracks(project, (track) => {
+    if (track.kind !== 'video' || track.locked) return track;
+    return {
+      ...track,
+      clips: track.clips.map((clip) =>
+        clip.kind === 'media' ? { ...clip, effects: { ...clip.effects, ...patch } } : clip,
+      ),
+    };
+  });
+}
+
+/** 12. Set radial vignette strength (0..1) on a clip. */
+export function setClipVignette(project: Project, clipId: string, vignette: number): Project {
+  return updateClipDeep(project, clipId, {
+    effects: { vignette: Math.max(0, Math.min(1, Number(vignette.toFixed(2)))) },
+  });
+}
+
+/** 13. Apply a Screen Studio style rounded frame with studio backdrop wallpaper padding around a screen clip. */
+export function applyScreenStudioFrame(
+  project: Project,
+  clipId: string,
+  padding = 0.06,
+  backdropColor = '#161b22',
+): Project {
+  const clampedPad = Math.max(0, Math.min(0.18, Number(padding.toFixed(3))));
+  return updateClipDeep(project, clipId, {
+    transform: {
+      scale: Number((1 - clampedPad * 2).toFixed(3)),
+      radius: 24,
+      shadow: 42,
+      borderWidth: 2,
+      borderColor: '#30363d',
+    },
+    effects: {
+      backdropPadding: clampedPad,
+      backdropColor,
+    },
+  });
+}
+
+/** 14. Add an animated watch-progress bar across the full timeline (top or bottom) for Shorts/Reels/Tutorials. */
+export function addProgressBarOverlay(
+  project: Project,
+  position: 'top' | 'bottom' = 'top',
+  color = '#ff0033',
+): { project: Project; clipId: string } {
+  const ensured = ensureOverlayVideoTrack(project, 'Progress Bar');
+  const duration = Math.max(TICKS_PER_SECOND * 3, project.durationTicks);
+  const clip = createClip({
+    kind: 'progressbar',
+    startTicks: 0,
+    durationTicks: duration,
+    label: `Progress bar (${position})`,
+    transform: defaultTransform(),
+    progressBar: {
+      position,
+      height: 0.01,
+      color,
+      backgroundColor: 'rgba(255, 255, 255, 0.18)',
+    },
+  });
+  return { project: placeClip(ensured.project, ensured.trackId, clip, 'overwrite'), clipId: clip.id };
+}
+
+/** 15. Auto-generate 2-second chapter bumper cards on a 'Chapter Bumpers' track from timeline markers. */
+export function addChapterBumpersFromMarkers(
+  project: Project,
+  durationSeconds = 2.0,
+): { project: Project; clipIds: string[] } {
+  if (project.markers.length === 0) return { project, clipIds: [] };
+  const ensured = ensureOverlayVideoTrack(project, 'Chapter Bumpers');
+  let working = ensured.project;
+  const clipIds: string[] = [];
+  const sorted = [...project.markers].sort((a, b) => a.atTicks - b.atTicks);
+  const durTicks = Math.max(Math.round(0.8 * TICKS_PER_SECOND), Math.round(durationSeconds * TICKS_PER_SECOND));
+
+  sorted.forEach((marker, idx) => {
+    const added = addTitleClip(
+      working,
+      ensured.trackId,
+      marker.atTicks,
+      `${String(idx + 1).padStart(2, '0')} · ${marker.label}`,
+      'section',
+      durTicks,
+    );
+    working = added.project;
+    clipIds.push(added.clipId);
+  });
+
+  return { project: working, clipIds };
+}
+
+/** 16. Batch-apply a transition ('fade' | 'dissolve' | 'slide-left' | 'slide-right' | 'wipe') to all cuts on unlocked video tracks. */
+export function applyTransitionToAllCuts(
+  project: Project,
+  type: TransitionProps['type'] = 'dissolve',
+  durationSeconds = 0.35,
+): Project {
+  const durationTicks = Math.max(1, Math.round(durationSeconds * TICKS_PER_SECOND));
+  return mapTracks(project, (track) => {
+    if (track.kind !== 'video' || track.locked) return track;
+    return {
+      ...track,
+      clips: track.clips.map((clip, idx) => ({
+        ...clip,
+        transitionIn: idx > 0 || type === 'fade' ? { type, durationTicks } : clip.transitionIn,
+        transitionOut: { type, durationTicks },
+      })),
+    };
+  });
+}
+
+/** 17. Add a smooth Ken Burns slow zoom-and-drift keyframe curve across a clip so static diagrams/frames feel alive. */
+export function addKenBurnsDrift(
+  project: Project,
+  clipId: string,
+  endScale = 1.12,
+): Project {
+  const clip = findClip(project, clipId);
+  if (!clip) return project;
+  const others = clip.keyframes.filter((k) => k.target !== 'zoom' && k.target !== 'panX');
+  const zoomTrack = {
+    target: 'zoom' as const,
+    keyframes: [
+      { id: newId('kf'), atTicks: 0, value: 1, easing: 'ease-in-out' as const },
+      { id: newId('kf'), atTicks: clip.durationTicks, value: Math.max(1.02, endScale), easing: 'ease-in-out' as const },
+    ],
+  };
+  const panTrack = {
+    target: 'panX' as const,
+    keyframes: [
+      { id: newId('kf'), atTicks: 0, value: -0.04, easing: 'ease-in-out' as const },
+      { id: newId('kf'), atTicks: clip.durationTicks, value: 0.04, easing: 'ease-in-out' as const },
+    ],
+  };
+  return updateClip(project, clipId, { keyframes: [...others, zoomTrack, panTrack] });
+}
+
+/** 18. Add a spotlight dimmer mask that darkens the surrounding screen while keeping the target region bright. */
+export function addSpotlightMask(
+  project: Project,
+  clipId: string,
+  rect: { x: number; y: number; width: number; height: number } = { x: 0.2, y: 0.25, width: 0.6, height: 0.45 },
+): Project {
+  const clip = findClip(project, clipId);
+  if (!clip) return project;
+  const masks = [
+    ...clip.masks,
+    {
+      x: rect.x,
+      y: rect.y,
+      width: rect.width,
+      height: rect.height,
+      mode: 'spotlight' as const,
+      strength: 70,
+    },
+  ];
+  return updateClip(project, clipId, { masks });
+}
+
+/** 19. Add an animated cursor click ripple / pulse ring overlay at `(x, y)` on the 'Overlays' track. */
+export function addClickPulse(
+  project: Project,
+  atTicks: Tick,
+  x = 0.5,
+  y = 0.5,
+  color = '#ffd166',
+  durationTicks = Math.round(1.2 * TICKS_PER_SECOND),
+): { project: Project; clipId: string } {
+  const ensured = ensureOverlayVideoTrack(project, 'Overlays');
+  const clip = createClip({
+    kind: 'pulse',
+    startTicks: atTicks,
+    durationTicks: Math.max(Math.round(0.4 * TICKS_PER_SECOND), durationTicks),
+    label: 'Click pulse highlight',
+    transform: { ...defaultTransform(), x, y },
+    pulse: {
+      x,
+      y,
+      color,
+      rings: 3,
+    },
+  });
+  return { project: placeClip(ensured.project, ensured.trackId, clip, 'overwrite'), clipId: clip.id };
+}
+
+/** 20. Cycle presenter camera bubble corners at marker boundaries so the speaker bubble never blocks one corner forever. */
+export function cycleCameraCornersOnMarkers(project: Project): Project {
+  if (project.markers.length === 0) return project;
+  const sortedMarkers = [...project.markers].sort((a, b) => a.atTicks - b.atTicks);
+  let working = project;
+  for (const marker of sortedMarkers) {
+    working = splitAt(working, marker.atTicks);
+  }
+  const corners: Array<'bottom-right' | 'bottom-left' | 'top-right' | 'top-left'> = [
+    'bottom-right',
+    'bottom-left',
+    'top-right',
+    'top-left',
+  ];
+  let idx = 0;
+  return mapTracks(working, (track) => {
+    if (track.kind !== 'video' || track.locked) return track;
+    return {
+      ...track,
+      clips: track.clips.map((clip) => {
+        if (!clip.presenter) return clip;
+        const corner = corners[idx % corners.length]!;
+        idx += 1;
+        return {
+          ...clip,
+          presenter: {
+            ...clip.presenter,
+            corner,
+          },
+        };
+      }),
+    };
+  });
+}
+
+/** 21. Add a numbered tutorial Step Badge ('STEP 1', 'STEP 2', ...) in the upper-left corner. */
+export function addStepBadge(
+  project: Project,
+  atTicks: Tick,
+  stepNumber?: number,
+  title = 'Configure cluster',
+  durationTicks = Math.round(4 * TICKS_PER_SECOND),
+): { project: Project; clipId: string; step: number } {
+  const ensured = ensureOverlayVideoTrack(project, 'Steps');
+  const existingSteps =
+    ensured.project.tracks.find((t) => t.id === ensured.trackId)?.clips.length ?? 0;
+  const step = stepNumber ?? existingSteps + 1;
+  const text = `STEP ${step} · ${title}`;
+  const clip = createClip({
+    kind: 'title',
+    startTicks: atTicks,
+    durationTicks,
+    label: text,
+    transform: { ...defaultTransform(), x: 0.22, y: 0.1 },
+    text: {
+      text,
+      fontFamily: 'Inter',
+      fontWeight: 800,
+      fontSize: 42,
+      color: '#ffffff',
+      background: '#1f6feb',
+      backgroundOpacity: 0.95,
+      align: 'left',
+      maxWidth: 0.4,
+      letterSpacing: 1,
+      lineHeight: 1.2,
+    },
+  });
+  return {
+    project: placeClip(ensured.project, ensured.trackId, clip, 'overwrite'),
+    clipId: clip.id,
+    step,
+  };
+}
+
+/** 22. Add a GitHub/DevOps admonition alert banner ('warning' | 'danger' | 'tip' | 'note'). */
+export function addAlertBanner(
+  project: Project,
+  atTicks: Tick,
+  tone: AlertBannerTone = 'warning',
+  message = 'Check your kubeconfig context before applying to prod',
+  durationTicks = Math.round(4 * TICKS_PER_SECOND),
+): { project: Project; clipId: string } {
+  const ensured = ensureOverlayVideoTrack(project, 'Alerts');
+  const styles: Record<AlertBannerTone, { prefix: string; bg: string; fg: string }> = {
+    warning: { prefix: '⚠️ WARNING', bg: '#9e6a03', fg: '#ffffff' },
+    danger: { prefix: '🔥 DANGER', bg: '#da3633', fg: '#ffffff' },
+    tip: { prefix: '💡 PRO TIP', bg: '#238636', fg: '#ffffff' },
+    note: { prefix: 'ℹ️ NOTE', bg: '#1f6feb', fg: '#ffffff' },
+  };
+  const spec = styles[tone];
+  const fullText = `${spec.prefix}: ${message}`;
+  const clip = createClip({
+    kind: 'title',
+    startTicks: atTicks,
+    durationTicks,
+    label: fullText.slice(0, 40),
+    transform: { ...defaultTransform(), x: 0.5, y: 0.16 },
+    text: {
+      text: fullText,
+      fontFamily: 'Inter',
+      fontWeight: 700,
+      fontSize: 44,
+      color: spec.fg,
+      background: spec.bg,
+      backgroundOpacity: 0.94,
+      align: 'center',
+      maxWidth: 0.86,
+      letterSpacing: 0.4,
+      lineHeight: 1.25,
+    },
+  });
+  return { project: placeClip(ensured.project, ensured.trackId, clip, 'overwrite'), clipId: clip.id };
+}
+
+/** 23. Add a lower-left Social Handle Pill ('youtube' | 'instagram' | 'github' | 'linkedin' | 'x'). */
+export function addSocialFollowPill(
+  project: Project,
+  atTicks: Tick,
+  platform: SocialPlatform = 'youtube',
+  handle = '@devops-studio',
+  durationTicks = Math.round(4 * TICKS_PER_SECOND),
+): { project: Project; clipId: string } {
+  const ensured = ensureOverlayVideoTrack(project, 'Social Pills');
+  const badges: Record<SocialPlatform, { icon: string; bg: string }> = {
+    youtube: { icon: '▶ YouTube', bg: '#ff0033' },
+    instagram: { icon: '◎ Instagram', bg: '#d62976' },
+    github: { icon: '⌘ GitHub', bg: '#24292f' },
+    linkedin: { icon: 'in LinkedIn', bg: '#0a66c2' },
+    x: { icon: '𝕏', bg: '#0f1419' },
+  };
+  const spec = badges[platform];
+  const label = `${spec.icon} · ${handle}`;
+  const clip = createClip({
+    kind: 'title',
+    startTicks: atTicks,
+    durationTicks,
+    label,
+    transform: { ...defaultTransform(), x: 0.24, y: 0.88 },
+    text: {
+      text: label,
+      fontFamily: 'Inter',
+      fontWeight: 700,
+      fontSize: 38,
+      color: '#ffffff',
+      background: spec.bg,
+      backgroundOpacity: 0.92,
+      align: 'left',
+      maxWidth: 0.44,
+      letterSpacing: 0.3,
+      lineHeight: 1.2,
+    },
+  });
+  return { project: placeClip(ensured.project, ensured.trackId, clip, 'overwrite'), clipId: clip.id };
+}
+
+/** 24. Add a persistent lower-third Topic Ticker bar across a lesson section. */
+export function addTopicTicker(
+  project: Project,
+  atTicks: Tick,
+  topic = 'LIVE DEMO · Zero-downtime Kubernetes rollout',
+  durationTicks = Math.round(6 * TICKS_PER_SECOND),
+): { project: Project; clipId: string } {
+  const ensured = ensureOverlayVideoTrack(project, 'Topic Ticker');
+  const clip = createClip({
+    kind: 'title',
+    startTicks: atTicks,
+    durationTicks,
+    label: topic.slice(0, 40),
+    transform: { ...defaultTransform(), x: 0.5, y: 0.91 },
+    text: {
+      text: topic,
+      fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
+      fontWeight: 700,
+      fontSize: 34,
+      color: '#58a6ff',
+      background: '#0d1117',
+      backgroundOpacity: 0.92,
+      align: 'center',
+      maxWidth: 0.92,
+      letterSpacing: 0.8,
+      lineHeight: 1.2,
+    },
+  });
+  return { project: placeClip(ensured.project, ensured.trackId, clip, 'overwrite'), clipId: clip.id };
+}
+
+/** 25. Add a live ticking Countdown Timer badge ('00:30' -> '00:00') for fast-paced Shorts and deploy challenges. */
+export function addCountdownOverlay(
+  project: Project,
+  atTicks: Tick,
+  seconds = 10,
+  label = 'Deploy in',
+): { project: Project; clipId: string } {
+  const ensured = ensureOverlayVideoTrack(project, 'Countdown');
+  const clampedSeconds = Math.max(1, Math.min(3600, Math.round(seconds)));
+  const durationTicks = clampedSeconds * TICKS_PER_SECOND;
+  const clip = createClip({
+    kind: 'countdown',
+    startTicks: atTicks,
+    durationTicks,
+    label: `Countdown (${clampedSeconds}s)`,
+    transform: { ...defaultTransform(), x: 0.84, y: 0.12 },
+    countdown: {
+      seconds: clampedSeconds,
+      label,
+      color: '#ffd166',
+    },
+  });
+  return { project: placeClip(ensured.project, ensured.trackId, clip, 'overwrite'), clipId: clip.id };
+}
+
+/** 26. Reframe composition to 1:1 Square (1080×1080) for Instagram Carousels and LinkedIn feeds. */
+export function reframe1x1(project: Project): Project {
+  return {
+    ...project,
+    canvas: { ...project.canvas, width: 1080, height: 1080 },
+    tracks: project.tracks.map((track) => {
+      if (track.kind !== 'video' || track.locked) return track;
+      return {
+        ...track,
+        clips: track.clips.map((clip) => {
+          if (clip.presenter) {
+            return {
+              ...clip,
+              presenter: {
+                ...clip.presenter,
+                layout: 'bubble' as const,
+                shape: 'circle' as const,
+                corner: 'bottom-right' as const,
+                size: 0.26,
+                margin: 0.03,
+              },
+            };
+          }
+          if (clip.kind === 'media' && track.name === 'Screen') {
+            return {
+              ...clip,
+              transform: { ...clip.transform, x: 0.5, y: 0.44, scale: 0.96, fit: 'contain' },
+            };
+          }
+          return clip;
+        }),
+      };
+    }),
+  };
+}
+
+/** 27. Reframe composition to 4:5 Portrait (1080×1350) for maximum Instagram & LinkedIn mobile feed height. */
+export function reframe4x5(project: Project): Project {
+  return {
+    ...project,
+    canvas: { ...project.canvas, width: 1080, height: 1350 },
+    tracks: project.tracks.map((track) => {
+      if (track.kind !== 'video' || track.locked) return track;
+      return {
+        ...track,
+        clips: track.clips.map((clip) => {
+          if (clip.presenter) {
+            return {
+              ...clip,
+              presenter: {
+                ...clip.presenter,
+                layout: 'bubble' as const,
+                shape: 'rounded' as const,
+                corner: 'bottom-right' as const,
+                size: 0.28,
+                margin: 0.035,
+              },
+            };
+          }
+          if (clip.kind === 'media' && track.name === 'Screen') {
+            return {
+              ...clip,
+              transform: { ...clip.transform, x: 0.5, y: 0.38, scale: 0.98, fit: 'contain' },
+            };
+          }
+          return clip;
+        }),
+      };
+    }),
+  };
+}
+
+/** 29. Automatically generate timeline chapter markers from caption cues that start a new topic, step, or question. */
+export function generateMarkersFromCaptions(
+  project: Project,
+  minGapSeconds = 12,
+): Project {
+  if (project.captions.length === 0) return project;
+  const sorted = [...project.captions].sort((a, b) => a.startTicks - b.startTicks);
+  const minGapTicks = Math.max(TICKS_PER_SECOND * 3, Math.round(minGapSeconds * TICKS_PER_SECOND));
+  const generated = [...project.markers];
+  const topicTrigger = /^(?:step\s+\d+|first|second|third|next|now\s+let's|finally|how\s+to|why\s+|let's\s+deploy|let's\s+build)/i;
+
+  let lastAt = -minGapTicks;
+  sorted.forEach((cue, idx) => {
+    const clean = cue.text.trim();
+    if (!clean) return;
+    const isFirst = idx === 0 && cue.startTicks === 0;
+    const matchesTopic = topicTrigger.test(clean) || clean.endsWith('?');
+    if ((isFirst || matchesTopic || cue.startTicks - lastAt >= minGapTicks * 2) && cue.startTicks - lastAt >= minGapTicks) {
+      const existsNear = generated.some((m) => Math.abs(m.atTicks - cue.startTicks) < TICKS_PER_SECOND * 2);
+      if (!existsNear) {
+        generated.push({
+          id: newId('marker'),
+          atTicks: cue.startTicks,
+          label: clean.replace(/[?.!]+$/, '').slice(0, 36),
+          color: '#58a6ff',
+        });
+        lastAt = cue.startTicks;
+      }
+    }
+  });
+
+  return {
+    ...project,
+    markers: generated.sort((a, b) => a.atTicks - b.atTicks),
+  };
+}
+
+export interface PacingAuditReport {
+  totalDurationSeconds: number;
+  mediaClipCount: number;
+  overlayClipCount: number;
+  averageCutSeconds: number;
+  captionCoveragePercent: number;
+  hasHookInFirst5s: boolean;
+  shortsReady: boolean;
+  score: number;
+  suggestions: string[];
+}
+
+/**
+ * 30. Audit timeline pacing, visual variety, hook placement, and caption coverage
+ * for YouTube retention and Instagram Reels readiness.
+ */
+export function auditVideoPacing(project: Project): PacingAuditReport {
+  const totalDurationSeconds = project.durationTicks / TICKS_PER_SECOND;
+  const videoTracks = project.tracks.filter((t) => t.kind === 'video' && !t.hidden);
+  const allVideoClips = videoTracks.flatMap((t) => t.clips);
+  const mediaClips = allVideoClips.filter((c) => c.kind === 'media');
+  const overlayClips = allVideoClips.filter((c) => c.kind !== 'media');
+
+  const averageCutSeconds =
+    mediaClips.length > 0 ? totalDurationSeconds / mediaClips.length : totalDurationSeconds;
+
+  const captionedTicks = project.captions.reduce(
+    (acc, cue) => acc + Math.max(0, cue.endTicks - cue.startTicks),
+    0,
+  );
+  const captionCoveragePercent =
+    project.durationTicks > 0
+      ? Math.min(100, Math.round((captionedTicks / project.durationTicks) * 100))
+      : 0;
+
+  const first5sTicks = 5 * TICKS_PER_SECOND;
+  const hasHookInFirst5s = overlayClips.some((c) => c.startTicks < first5sTicks);
+  const shortsReady =
+    project.canvas.width < project.canvas.height &&
+    totalDurationSeconds > 0 &&
+    totalDurationSeconds <= 60;
+
+  const suggestions: string[] = [];
+  let score = 100;
+
+  if (!hasHookInFirst5s && totalDurationSeconds > 0) {
+    score -= 18;
+    suggestions.push('Add a Hook title, CLI callout, or Intro template in the first 5 seconds to stop scroll drop-off.');
+  }
+  if (averageCutSeconds > 18 && totalDurationSeconds > 20) {
+    score -= 20;
+    suggestions.push(
+      `Average cut length is ${averageCutSeconds.toFixed(1)}s. Add punch-ins, B-roll PiP, or jump-cut silences every 8–12s.`,
+    );
+  }
+  if (captionCoveragePercent < 40 && totalDurationSeconds > 0) {
+    score -= 15;
+    suggestions.push('Caption coverage is under 40%. Transcribe or import subtitles for muted mobile viewers.');
+  }
+  if (overlayClips.length === 0 && totalDurationSeconds > 0) {
+    score -= 15;
+    suggestions.push('No callouts, step badges, or keystroke overlays found. Add visual anchors to highlight key commands.');
+  }
+  if (project.markers.length === 0 && totalDurationSeconds >= 60) {
+    score -= 10;
+    suggestions.push('Add timeline markers or auto-generate chapters from captions for YouTube chapter scrubbing.');
+  }
+
+  return {
+    totalDurationSeconds: Number(totalDurationSeconds.toFixed(1)),
+    mediaClipCount: mediaClips.length,
+    overlayClipCount: overlayClips.length,
+    averageCutSeconds: Number(averageCutSeconds.toFixed(1)),
+    captionCoveragePercent,
+    hasHookInFirst5s,
+    shortsReady,
+    score: Math.max(0, score),
+    suggestions,
+  };
+}
+
 

@@ -169,6 +169,15 @@ export function validateProject(project: Project): void {
       if (clip.kind === 'endscreen' && !clip.endScreen) {
         fail(`End-screen clip ${clip.id} has no endScreen properties.`);
       }
+      if (clip.kind === 'progressbar' && !clip.progressBar) {
+        fail(`Progress-bar clip ${clip.id} has no progressBar properties.`);
+      }
+      if (clip.kind === 'pulse' && !clip.pulse) {
+        fail(`Pulse clip ${clip.id} has no pulse properties.`);
+      }
+      if (clip.kind === 'countdown' && !clip.countdown) {
+        fail(`Countdown clip ${clip.id} has no countdown properties.`);
+      }
     }
   }
   for (const asset of project.assets) {

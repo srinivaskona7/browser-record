@@ -10,6 +10,7 @@ import { formatChapters, formatDescription } from '../project/chapters';
 import { Badge, Button, EmptyState, Panel, Select } from './components';
 import { importMediaFiles, relinkAsset } from '../app/actions';
 import { detectSilences, mixdownProject } from '../audio/mixdown';
+import { SFX_PRESETS, synthesizeSfxSamples, type SfxKind } from '../audio/sfx';
 import { buildProjectAudioResolver } from './TranscribeDialog';
 import { newId } from '../core/ids';
 
@@ -304,9 +305,55 @@ export function MediaBin({ project, onOpenVoiceover }: { project: Project; onOpe
             >
               Keystroke
             </Button>
+            <Button
+              size="sm"
+              onClick={() => apply('Add step badge', (p) => ops.addStepBadge(p, playhead).project)}
+            >
+              Step badge
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => apply('Add warning banner', (p) => ops.addAlertBanner(p, playhead, 'warning').project)}
+            >
+              ⚠️ Warning
+            </Button>
+            <Button
+              size="sm"
+              onClick={() =>
+                apply('Add pro tip banner', (p) =>
+                  ops.addAlertBanner(p, playhead, 'tip', 'Use --dry-run=client before applying to prod').project,
+                )
+              }
+            >
+              💡 Pro tip
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => apply('Add topic ticker', (p) => ops.addTopicTicker(p, playhead).project)}
+            >
+              Topic ticker
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => apply('Add countdown timer', (p) => ops.addCountdownOverlay(p, playhead, 10, 'Deploy in').project)}
+            >
+              Countdown (10s)
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => apply('Add progress bar', (p) => ops.addProgressBarOverlay(p, 'top').project)}
+            >
+              Progress bar
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => apply('Add click pulse', (p) => ops.addClickPulse(p, playhead).project)}
+            >
+              Click pulse
+            </Button>
           </div>
           <div className="field-label" style={{ marginTop: 4 }}>
-            Call to action
+            Call to action & Social pills
           </div>
           <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
             {(['subscribe', 'like', 'bell'] as const).map((kind) => (
@@ -325,6 +372,25 @@ export function MediaBin({ project, onOpenVoiceover }: { project: Project; onOpe
             >
               Auto end screen (20s)
             </Button>
+            {(['youtube', 'instagram', 'github', 'linkedin'] as const).map((platform) => (
+              <Button
+                key={platform}
+                size="sm"
+                variant="ghost"
+                onClick={() =>
+                  apply(`Add ${platform} pill`, (p) =>
+                    ops.addSocialFollowPill(
+                      p,
+                      playhead,
+                      platform,
+                      p.brand?.name ? `@${p.brand.name.replace(/\s+/g, '').toLowerCase()}` : '@devops-studio',
+                    ).project,
+                  )
+                }
+              >
+                @{platform}
+              </Button>
+            ))}
           </div>
           <div className="field-label" style={{ marginTop: 4 }}>
             Brand
@@ -483,6 +549,128 @@ export function MediaBin({ project, onOpenVoiceover }: { project: Project; onOpe
             >
               Scan & blur secrets (exp.)
             </Button>
+            <Button
+              size="sm"
+              disabled={!selectedClipId}
+              title="Dims the whole screen except a highlighted spotlight box"
+              onClick={() => selectedClipId && apply('Add spotlight mask', (p) => ops.addSpotlightMask(p, selectedClipId))}
+            >
+              Spotlight mask
+            </Button>
+            <Button
+              size="sm"
+              disabled={!selectedClipId}
+              title="Adds a Screen Studio style rounded desktop card with studio wallpaper padding"
+              onClick={() => selectedClipId && apply('Screen Studio frame', (p) => ops.applyScreenStudioFrame(p, selectedClipId))}
+            >
+              Studio frame
+            </Button>
+            <Button
+              size="sm"
+              disabled={!selectedClipId}
+              title="Adds a slow Ken Burns zoom + pan drift across the selected clip"
+              onClick={() => selectedClipId && apply('Ken Burns drift', (p) => ops.addKenBurnsDrift(p, selectedClipId))}
+            >
+              Ken Burns drift
+            </Button>
+          </div>
+          <div className="field-label" style={{ marginTop: 4 }}>
+            Sound effects (procedural SFX) & Voice presets
+          </div>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+            {SFX_PRESETS.map((sfx) => (
+              <Button
+                key={sfx.id}
+                size="sm"
+                title={sfx.description}
+                onClick={() => {
+                  apply(`Add ${sfx.label}`, (p) => ops.addProceduralSfxClip(p, sfx.id as SfxKind, playhead).project);
+                  try {
+                    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+                    if (AudioCtx) {
+                      const actx = new AudioCtx();
+                      const samples = synthesizeSfxSamples(sfx.id, actx.sampleRate);
+                      const buf = actx.createBuffer(1, samples.length, actx.sampleRate);
+                      buf.copyToChannel(new Float32Array(samples), 0);
+                      const src = actx.createBufferSource();
+                      src.buffer = buf;
+                      src.connect(actx.destination);
+                      src.start();
+                      src.onended = () => void actx.close();
+                    }
+                  } catch {
+                    // Audio preview is optional
+                  }
+                }}
+              >
+                🔊 {sfx.label}
+              </Button>
+            ))}
+          </div>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+            {(['podcast-warm', 'crisp-tech', 'broadcast-punch', 'de-reverb-tight'] as const).map((vp) => (
+              <Button
+                key={vp}
+                size="sm"
+                variant="ghost"
+                onClick={() => apply(`Voice preset: ${vp}`, (p) => ops.applyVoicePreset(p, vp, selectedClipId ?? undefined))}
+              >
+                🎙 {vp}
+              </Button>
+            ))}
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => apply('Soft audio fades (0.35s)', (p) => ops.applyAudioFades(p, 0.35))}
+              title="Applies 0.35s fade-in and fade-out across all media clips to prevent audio clicks"
+            >
+              Soft audio fades
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => apply('Prepare music bed', (p) => ops.prepareMusicBedTrack(p, selectedAssetId ?? undefined).project)}
+              title="Sets up a Music Bed track at -14 dB with auto-ducking under narration"
+            >
+              Music bed + ducking
+            </Button>
+          </div>
+          <div className="field-label" style={{ marginTop: 4 }}>
+            Colour look & timeline polish
+          </div>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+            {(['cinema-teal', 'warm-creator', 'high-contrast-terminal', 'vibrant-reel', 'noir-mono', 'neutral'] as const).map((look) => (
+              <Button
+                key={look}
+                size="sm"
+                variant="ghost"
+                onClick={() => apply(`Colour look: ${look}`, (p) => ops.applyColorLookPreset(p, look, selectedClipId ?? undefined))}
+              >
+                🎨 {look}
+              </Button>
+            ))}
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => apply('Dissolve all cuts', (p) => ops.applyTransitionToAllCuts(p, 'dissolve', 0.35))}
+            >
+              Dissolve all cuts
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => apply('Close track gaps', (p) => ops.closeTrackGaps(p))}
+            >
+              Close gaps
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={project.markers.length === 0}
+              onClick={() => apply('Cycle camera corners on markers', (p) => ops.cycleCameraCornersOnMarkers(p))}
+            >
+              Cycle bubble corners
+            </Button>
           </div>
           <div className="field-label" style={{ marginTop: 4 }}>
             Silence & idle pacing
@@ -507,7 +695,7 @@ export function MediaBin({ project, onOpenVoiceover }: { project: Project; onOpe
             </Button>
           </div>
           <div className="field-label" style={{ marginTop: 4 }}>
-            Vertical / Shorts reframe
+            YouTube Shorts & Instagram reframe
           </div>
           <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
             <Button
@@ -515,7 +703,7 @@ export function MediaBin({ project, onOpenVoiceover }: { project: Project; onOpe
               onClick={() => apply('Reframe 9:16', (p) => ops.reframe9x16(p))}
               title="Switches canvas to 1080×1920 and stacks screen on top, presenter card below"
             >
-              9:16 reframe
+              9:16 Shorts/Reels
             </Button>
             <Button
               size="sm"
@@ -524,6 +712,22 @@ export function MediaBin({ project, onOpenVoiceover }: { project: Project; onOpe
               title="Switches to 1080×1920 and adds panX keyframes that follow the presenter"
             >
               9:16 follow presenter
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => apply('Reframe 4:5 Portrait', (p) => ops.reframe4x5(p))}
+              title="Switches to 1080×1350 Instagram/LinkedIn portrait feed"
+            >
+              4:5 Insta Feed
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => apply('Reframe 1:1 Square', (p) => ops.reframe1x1(p))}
+              title="Switches to 1080×1080 square carousel layout"
+            >
+              1:1 Square
             </Button>
           </div>
           <div className="field-label" style={{ marginTop: 4 }}>
@@ -568,9 +772,51 @@ export function MediaBin({ project, onOpenVoiceover }: { project: Project; onOpe
       )}
 
       {tab === 'markers' && (
-        <Panel title="Markers">
+        <Panel title="Markers & Pacing">
+          <div className="stack" style={{ gap: 6, marginBottom: 8 }}>
+            <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+              <Button
+                size="sm"
+                disabled={project.captions.length === 0}
+                title="Scans captions for steps and questions to auto-create chapter markers"
+                onClick={() => apply('Auto markers from captions', (p) => ops.generateMarkersFromCaptions(p))}
+              >
+                Auto markers from captions
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={project.markers.length === 0}
+                title="Creates 2-second section title cards at every marker"
+                onClick={() => apply('Add chapter bumpers', (p) => ops.addChapterBumpersFromMarkers(p).project)}
+              >
+                Add chapter bumpers
+              </Button>
+            </div>
+            {(() => {
+              const audit = ops.auditVideoPacing(project);
+              return (
+                <div className="stack" style={{ gap: 4, padding: 8, border: '1px solid var(--line)', borderRadius: 6 }}>
+                  <div className="row" style={{ justifyContent: 'space-between' }}>
+                    <strong style={{ fontSize: 11.5 }}>Creator Pacing Score</strong>
+                    <Badge tone={audit.score >= 80 ? 'ok' : audit.score >= 55 ? 'warn' : 'danger'}>
+                      {audit.score}/100
+                    </Badge>
+                  </div>
+                  <div className="field-hint">
+                    Avg cut: {audit.averageCutSeconds}s · Overlays: {audit.overlayClipCount} · Captions: {audit.captionCoveragePercent}%
+                  </div>
+                  {audit.suggestions.slice(0, 2).map((tip, i) => (
+                    <div key={i} className="field-hint" style={{ color: 'var(--text-2)' }}>
+                      • {tip}
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
           {project.markers.length === 0 ? (
-            <EmptyState title="No markers">Use Add → Marker at playhead to flag a point to return to.</EmptyState>
+            <EmptyState title="No markers">Use Add → Marker at playhead or Auto markers from captions.</EmptyState>
           ) : (
           <div className="stack" style={{ gap: 6 }}>
           <Button

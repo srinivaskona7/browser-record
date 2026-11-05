@@ -1,6 +1,15 @@
 import type { Project } from '../project/types';
 
-export type PresetId = '4k-compact' | '4k-balanced' | '4k-quality' | '1080p-share' | 'shorts-vertical' | 'custom';
+export type PresetId =
+  | '4k-compact'
+  | '4k-balanced'
+  | '4k-quality'
+  | '4k60-master'
+  | '1080p-share'
+  | 'shorts-vertical'
+  | 'insta-square-1080'
+  | 'insta-portrait-4x5'
+  | 'custom';
 
 export interface ExportPreset {
   id: PresetId;
@@ -77,6 +86,43 @@ export const PRESETS: ExportPreset[] = [
     codecPreference: ['h264', 'vp9'],
     maxDurationSeconds: 60,
     maxBytes: 60_000_000,
+  },
+  {
+    id: 'insta-portrait-4x5',
+    label: 'Instagram / LinkedIn Portrait (4:5)',
+    description: '1080×1350 portrait feed MP4 for maximum mobile feed height on Instagram and LinkedIn.',
+    width: 1080,
+    height: 1350,
+    videoBitrate: 5_500_000,
+    audioBitrate: 128_000,
+    container: 'mp4',
+    codecPreference: ['h264', 'vp9'],
+    maxDurationSeconds: 90,
+    maxBytes: 100_000_000,
+  },
+  {
+    id: 'insta-square-1080',
+    label: 'Instagram / Carousel Square (1:1)',
+    description: '1080×1080 square MP4 for social carousels, embeds and documentation feeds.',
+    width: 1080,
+    height: 1080,
+    videoBitrate: 5_000_000,
+    audioBitrate: 128_000,
+    container: 'mp4',
+    codecPreference: ['h264', 'vp9'],
+    maxDurationSeconds: 90,
+    maxBytes: 100_000_000,
+  },
+  {
+    id: '4k60-master',
+    label: '4K Studio Master (18 Mbps)',
+    description: 'High-bitrate 3840×2160 archival master for fast terminal motion and YouTube 4K60 uploads.',
+    width: 3840,
+    height: 2160,
+    videoBitrate: 18_000_000,
+    audioBitrate: 192_000,
+    container: 'mp4',
+    codecPreference: ['h264', 'vp9', 'av1'],
   },
 ];
 

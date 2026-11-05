@@ -103,10 +103,65 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
               ]}
             />
           </Field>
+          <Field label="Blend mode">
+            <Select
+              value={clip.transform.blendMode ?? 'normal'}
+              onChange={(value) => apply('Blend mode', (p) => ops.setClipBlendMode(p, clip.id, value))}
+              options={[
+                { value: 'normal', label: 'Normal' },
+                { value: 'screen', label: 'Screen (glow / light)' },
+                { value: 'multiply', label: 'Multiply (darken)' },
+                { value: 'overlay', label: 'Overlay (contrast)' },
+              ]}
+            />
+          </Field>
+          <Field label="PiP placement preset">
+            <div className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
+              {(['top-left', 'top-right', 'bottom-left', 'bottom-right', 'floating-center', 'cinema-bar'] as const).map((preset) => (
+                <Button
+                  key={preset}
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => apply(`PiP: ${preset}`, (p) => ops.applyPipPreset(p, clip.id, preset))}
+                >
+                  {preset}
+                </Button>
+              ))}
+            </div>
+          </Field>
+          <Field label="Shadow / Glow preset">
+            <div className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
+              {(['none', 'soft-card', 'deep-studio', 'neon-cyan', 'neon-amber'] as const).map((preset) => (
+                <Button
+                  key={preset}
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => apply(`Glow: ${preset}`, (p) => ops.applyShadowGlowPreset(p, clip.id, preset))}
+                >
+                  {preset}
+                </Button>
+              ))}
+            </div>
+          </Field>
           <Slider label="Rotation" min={-180} max={180} step={1} value={clip.transform.rotationDeg} format={(v) => `${v}°`} onChange={(value) => patch('Rotate clip', { transform: { rotationDeg: value } })} />
           <Slider label="Opacity" min={0} max={1} step={0.01} value={clip.transform.opacity} format={(v) => `${Math.round(v * 100)}%`} onChange={(value) => patch('Clip opacity', { transform: { opacity: value } })} />
           <Slider label="Corner radius" min={0} max={120} step={1} value={clip.transform.radius} format={(v) => `${v}px`} onChange={(value) => patch('Corner radius', { transform: { radius: value } })} />
           <Slider label="Shadow" min={0} max={80} step={1} value={clip.transform.shadow} format={(v) => `${v}px`} onChange={(value) => patch('Shadow', { transform: { shadow: value } })} />
+          <Slider
+            label="Studio frame padding"
+            min={0}
+            max={0.16}
+            step={0.01}
+            value={clip.effects.backdropPadding ?? 0}
+            format={(v) => (v <= 0 ? 'off' : `${Math.round(v * 100)}%`)}
+            onChange={(value) =>
+              apply('Studio frame padding', (p) =>
+                value <= 0
+                  ? ops.updateClipDeep(p, clip.id, { effects: { backdropPadding: 0 }, transform: { scale: 1 } })
+                  : ops.applyScreenStudioFrame(p, clip.id, value),
+              )
+            }
+          />
           <Slider
             label="Diagram reveal steps"
             min={1}
@@ -289,10 +344,33 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
       )}
 
       <InspectorSection title="Colour">
+        <Field label="Look preset">
+          <div className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
+            {(['neutral', 'cinema-teal', 'warm-creator', 'high-contrast-terminal', 'crisp-daylight', 'vibrant-reel', 'noir-mono'] as const).map((look) => (
+              <Button
+                key={look}
+                size="sm"
+                variant="ghost"
+                onClick={() => apply(`Look: ${look}`, (p) => ops.applyColorLookPreset(p, look, clip.id))}
+              >
+                {look}
+              </Button>
+            ))}
+          </div>
+        </Field>
         <Slider label="Brightness" min={-0.5} max={0.5} step={0.01} value={clip.effects.brightness} format={(v) => `${Math.round(v * 100)}`} onChange={(value) => patch('Brightness', { effects: { brightness: value } })} />
         <Slider label="Contrast" min={-0.5} max={0.5} step={0.01} value={clip.effects.contrast} format={(v) => `${Math.round(v * 100)}`} onChange={(value) => patch('Contrast', { effects: { contrast: value } })} />
         <Slider label="Saturation" min={-1} max={1} step={0.01} value={clip.effects.saturation} format={(v) => `${Math.round(v * 100)}`} onChange={(value) => patch('Saturation', { effects: { saturation: value } })} />
         <Slider label="Temperature" min={-1} max={1} step={0.01} value={clip.effects.temperature} format={(v) => v.toFixed(2)} onChange={(value) => patch('Temperature', { effects: { temperature: value } })} />
+        <Slider
+          label="Vignette"
+          min={0}
+          max={1}
+          step={0.05}
+          value={clip.effects.vignette ?? 0}
+          format={(v) => `${Math.round(v * 100)}%`}
+          onChange={(value) => apply('Vignette', (p) => ops.setClipVignette(p, clip.id, value))}
+        />
       </InspectorSection>
 
       <InspectorSection title="Audio">
@@ -302,6 +380,27 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
           checked={clip.audio.processed}
           onChange={(value) => patch('Speech processing', { audio: { processed: value } })}
         />
+        <Field label="Voice mastering preset">
+          <div className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
+            {(['podcast-warm', 'crisp-tech', 'broadcast-punch', 'de-reverb-tight', 'flat'] as const).map((vp) => (
+              <Button
+                key={vp}
+                size="sm"
+                variant="ghost"
+                onClick={() => apply(`Voice: ${vp}`, (p) => ops.applyVoicePreset(p, vp, clip.id))}
+              >
+                {vp}
+              </Button>
+            ))}
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => apply('Normalize clip gain', (p) => ops.normalizeClipGain(p, clip.id, 1.25))}
+            >
+              Normalize (+2 dB)
+            </Button>
+          </div>
+        </Field>
         <Slider label="Gain" min={0} max={2} step={0.01} value={clip.audio.gain} format={(v) => `${(20 * Math.log10(Math.max(0.0001, v))).toFixed(1)} dB`} onChange={(value) => patch('Clip gain', { audio: { gain: value } })} />
         <Slider label="Pan" min={-1} max={1} step={0.01} value={clip.audio.pan} format={(v) => (v === 0 ? 'centre' : v < 0 ? `L ${Math.round(-v * 100)}` : `R ${Math.round(v * 100)}`)} onChange={(value) => patch('Clip pan', { audio: { pan: value } })} />
         <Slider label="Fade in" min={0} max={5} step={0.05} value={clip.audio.fadeInTicks / TICKS_PER_SECOND} format={(v) => `${v.toFixed(2)}s`} onChange={(value) => patch('Fade in', { audio: { fadeInTicks: Math.round(value * TICKS_PER_SECOND) } })} />
@@ -324,6 +423,7 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
               options={[
                 { value: 'blur', label: 'Blur' },
                 { value: 'pixelate', label: 'Pixelate' },
+                { value: 'spotlight', label: 'Spotlight dimmer' },
               ]}
             />
             <Slider label="X" min={0} max={1} step={0.01} value={mask.x} format={(v) => `${Math.round(v * 100)}%`} onChange={(value) => apply('Mask position', (p) => ops.updateMask(p, clip.id, index, { x: value }))} />
