@@ -16,7 +16,8 @@ export type ClipKind =
   | 'endscreen'
   | 'progressbar'
   | 'pulse'
-  | 'countdown';
+  | 'countdown'
+  | 'adjustment';
 
 export type BlendMode = 'normal' | 'screen' | 'multiply' | 'overlay';
 
@@ -58,7 +59,8 @@ export type CaptionPreset =
   | 'word-highlight'
   | 'devops-terminal'
   | 'hormozi-pop'
-  | 'minimal-pill';
+  | 'minimal-pill'
+  | (string & {});
 
 /** Personal branding reused by header and footer bars. Stored with the project only. */
 export interface BrandKit {
@@ -179,7 +181,11 @@ export interface AudioProps {
   processed: boolean;
   pan: number;
   duckUnderVoice?: boolean;
+  /** Preserve audio pitch during variable velocity speed ramps. */
+  preservePitch?: boolean;
 }
+
+export type EmphasisStyle = 'none' | 'highlight' | 'underline' | 'circle' | 'sparkle' | 'strikethrough';
 
 export interface TextProps {
   text: string;
@@ -193,12 +199,28 @@ export interface TextProps {
   fontWeight: number;
   fontSize: number;
   color: string;
+  /** Optional secondary color for dual-tone linear gradients. */
+  gradientToColor?: string;
   background: string;
   backgroundOpacity: number;
   align: 'left' | 'center' | 'right';
   maxWidth: number;
   letterSpacing: number;
   lineHeight: number;
+  /** Kinetic typography animation ID (77 animations, neutral: 'none'). */
+  animation?: string;
+  /** Pre-styled typography preset ID (34 presets). */
+  stylePreset?: string;
+  /** Emphasis decoration style (5 styles: highlight, underline, circle, sparkle, strikethrough). */
+  emphasis?: EmphasisStyle;
+  /** Stroke border styling for typography presets. */
+  strokeColor?: string;
+  strokeWidth?: number;
+  /** Calibrated drop-shadow & glow shader parameters. */
+  shadowColor?: string;
+  shadowBlur?: number;
+  glowColor?: string;
+  glowBlur?: number;
 }
 
 /** Keyboard shortcut chord rendered as keycaps for shell and IDE walkthroughs. */
@@ -299,11 +321,48 @@ export interface ClipEffects {
   /** When > 1, progressively reveals a diagram clip in discrete steps across its duration. */
   revealSteps?: number;
   revealDirection?: 'left-to-right' | 'top-to-bottom';
+  /** Active dynamic motion or shader video effect ID (148 effects, neutral: 'none'). */
+  videoEffect?: string;
+  /** Active color grading filter ID (77 presets, neutral: 'normal'). */
+  colorFilter?: string;
+  /** Active 3D Look-Up Table ID (16 cinematic LUTs, neutral: 'none'). */
+  lut?: string;
 }
 
+export type TransitionType =
+  | 'none'
+  | 'normal'
+  | 'fade'
+  | 'dissolve'
+  | 'slide-left'
+  | 'slide-right'
+  | 'wipe'
+  | (string & {});
+
 export interface TransitionProps {
-  type: 'none' | 'fade' | 'dissolve' | 'slide-left' | 'slide-right' | 'wipe';
+  type: TransitionType;
   durationTicks: Tick;
+  easing?: Easing;
+}
+
+export type AlphaMaskShape = 'none' | 'rectangle' | 'circle' | 'star' | 'heart' | 'split-screen';
+
+export interface AlphaMaskProps {
+  shape: AlphaMaskShape;
+  /** Soft-edge feathering radius in normalized units (0..1). */
+  feather: number;
+  /** Inverted mask toggle (true masks inside, false clips to inside). */
+  invert: boolean;
+  /** Center X in normalized canvas coordinates (0..1). */
+  x: number;
+  /** Center Y in normalized canvas coordinates (0..1). */
+  y: number;
+  /** Scale X (0..2). */
+  scaleX: number;
+  /** Scale Y (0..2). */
+  scaleY: number;
+  /** Rotation in clockwise degrees (0..360). */
+  rotationDeg?: number;
 }
 
 export interface Clip {
@@ -320,6 +379,8 @@ export interface Clip {
   freezeAt?: Tick;
   /** Playback speed; 1 = real time. Rendered frames are sourced at in + local*speed. */
   speed: number;
+  /** Active velocity remapping curve preset (8 curves, e.g. 'constant_speed', 'bullet_time'). */
+  speedCurve?: string;
   /** Clips sharing a linkId are cut/moved together. */
   linkId?: string;
   label?: string;
@@ -337,6 +398,8 @@ export interface Clip {
   countdown?: CountdownProps;
   presenter?: PresenterProps;
   masks: MaskProps[];
+  /** Geometric alpha compositing mask ('rectangle' | 'circle' | 'star' | 'heart' | 'split-screen'). */
+  alphaMask?: AlphaMaskProps;
   transitionIn: TransitionProps;
   transitionOut: TransitionProps;
   keyframes: KeyframeTrack[];

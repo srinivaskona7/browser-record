@@ -1,11 +1,20 @@
 import { TICKS_PER_SECOND, type Tick } from '../core/time';
-import type { CaptionCue, Clip, Project, StickerKind } from '../project/types';
+import type { AlphaMaskProps, CaptionCue, Clip, Project, StickerKind } from '../project/types';
+import {
+  resolveBoundaryTransition,
+  resolveCinematicLut,
+  resolveColorFilter,
+  resolveEmphasisStyle,
+  resolveTextAnimation,
+  resolveVideoEffect,
+} from '../effects/catalog';
 import { activeClipAt, activeCues, clipOpacity, keyframeValue, localTicks, sourceTicks } from './compositorQuery';
 import {
   clamp,
   computePlacement,
   cropRect,
   diagramRevealProgress,
+  ease,
   endScreenZone,
   presenterBubble,
   safeArea,
@@ -67,7 +76,8 @@ export function renderFrame(ctx: Ctx2D, project: Project, options: RenderOptions
       clip.kind === 'endscreen' ||
       clip.kind === 'progressbar' ||
       clip.kind === 'pulse' ||
-      clip.kind === 'countdown'
+      clip.kind === 'countdown' ||
+      clip.kind === 'adjustment'
     ) {
       overlayClips.push(clip);
       continue;
@@ -112,7 +122,8 @@ export function renderFrame(ctx: Ctx2D, project: Project, options: RenderOptions
   }
 
   for (const clip of overlayClips) {
-    if (clip.kind === 'title') drawTextClip(ctx, project, clip, ticks);
+    if (clip.kind === 'adjustment') drawAdjustmentClip(ctx, project, clip, ticks);
+    else if (clip.kind === 'title') drawTextClip(ctx, project, clip, ticks);
     else if (clip.kind === 'arrow') drawArrowClip(ctx, project, clip, ticks);
     else if (clip.kind === 'sticker') drawStickerClip(ctx, project, clip, ticks);
     else if (clip.kind === 'contact') drawContactClip(ctx, project, clip, ticks);
@@ -150,9 +161,24 @@ function drawMediaClip(
   region: { x: number; y: number; width: number; height: number },
 ): void {
   const local = localTicks(clip, ticks);
-  const zoom = keyframeValue(clip, 'zoom', local, clip.effects.zoom);
-  const panX = keyframeValue(clip, 'panX', local, clip.effects.panX);
-  const panY = keyframeValue(clip, 'panY', local, clip.effects.panY);
+  const localSec = local / TICKS_PER_SECOND;
+  const clipProgress = clamp(local / Math.max(1, clip.durationTicks), 0, 1);
+  const effectSpec = resolveVideoEffect(clip.effects.videoEffect);
+
+  let zoom = keyframeValue(clip, 'zoom', local, clip.effects.zoom);
+  let panX = keyframeValue(clip, 'panX', local, clip.effects.panX);
+  let panY = keyframeValue(clip, 'panY', local, clip.effects.panY);
+
+  if (effectSpec) {
+    const phase = localSec * effectSpec.frequencyHz * Math.PI * 2;
+    panX += Math.sin(phase) * effectSpec.shakeAmpX;
+    panY += Math.cos(phase * 1.27) * effectSpec.shakeAmpY;
+    zoom = Math.max(0.2, zoom * (1 + effectSpec.zoomDelta * Math.sin(clipProgress * Math.PI)));
+  }
+
+  const transState = computeTransitionTransform(clip, local, region.width, region.height);
+  zoom = Math.max(0.1, zoom * transState.scale);
+
   const placement = computePlacement({
     canvas: { width: region.width, height: region.height },
     source: { width: drawable.width, height: drawable.height },
@@ -182,14 +208,23 @@ function drawMediaClip(
           ? 'multiply'
           : 'overlay';
   }
+
+  if (clip.alphaMask && clip.alphaMask.shape !== 'none') {
+    applyAlphaMaskClip(ctx, clip.alphaMask, region);
+  }
+
   ctx.beginPath();
   const radius = Math.min(clip.transform.radius, placement.width / 2, placement.height / 2);
   const reveal =
     clip.effects.revealSteps && clip.effects.revealSteps > 1
       ? diagramRevealProgress(local, clip.durationTicks, clip.effects.revealSteps)
       : null;
-  const clipW = reveal && clip.effects.revealDirection !== 'top-to-bottom' ? placement.width * reveal.fraction : placement.width;
-  const clipH = reveal && clip.effects.revealDirection === 'top-to-bottom' ? placement.height * reveal.fraction : placement.height;
+  const clipW =
+    (reveal && clip.effects.revealDirection !== 'top-to-bottom' ? placement.width * reveal.fraction : placement.width) *
+    transState.wipeFractionX;
+  const clipH =
+    (reveal && clip.effects.revealDirection === 'top-to-bottom' ? placement.height * reveal.fraction : placement.height) *
+    transState.wipeFractionY;
   roundRect(ctx, placement.x + region.x, placement.y + region.y, clipW, clipH, radius);
   ctx.clip();
   ctx.globalAlpha = opacity;
@@ -200,12 +235,58 @@ function drawMediaClip(
   const cx = placement.x + placement.width / 2 + region.x;
   const cy = placement.y + placement.height / 2 + region.y;
   ctx.translate(cx, cy);
-  if (placement.rotation !== 0) ctx.rotate(placement.rotation);
-  const slideOffset = transitionOffset(clip, ticks, placement.width);
-  ctx.translate(-placement.width / 2 + slideOffset, -placement.height / 2);
-  ctx.filter = cssFilter(clip);
+
+  let totalRotRad = placement.rotation + (transState.rotationDeg * Math.PI) / 180;
+  if (effectSpec) {
+    if (effectSpec.spinRevolutions !== 0) {
+      totalRotRad += clipProgress * effectSpec.spinRevolutions * Math.PI * 2;
+    } else if (effectSpec.rotationAmpDeg !== 0) {
+      totalRotRad +=
+        ((Math.sin(localSec * effectSpec.frequencyHz * Math.PI * 2) * effectSpec.rotationAmpDeg) * Math.PI) / 180;
+    }
+  }
+  if (totalRotRad !== 0) ctx.rotate(totalRotRad);
+  if (effectSpec?.flipX || effectSpec?.flipY) {
+    ctx.scale(effectSpec.flipX ? -1 : 1, effectSpec.flipY ? -1 : 1);
+  }
+
+  ctx.translate(-placement.width / 2 + transState.offsetX, -placement.height / 2 + transState.offsetY);
+  ctx.filter = cssFilter(clip, localSec);
   ctx.drawImage(drawable.image, crop.x, crop.y, crop.width, crop.height, 0, 0, placement.width, placement.height);
+
+  // Chromatic aberration / RGB split shader pass
+  const rgbShift = (effectSpec?.rgbSplit ?? 0) + transState.rgbJitter;
+  if (rgbShift > 0) {
+    const shiftPx = Math.max(2, placement.width * rgbShift);
+    ctx.globalAlpha = opacity * 0.35;
+    ctx.drawImage(
+      drawable.image,
+      crop.x,
+      crop.y,
+      crop.width,
+      crop.height,
+      -shiftPx,
+      0,
+      placement.width,
+      placement.height,
+    );
+    ctx.drawImage(
+      drawable.image,
+      crop.x,
+      crop.y,
+      crop.width,
+      crop.height,
+      shiftPx,
+      0,
+      placement.width,
+      placement.height,
+    );
+    ctx.globalAlpha = opacity;
+  }
   ctx.filter = 'none';
+
+  // Color filter / 3D LUT split-tone & stylized overlays
+  drawGradingAndShaderOverlays(ctx, clip, placement.width, placement.height, localSec, opacity, transState.flashAlpha);
   ctx.restore();
 
   if (clip.transform.borderWidth > 0) {
@@ -218,9 +299,10 @@ function drawMediaClip(
     ctx.restore();
   }
 
-  if (clip.effects.vignette && clip.effects.vignette > 0) {
+  const vignetteStrength = Math.max(clip.effects.vignette ?? 0, effectSpec?.vignettePulse ?? 0);
+  if (vignetteStrength > 0) {
     ctx.save();
-    ctx.globalAlpha = opacity * clamp(clip.effects.vignette, 0, 1);
+    ctx.globalAlpha = opacity * clamp(vignetteStrength, 0, 1);
     const borderW = Math.max(8, Math.min(region.width, region.height) * 0.08);
     ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
     ctx.lineWidth = borderW;
@@ -236,14 +318,171 @@ function drawMediaClip(
   for (const mask of clip.masks) drawMask(ctx, mask, region, opacity);
 }
 
-function transitionOffset(clip: Clip, ticks: Tick, width: number): number {
-  const local = localTicks(clip, ticks);
+interface TransitionRenderState {
+  offsetX: number;
+  offsetY: number;
+  scale: number;
+  rotationDeg: number;
+  wipeFractionX: number;
+  wipeFractionY: number;
+  flashAlpha: number;
+  rgbJitter: number;
+}
+
+function computeTransitionTransform(
+  clip: Clip,
+  local: Tick,
+  width: number,
+  height: number,
+): TransitionRenderState {
+  const neutral: TransitionRenderState = {
+    offsetX: 0,
+    offsetY: 0,
+    scale: 1,
+    rotationDeg: 0,
+    wipeFractionX: 1,
+    wipeFractionY: 1,
+    flashAlpha: 0,
+    rgbJitter: 0,
+  };
   const trans = clip.transitionIn;
-  if (!trans || trans.type !== 'slide-left' && trans.type !== 'slide-right' && trans.type !== 'wipe') return 0;
-  if (trans.durationTicks <= 0) return 0;
-  const progress = clamp(local / trans.durationTicks, 0, 1);
-  const direction = trans.type === 'slide-left' ? -1 : 1;
-  return direction * (1 - progress) * width;
+  if (!trans || trans.type === 'none' || trans.type === 'normal' || trans.durationTicks <= 0 || local >= trans.durationTicks) {
+    return neutral;
+  }
+  const rawProgress = clamp(local / trans.durationTicks, 0, 1);
+  const spec = resolveBoundaryTransition(trans.type);
+  const progress = ease(rawProgress, trans.easing ?? spec?.easing ?? 'ease-out');
+  const rem = 1 - progress;
+
+  if (trans.type === 'slide-left' || trans.type === 'slide-right' || trans.type === 'wipe') {
+    const direction = trans.type === 'slide-left' ? -1 : 1;
+    return { ...neutral, offsetX: direction * rem * width };
+  }
+  if (!spec) return neutral;
+
+  return {
+    offsetX: spec.directionX * rem * width,
+    offsetY: spec.directionY * rem * height,
+    scale: 1 + (spec.zoomScale - 1) * rem,
+    rotationDeg: spec.rotationDeg * rem,
+    wipeFractionX: spec.mode === 'wipe-left' || spec.mode === 'wipe-right' ? Math.max(0.02, progress) : 1,
+    wipeFractionY: spec.mode === 'wipe-up' || spec.mode === 'wipe-down' ? Math.max(0.02, progress) : 1,
+    flashAlpha: spec.flashStrength * rem,
+    rgbJitter: spec.rgbJitter * rem,
+  };
+}
+
+function applyAlphaMaskClip(
+  ctx: Ctx2D,
+  mask: AlphaMaskProps,
+  region: { x: number; y: number; width: number; height: number },
+): void {
+  const cx = region.x + mask.x * region.width;
+  const cy = region.y + mask.y * region.height;
+  const rx = Math.max(2, (region.width * mask.scaleX) / 2);
+  const ry = Math.max(2, (region.height * mask.scaleY) / 2);
+  if (mask.feather > 0) {
+    ctx.shadowColor = 'rgba(0,0,0,0.6)';
+    ctx.shadowBlur = mask.feather * 40;
+  }
+  ctx.beginPath();
+  if (mask.invert) {
+    ctx.rect(region.x, region.y, region.width, region.height);
+  }
+  if (mask.shape === 'circle') {
+    ctx.arc(cx, cy, Math.min(rx, ry), 0, Math.PI * 2, mask.invert);
+  } else if (mask.shape === 'split-screen') {
+    ctx.rect(region.x, region.y, region.width * clamp(mask.scaleX, 0.05, 1), region.height);
+  } else if (mask.shape === 'star') {
+    const spikes = 5;
+    const outerR = Math.min(rx, ry);
+    const innerR = outerR * 0.45;
+    for (let i = 0; i < spikes * 2; i += 1) {
+      const r = i % 2 === 0 ? outerR : innerR;
+      const angle = (i * Math.PI) / spikes - Math.PI / 2;
+      const px = cx + Math.cos(angle) * r;
+      const py = cy + Math.sin(angle) * r;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+  } else if (mask.shape === 'heart') {
+    const w = rx * 2;
+    const h = ry * 2;
+    const topY = cy - h * 0.3;
+    ctx.moveTo(cx, cy + h * 0.45);
+    ctx.quadraticCurveTo(cx - w * 0.55, cy, cx - w * 0.28, topY);
+    ctx.quadraticCurveTo(cx, topY - h * 0.15, cx, cy - h * 0.05);
+    ctx.quadraticCurveTo(cx, topY - h * 0.15, cx + w * 0.28, topY);
+    ctx.quadraticCurveTo(cx + w * 0.55, cy, cx, cy + h * 0.45);
+    ctx.closePath();
+  } else {
+    ctx.rect(cx - rx, cy - ry, rx * 2, ry * 2);
+  }
+  ctx.clip();
+}
+
+function drawGradingAndShaderOverlays(
+  ctx: Ctx2D,
+  clip: Clip,
+  width: number,
+  height: number,
+  localSec: number,
+  opacity: number,
+  transitionFlashAlpha: number,
+): void {
+  const filterSpec = resolveColorFilter(clip.effects.colorFilter);
+  if (filterSpec && filterSpec.tintOpacity > 0) {
+    ctx.fillStyle = hexToRgba(filterSpec.tintHex, filterSpec.tintOpacity * opacity);
+    ctx.fillRect(0, 0, width, height);
+  }
+  const lutSpec = resolveCinematicLut(clip.effects.lut);
+  if (lutSpec && lutSpec.tintStrength > 0) {
+    const grad = ctx.createLinearGradient(0, 0, width, height);
+    grad.addColorStop(0, hexToRgba(lutSpec.shadowsHex, lutSpec.tintStrength * opacity));
+    grad.addColorStop(1, hexToRgba(lutSpec.highlightsHex, lutSpec.tintStrength * opacity));
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, width, height);
+  }
+  const effectSpec = resolveVideoEffect(clip.effects.videoEffect);
+  if (effectSpec) {
+    if (effectSpec.scanlines > 0) {
+      ctx.fillStyle = `rgba(0, 0, 0, ${effectSpec.scanlines * 0.45})`;
+      const step = Math.max(4, Math.round(height / 90));
+      for (let y = 0; y < height; y += step * 2) {
+        ctx.fillRect(0, y, width, step);
+      }
+    }
+    if (effectSpec.lightLeak > 0) {
+      const leakGrad = ctx.createLinearGradient(0, 0, width * 0.65, height * 0.65);
+      leakGrad.addColorStop(0, `rgba(255, 140, 66, ${effectSpec.lightLeak * opacity})`);
+      leakGrad.addColorStop(1, 'rgba(255, 140, 66, 0)');
+      ctx.fillStyle = leakGrad;
+      ctx.fillRect(0, 0, width, height);
+    }
+    if (effectSpec.flashAmp > 0) {
+      const pulse = Math.max(0, Math.sin(localSec * effectSpec.frequencyHz * Math.PI * 2));
+      ctx.fillStyle = `rgba(255, 255, 255, ${pulse * effectSpec.flashAmp * opacity})`;
+      ctx.fillRect(0, 0, width, height);
+    }
+  }
+  if (transitionFlashAlpha > 0) {
+    ctx.fillStyle = `rgba(255, 255, 255, ${clamp(transitionFlashAlpha, 0, 1)})`;
+    ctx.fillRect(0, 0, width, height);
+  }
+}
+
+function drawAdjustmentClip(ctx: Ctx2D, project: Project, clip: Clip, ticks: Tick): void {
+  const opacity = clipOpacity(clip, ticks);
+  if (opacity <= 0) return;
+  const { width, height } = project.canvas;
+  const localSec = localTicks(clip, ticks) / TICKS_PER_SECOND;
+  ctx.save();
+  if (clip.alphaMask && clip.alphaMask.shape !== 'none') {
+    applyAlphaMaskClip(ctx, clip.alphaMask, { x: 0, y: 0, width, height });
+  }
+  drawGradingAndShaderOverlays(ctx, clip, width, height, localSec, opacity, 0);
+  ctx.restore();
 }
 
 function drawMask(
@@ -420,8 +659,12 @@ export function applyChromaKey(ctx: Ctx2D, rect: { x: number; y: number; width: 
   }
 }
 
-function cssFilter(clip: Clip): string {
+function cssFilter(clip: Clip, localSec = 0): string {
   const { brightness, contrast, exposure, saturation, temperature, vibrance } = clip.effects;
+  const filterSpec = resolveColorFilter(clip.effects.colorFilter);
+  const lutSpec = resolveCinematicLut(clip.effects.lut);
+  const effectSpec = resolveVideoEffect(clip.effects.videoEffect);
+
   const parts: string[] = [];
   const b = 1 + brightness + exposure * 0.5;
   if (b !== 1) parts.push(`brightness(${clamp(b, 0, 3)})`);
@@ -429,7 +672,15 @@ function cssFilter(clip: Clip): string {
   if (c !== 1) parts.push(`contrast(${clamp(c, 0, 3)})`);
   const s = 1 + saturation + vibrance * 0.5;
   if (s !== 1) parts.push(`saturate(${clamp(s, 0, 3)})`);
-  if (temperature !== 0) parts.push(temperature > 0 ? `sepia(${clamp(temperature, 0, 1)})` : `hue-rotate(${temperature * 30}deg)`);
+  const sepiaVal = Math.max(temperature > 0 ? temperature : 0, filterSpec?.sepia ?? 0);
+  if (sepiaVal > 0) parts.push(`sepia(${clamp(sepiaVal, 0, 1)})`);
+  let hueDeg = temperature < 0 ? temperature * 30 : 0;
+  if (filterSpec?.hueRotateDeg) hueDeg += filterSpec.hueRotateDeg;
+  if (effectSpec?.hueSwingDeg) hueDeg += Math.sin(localSec * effectSpec.frequencyHz * Math.PI * 2) * effectSpec.hueSwingDeg;
+  if (lutSpec && lutSpec.gamma !== 1) {
+    parts.push(`brightness(${clamp(lutSpec.gamma, 0.5, 1.5)})`);
+  }
+  if (hueDeg !== 0) parts.push(`hue-rotate(${Math.round(hueDeg)}deg)`);
   return parts.join(' ') || 'none';
 }
 
@@ -666,10 +917,21 @@ function drawTextClip(ctx: Ctx2D, project: Project, clip: Clip, ticks: Tick): vo
   const height = project.canvas.height;
   const maxWidth = width * text.maxWidth;
   const fontSize = Math.max(8, text.fontSize * (width / 1920));
+  const animSpec = resolveTextAnimation(text.animation);
+  const emphasisSpec = resolveEmphasisStyle(text.emphasis);
+
   ctx.save();
+  if (clip.alphaMask && clip.alphaMask.shape !== 'none') {
+    applyAlphaMaskClip(ctx, clip.alphaMask, { x: 0, y: 0, width, height });
+  }
   ctx.globalAlpha = opacity;
   const elapsed = Math.max(0, ticks - clip.startTicks) / Math.max(1, clip.durationTicks);
-  const shown = text.typewriter ? text.text.slice(0, Math.floor(text.text.length * Math.min(1, elapsed / 0.6))) : text.text;
+  const entranceProgress = animSpec ? clamp(elapsed / Math.max(0.05, animSpec.entranceFraction), 0, 1) : 1;
+  const isTypewriter = Boolean(text.typewriter) || animSpec?.behavior === 'typewriter';
+  const shown = isTypewriter
+    ? text.text.slice(0, Math.floor(text.text.length * Math.min(1, elapsed / 0.6)))
+    : text.text;
+
   const lines = wrapLines(ctx, shown, {
     fontFamily: text.fontFamily,
     fontSize,
@@ -683,8 +945,35 @@ function drawTextClip(ctx: Ctx2D, project: Project, clip: Clip, ticks: Tick): vo
   ctx.textBaseline = 'middle';
   const lineHeight = fontSize * text.lineHeight;
   const blockHeight = lines.length * lineHeight;
-  const centerX = width * clip.transform.x;
-  const startY = height * clip.transform.y - blockHeight / 2 + lineHeight / 2;
+
+  let animOffsetX = 0;
+  let animOffsetY = 0;
+  let animScale = 1;
+  if (animSpec) {
+    const rem = 1 - ease(entranceProgress, 'ease-out');
+    animOffsetX = animSpec.offsetX * width * rem;
+    animOffsetY = animSpec.offsetY * height * rem;
+    animScale = animSpec.initialScale + (1 - animSpec.initialScale) * ease(entranceProgress, 'ease-out');
+    if (animSpec.behavior === 'word-bounce' || animSpec.behavior === 'wave') {
+      animOffsetY += Math.sin(elapsed * Math.PI * 4) * fontSize * 0.14 * (1 - elapsed * 0.5);
+    } else if (animSpec.behavior === 'glitch') {
+      animOffsetX += Math.sin(elapsed * Math.PI * 18) * fontSize * 0.08;
+    }
+  }
+
+  const centerX = width * clip.transform.x + animOffsetX;
+  const centerY = height * clip.transform.y + animOffsetY;
+  if (animScale !== 1 || (animSpec && animSpec.rotationDeg !== 0)) {
+    ctx.translate(centerX, centerY);
+    ctx.scale(animScale, animScale);
+    if (animSpec && animSpec.rotationDeg !== 0) {
+      const remRot = ((1 - entranceProgress) * animSpec.rotationDeg * Math.PI) / 180;
+      ctx.rotate(remRot);
+    }
+    ctx.translate(-centerX, -centerY);
+  }
+
+  const startY = centerY - blockHeight / 2 + lineHeight / 2;
   const widest = Math.max(...lines.map((line) => ctx.measureText(line).width), 1);
   const padX = fontSize * 0.4;
   const boxX = text.align === 'left' ? centerX - maxWidth / 2 - padX : centerX - widest / 2 - padX;
@@ -698,6 +987,20 @@ function drawTextClip(ctx: Ctx2D, project: Project, clip: Clip, ticks: Tick): vo
       blockHeight,
     );
   }
+
+  if (emphasisSpec?.id === 'highlight') {
+    ctx.fillStyle = hexToRgba(emphasisSpec.accentColor, 0.38);
+    ctx.fillRect(boxX, startY - lineHeight * 0.42, boxW, blockHeight * 0.92);
+  }
+
+  if (text.glowColor && (text.glowBlur ?? 0) > 0) {
+    ctx.shadowColor = text.glowColor;
+    ctx.shadowBlur = text.glowBlur!;
+  } else if (text.shadowColor && (text.shadowBlur ?? 0) > 0) {
+    ctx.shadowColor = text.shadowColor;
+    ctx.shadowBlur = text.shadowBlur!;
+  }
+
   const highlighted = text.highlightLines && text.highlightLines.length > 0 ? new Set(text.highlightLines) : null;
   lines.forEach((line, index) => {
     const lineY = startY + index * lineHeight;
@@ -718,10 +1021,52 @@ function drawTextClip(ctx: Ctx2D, project: Project, clip: Clip, ticks: Tick): vo
       ctx.fillStyle = '#f0f6fc';
       ctx.fillText(rest, x + promptW, lineY);
     } else {
-      ctx.fillStyle = text.cliMode ? '#8b949e' : text.color;
+      if (text.strokeWidth && text.strokeWidth > 0) {
+        ctx.strokeStyle = text.strokeColor ?? '#000000';
+        ctx.lineWidth = text.strokeWidth * (width / 1920);
+        ctx.lineJoin = 'round';
+        ctx.strokeText(line, x, lineY);
+      }
+      if (text.gradientToColor && !text.cliMode) {
+        const grad = ctx.createLinearGradient(boxX, lineY - fontSize / 2, boxX + boxW, lineY + fontSize / 2);
+        grad.addColorStop(0, text.color);
+        grad.addColorStop(1, text.gradientToColor);
+        ctx.fillStyle = grad;
+      } else {
+        ctx.fillStyle = text.cliMode ? '#8b949e' : text.color;
+      }
       ctx.fillText(line, x, lineY);
     }
   });
+
+  if (emphasisSpec && emphasisSpec.id !== 'highlight') {
+    ctx.strokeStyle = emphasisSpec.accentColor;
+    ctx.fillStyle = emphasisSpec.accentColor;
+    ctx.lineWidth = Math.max(2, fontSize * emphasisSpec.strokeWidthRatio);
+    if (emphasisSpec.id === 'underline') {
+      const underY = startY + (lines.length - 1) * lineHeight + fontSize * 0.48;
+      ctx.beginPath();
+      ctx.moveTo(boxX + padX * 0.5, underY);
+      ctx.lineTo(boxX + boxW - padX * 0.5, underY);
+      ctx.stroke();
+    } else if (emphasisSpec.id === 'strikethrough') {
+      const midY = startY + ((lines.length - 1) * lineHeight) / 2;
+      ctx.beginPath();
+      ctx.moveTo(boxX + padX * 0.4, midY);
+      ctx.lineTo(boxX + boxW - padX * 0.4, midY);
+      ctx.stroke();
+    } else if (emphasisSpec.id === 'circle') {
+      ctx.beginPath();
+      roundRect(ctx, boxX - padX * 0.3, startY - lineHeight * 0.65, boxW + padX * 0.6, blockHeight + lineHeight * 0.3, blockHeight * 0.6);
+      ctx.stroke();
+    } else if (emphasisSpec.id === 'sparkle') {
+      const r = Math.max(4, fontSize * 0.18);
+      ctx.beginPath();
+      ctx.arc(boxX, startY - lineHeight * 0.35, r, 0, Math.PI * 2);
+      ctx.arc(boxX + boxW, startY + blockHeight - lineHeight * 0.65, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
   ctx.restore();
 }
 

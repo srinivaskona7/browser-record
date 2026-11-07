@@ -1,5 +1,6 @@
 import type { Tick } from '../core/time';
 import type { Clip, KeyframeTrack, Project, Track } from '../project/types';
+import { resolveSpeedCurveProfile } from '../effects/catalog';
 import { clamp, ease } from './layout';
 
 /** Clip active at a timeline position (end exclusive). */
@@ -14,10 +15,32 @@ export function localTicks(clip: Clip, timelineTicks: Tick): Tick {
   return clamp(timelineTicks - clip.startTicks, 0, clip.durationTicks);
 }
 
-/** Where to read the source media, accounting for trim-in and speed. */
+/** Instantaneous playback velocity multiplier at a timeline position, accounting for speed curves. */
+export function instantaneousSpeed(clip: Clip, timelineTicks: Tick): number {
+  if (clip.freezeAt !== undefined) return 0;
+  if (clip.speedCurve) {
+    const curve = resolveSpeedCurveProfile(clip.speedCurve);
+    if (curve) {
+      const u = clamp(localTicks(clip, timelineTicks) / Math.max(1, clip.durationTicks), 0, 1);
+      return curve.velocityAt(u);
+    }
+  }
+  return clip.speed || 1;
+}
+
+/** Where to read the source media, accounting for trim-in, constant speed, and variable speed curves. */
 export function sourceTicks(clip: Clip, timelineTicks: Tick): Tick {
   if (clip.freezeAt !== undefined) return clip.freezeAt;
-  return clip.inTicks + Math.round(localTicks(clip, timelineTicks) * (clip.speed || 1));
+  const local = localTicks(clip, timelineTicks);
+  if (clip.speedCurve) {
+    const curve = resolveSpeedCurveProfile(clip.speedCurve);
+    if (curve && curve.id !== 'constant_speed') {
+      const u = clamp(local / Math.max(1, clip.durationTicks), 0, 1);
+      const integrated = curve.integralAt(u);
+      return clip.inTicks + Math.round(clip.durationTicks * integrated);
+    }
+  }
+  return clip.inTicks + Math.round(local * (clip.speed || 1));
 }
 
 export function keyframeValue(
@@ -53,8 +76,10 @@ export function clipOpacity(clip: Clip, timelineTicks: Tick): number {
   const local = localTicks(clip, timelineTicks);
   const base = keyframeValue(clip, 'opacity', local, clip.transform.opacity);
   let factor = 1;
-  const fadeIn = clip.transitionIn?.type === 'none' ? 0 : clip.transitionIn?.durationTicks ?? 0;
-  const fadeOut = clip.transitionOut?.type === 'none' ? 0 : clip.transitionOut?.durationTicks ?? 0;
+  const isNeutralIn = !clip.transitionIn || clip.transitionIn.type === 'none' || clip.transitionIn.type === 'normal';
+  const isNeutralOut = !clip.transitionOut || clip.transitionOut.type === 'none' || clip.transitionOut.type === 'normal';
+  const fadeIn = isNeutralIn ? 0 : clip.transitionIn.durationTicks ?? 0;
+  const fadeOut = isNeutralOut ? 0 : clip.transitionOut.durationTicks ?? 0;
   if (fadeIn > 0 && local < fadeIn) factor = Math.min(factor, local / fadeIn);
   const fromEnd = clip.durationTicks - local;
   if (fadeOut > 0 && fromEnd < fadeOut) factor = Math.min(factor, fromEnd / fadeOut);

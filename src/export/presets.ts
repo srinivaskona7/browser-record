@@ -9,6 +9,14 @@ export type PresetId =
   | 'shorts-vertical'
   | 'insta-square-1080'
   | 'insta-portrait-4x5'
+  | 'youtube-4k-longform'
+  | 'youtube-1080p-hd'
+  | 'youtube-shorts'
+  | 'insta-reels'
+  | 'linkedin-feed-1080p'
+  | 'linkedin-square-1080'
+  | 'linkedin-portrait-4x5'
+  | 'linkedin-vertical-9x16'
   | 'custom';
 
 export interface ExportPreset {
@@ -23,6 +31,8 @@ export interface ExportPreset {
   container: 'mp4' | 'webm';
   /** Preferred codec family order; the first supported wins. */
   codecPreference: Array<'h264' | 'vp9' | 'av1' | 'hevc'>;
+  /** Optional target platform tag ('youtube' | 'instagram' | 'linkedin' | 'universal'). */
+  platform?: 'youtube' | 'instagram' | 'linkedin' | 'universal';
   /** Optional platform duration cap in seconds (e.g. 60s for Shorts/Reels). */
   maxDurationSeconds?: number;
   /** Optional platform file size ceiling in bytes. */
@@ -123,6 +133,115 @@ export const PRESETS: ExportPreset[] = [
     audioBitrate: 192_000,
     container: 'mp4',
     codecPreference: ['h264', 'vp9', 'av1'],
+    platform: 'youtube',
+  },
+  {
+    id: 'youtube-4k-longform',
+    label: 'YouTube 4K Long-Form (16:9)',
+    description: '3840×2160 16:9 MP4 tuned for YouTube 4K tutorials, coding walkthroughs, and deep-dives.',
+    width: 3840,
+    height: 2160,
+    videoBitrate: 14_000_000,
+    audioBitrate: 192_000,
+    container: 'mp4',
+    codecPreference: ['h264', 'vp9', 'av1'],
+    platform: 'youtube',
+  },
+  {
+    id: 'youtube-1080p-hd',
+    label: 'YouTube 1080p Full HD (16:9)',
+    description: '1920×1080 16:9 MP4 with crisp 8 Mbps video and 192 kbps stereo audio for standard YouTube uploads.',
+    width: 1920,
+    height: 1080,
+    videoBitrate: 8_000_000,
+    audioBitrate: 192_000,
+    container: 'mp4',
+    codecPreference: ['h264', 'vp9'],
+    platform: 'youtube',
+  },
+  {
+    id: 'youtube-shorts',
+    label: 'YouTube Shorts Vertical (9:16)',
+    description: '1080×1920 9:16 vertical MP4 for YouTube Shorts (60s cap, 60 MB ceiling).',
+    width: 1080,
+    height: 1920,
+    videoBitrate: 8_000_000,
+    audioBitrate: 192_000,
+    container: 'mp4',
+    codecPreference: ['h264', 'vp9'],
+    platform: 'youtube',
+    maxDurationSeconds: 60,
+    maxBytes: 60_000_000,
+  },
+  {
+    id: 'insta-reels',
+    label: 'Instagram Reels & Stories (9:16)',
+    description: '1080×1920 9:16 vertical MP4 for Instagram Reels and Stories (90s cap, 100 MB ceiling).',
+    width: 1080,
+    height: 1920,
+    videoBitrate: 7_000_000,
+    audioBitrate: 160_000,
+    container: 'mp4',
+    codecPreference: ['h264', 'vp9'],
+    platform: 'instagram',
+    maxDurationSeconds: 90,
+    maxBytes: 100_000_000,
+  },
+  {
+    id: 'linkedin-feed-1080p',
+    label: 'LinkedIn Feed Landscape (16:9)',
+    description: '1920×1080 16:9 MP4 for LinkedIn engineering demos and thought-leadership posts (10 min cap, 200 MB ceiling).',
+    width: 1920,
+    height: 1080,
+    videoBitrate: 6_000_000,
+    audioBitrate: 160_000,
+    container: 'mp4',
+    codecPreference: ['h264', 'vp9'],
+    platform: 'linkedin',
+    maxDurationSeconds: 600,
+    maxBytes: 200_000_000,
+  },
+  {
+    id: 'linkedin-square-1080',
+    label: 'LinkedIn Feed Square Post (1:1)',
+    description: '1080×1080 1:1 square MP4 for LinkedIn desktop and mobile feed posts (10 min cap, 200 MB ceiling).',
+    width: 1080,
+    height: 1080,
+    videoBitrate: 5_000_000,
+    audioBitrate: 160_000,
+    container: 'mp4',
+    codecPreference: ['h264', 'vp9'],
+    platform: 'linkedin',
+    maxDurationSeconds: 600,
+    maxBytes: 200_000_000,
+  },
+  {
+    id: 'linkedin-portrait-4x5',
+    label: 'LinkedIn Mobile Portrait Post (4:5)',
+    description: '1080×1350 4:5 portrait MP4 for maximum LinkedIn mobile feed real estate (10 min cap, 200 MB ceiling).',
+    width: 1080,
+    height: 1350,
+    videoBitrate: 5_500_000,
+    audioBitrate: 160_000,
+    container: 'mp4',
+    codecPreference: ['h264', 'vp9'],
+    platform: 'linkedin',
+    maxDurationSeconds: 600,
+    maxBytes: 200_000_000,
+  },
+  {
+    id: 'linkedin-vertical-9x16',
+    label: 'LinkedIn Vertical Video (9:16)',
+    description: '1080×1920 9:16 vertical MP4 for LinkedIn vertical video feeds (3 min cap, 200 MB ceiling).',
+    width: 1080,
+    height: 1920,
+    videoBitrate: 6_000_000,
+    audioBitrate: 160_000,
+    container: 'mp4',
+    codecPreference: ['h264', 'vp9'],
+    platform: 'linkedin',
+    maxDurationSeconds: 180,
+    maxBytes: 200_000_000,
   },
 ];
 
@@ -140,8 +259,11 @@ export function defaultPresetId(canvas: { width: number; height: number }): Pres
   const matches = PRESETS.filter(
     (preset) => !preset.maxDurationSeconds && preset.width === canvas.width && preset.height === canvas.height,
   );
-  // Three 4K presets share one size; "balanced" is the documented default.
-  const preferred = matches.find((preset) => preset.id === '4k-balanced') ?? matches[0];
+  // Three 4K presets share one size; "balanced" is the documented default, and "1080p-share" for 1080p.
+  const preferred =
+    matches.find((preset) => preset.id === '4k-balanced') ??
+    matches.find((preset) => preset.id === '1080p-share') ??
+    matches[0];
   return preferred?.id ?? 'custom';
 }
 

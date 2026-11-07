@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Tick } from '../core/time';
-import type { Project, Clip } from './types';
+import type { AlphaMaskProps, Project, Clip } from './types';
 import * as ops from './ops';
 
 export interface HistoryEntry {
@@ -64,6 +64,20 @@ export interface EditorState {
   markSaved: (savedRevision: number, projectId: string) => void;
   /** Update project fields without a user-visible undo entry (playhead, notes). */
   softUpdate: (fn: (project: Project) => Project) => void;
+
+  // Tool actions bound to the active selection / project
+  applyEffect: (effect: string, clipId?: string) => void;
+  addTransition: (filterId: string, clipId?: string) => void;
+  applyFilter: (filter: string, clipId?: string) => void;
+  applyLUT: (table: string, clipId?: string) => void;
+  setTextAnimation: (animation: string, clipId?: string) => void;
+  applyTextPreset: (name: string, clipId?: string) => void;
+  setTextFont: (family: string, clipId?: string) => void;
+  setEmphasis: (style: string, clipId?: string) => void;
+  setCaptionStyle: (style: string) => void;
+  selectSpeedPanelPreset: (preset: string, clipId?: string) => void;
+  setMask: (shape: string, clipId?: string, options?: Partial<AlphaMaskProps>) => void;
+  applyPlatformPreset: (presetId: string) => void;
 }
 
 function cloneProject(project: Project): Project {
@@ -195,6 +209,84 @@ export const useEditor = create<EditorState>((set, get) => ({
     const next = fn(state.project);
     if (next === state.project) return;
     set({ project: next, revision: state.revision + 1 });
+  },
+
+  applyEffect: (effect, clipId) => {
+    const targetId = clipId ?? get().selectedClipIds[0];
+    get().apply(`Video effect: ${effect}`, (p) =>
+      targetId ? ops.applyEffect(p, targetId, effect) : ops.applyEffect(p, effect),
+    );
+  },
+
+  addTransition: (filterId, clipId) => {
+    const targetId = clipId ?? get().selectedClipIds[0];
+    get().apply(`Transition: ${filterId}`, (p) =>
+      targetId ? ops.addTransition(p, targetId, filterId) : ops.addTransition(p, filterId),
+    );
+  },
+
+  applyFilter: (filter, clipId) => {
+    const targetId = clipId ?? get().selectedClipIds[0];
+    get().apply(`Color filter: ${filter}`, (p) =>
+      targetId ? ops.applyFilter(p, targetId, filter) : ops.applyFilter(p, filter),
+    );
+  },
+
+  applyLUT: (table, clipId) => {
+    const targetId = clipId ?? get().selectedClipIds[0];
+    get().apply(`3D LUT: ${table}`, (p) =>
+      targetId ? ops.applyLUT(p, targetId, table) : ops.applyLUT(p, table),
+    );
+  },
+
+  setTextAnimation: (animation, clipId) => {
+    const targetId = clipId ?? get().selectedClipIds[0];
+    get().apply(`Text animation: ${animation}`, (p) =>
+      targetId ? ops.setTextAnimation(p, targetId, animation) : ops.setTextAnimation(p, animation),
+    );
+  },
+
+  applyTextPreset: (name, clipId) => {
+    const targetId = clipId ?? get().selectedClipIds[0];
+    get().apply(`Text preset: ${name}`, (p) =>
+      targetId ? ops.applyTextPreset(p, targetId, name) : ops.applyTextPreset(p, name),
+    );
+  },
+
+  setTextFont: (family, clipId) => {
+    const targetId = clipId ?? get().selectedClipIds[0];
+    get().apply(`Font: ${family}`, (p) =>
+      targetId ? ops.setTextFont(p, targetId, family) : ops.setTextFont(p, family),
+    );
+  },
+
+  setEmphasis: (style, clipId) => {
+    const targetId = clipId ?? get().selectedClipIds[0];
+    get().apply(`Emphasis: ${style}`, (p) =>
+      targetId ? ops.setEmphasis(p, targetId, style) : ops.setEmphasis(p, style),
+    );
+  },
+
+  setCaptionStyle: (style) => {
+    get().apply(`Caption style: ${style}`, (p) => ops.setCaptionStyle(p, style));
+  },
+
+  selectSpeedPanelPreset: (preset, clipId) => {
+    const targetId = clipId ?? get().selectedClipIds[0];
+    get().apply(`Speed curve: ${preset}`, (p) =>
+      targetId ? ops.selectSpeedPanelPreset(p, targetId, preset) : ops.selectSpeedPanelPreset(p, preset),
+    );
+  },
+
+  setMask: (shape, clipId, options) => {
+    const targetId = clipId ?? get().selectedClipIds[0];
+    get().apply(`Alpha mask: ${shape}`, (p) =>
+      targetId ? ops.setMask(p, targetId, shape, options) : ops.setMask(p, shape, options),
+    );
+  },
+
+  applyPlatformPreset: (presetId) => {
+    get().apply(`Platform preset: ${presetId}`, (p) => ops.applyPlatformPreset(p, presetId));
   },
 }));
 

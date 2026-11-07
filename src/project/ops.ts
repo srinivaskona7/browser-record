@@ -3,6 +3,7 @@ import { newId } from '../core/ids';
 import { assetById, createClip, createTrack, defaultEffects, defaultTransform, projectDuration } from './factory';
 import type {
   AlertBannerTone,
+  AlphaMaskProps,
   BlendMode,
   BrandKit,
   CaptionCue,
@@ -10,6 +11,7 @@ import type {
   CaptionStyle,
   Clip,
   ColorLookPreset,
+  EmphasisStyle,
   PipPreset,
   Project,
   ShadowGlowPreset,
@@ -20,6 +22,23 @@ import type {
   TransitionProps,
   VoicePreset,
 } from './types';
+import {
+  clamp01,
+  normalizeHexColor,
+  normalizeRotationDeg,
+  resolveAlphaMaskShape,
+  resolveBoundaryTransition,
+  resolveCaptionStylePreset,
+  resolveCinematicLut,
+  resolveColorFilter,
+  resolveEmphasisStyle,
+  resolveFontFamily,
+  resolvePlatformPreset,
+  resolveSpeedCurveProfile,
+  resolveTextAnimation,
+  resolveTextStylePreset,
+  resolveVideoEffect,
+} from '../effects/catalog';
 import { voicePresetOptions } from '../audio/chain';
 import { SFX_PRESETS, type SfxKind } from '../audio/sfx';
 import { sourceTicks } from '../render/compositorQuery';
@@ -1095,6 +1114,50 @@ export function reframe9x16(project: Project): Project {
 }
 
 /**
+ * 16:9 widescreen reframe preset (1920×1080 or 3840×2160 4K) for YouTube Long-Form
+ * and LinkedIn Landscape feeds.
+ */
+export function reframe16x9(project: Project, is4k = false): Project {
+  const width = is4k ? 3840 : 1920;
+  const height = is4k ? 2160 : 1080;
+  return {
+    ...project,
+    canvas: { ...project.canvas, width, height, safeMargin: 0.05 },
+    tracks: project.tracks.map((track) => {
+      if (track.kind !== 'video' || track.locked) return track;
+      return {
+        ...track,
+        clips: track.clips.map((clip) => {
+          if (clip.presenter) {
+            return {
+              ...clip,
+              presenter: {
+                ...clip.presenter,
+                layout: 'bubble' as const,
+                shape: 'circle' as const,
+                corner: 'bottom-right' as const,
+                size: 0.24,
+                margin: 0.03,
+              },
+            };
+          }
+          if (clip.kind === 'contact') {
+            return { ...clip, transform: { ...clip.transform, x: 0.5, y: 0.94 } };
+          }
+          if (clip.kind === 'media' && track.name === 'Screen') {
+            return {
+              ...clip,
+              transform: { ...clip.transform, x: 0.5, y: 0.5, scale: 1, fit: 'contain' },
+            };
+          }
+          return clip;
+        }),
+      };
+    }),
+  };
+}
+
+/**
  * Vertical 9:16 reframe that follows the presenter/action horizontally across
  * the screen clip using panX keyframes derived from presenter corners or markers.
  */
@@ -1225,7 +1288,7 @@ export function autoBlurSecretsOnClip(
   return updateClip(project, clipId, { masks });
 }
 
-/** Apply a named caption style preset, including DevOps terminal and short-form presets. */
+/** Apply a named caption style preset, including all 39 social, broadcast, and DevOps presets. */
 export function applyCaptionPreset(style: CaptionStyle, preset: CaptionPreset): CaptionStyle {
   const base: CaptionStyle = { ...style, preset, wordHighlight: false, uppercase: false };
   switch (preset) {
@@ -1274,8 +1337,33 @@ export function applyCaptionPreset(style: CaptionStyle, preset: CaptionPreset): 
         outlineWidth: 0,
         maxLineChars: 38,
       };
-    default:
+    case 'classroom':
       return { ...base, backgroundOpacity: 0.62, outlineWidth: 4, fontSize: 54, align: 'center', marginX: 0.08 };
+    default: {
+      const catalogItem = resolveCaptionStylePreset(preset);
+      if (catalogItem) {
+        return {
+          ...base,
+          preset: catalogItem.id,
+          fontFamily: catalogItem.fontFamily,
+          fontSize: catalogItem.fontSize,
+          color: catalogItem.color.toLowerCase(),
+          background: catalogItem.background.toLowerCase(),
+          backgroundOpacity: catalogItem.backgroundOpacity,
+          outlineColor: catalogItem.outlineColor.toLowerCase(),
+          outlineWidth: catalogItem.outlineWidth,
+          positionY: catalogItem.positionY,
+          maxLineChars: catalogItem.maxLineChars,
+          align: catalogItem.align,
+          marginX: catalogItem.marginX,
+          marginBottom: catalogItem.marginBottom,
+          uppercase: catalogItem.uppercase,
+          wordHighlight: catalogItem.wordHighlight,
+          wordHighlightColor: catalogItem.wordHighlightColor.toLowerCase(),
+        };
+      }
+      return { ...base, backgroundOpacity: 0.62, outlineWidth: 4, fontSize: 54, align: 'center', marginX: 0.08 };
+    }
   }
 }
 
@@ -1482,18 +1570,23 @@ export function markerSegments(project: Project): MarkerSegment[] {
 
 /**
  * Extracts a [startTicks, endTicks] segment into a project (or trims in place)
- * and optionally reframes it to 9:16 for YouTube Shorts / Instagram Reels.
+ * and optionally reframes it to 9:16, 4:5, or 1:1 for YouTube Shorts, Instagram Reels/Feed, or LinkedIn posts.
  */
 export function extractSegmentProject(
   project: Project,
   startTicks: Tick,
   endTicks: Tick,
-  options: { reframeVertical?: boolean } = {},
+  options: { reframeVertical?: boolean; targetWidth?: number; targetHeight?: number } = {},
 ): Project {
   const duration = Math.max(0, endTicks - startTicks);
   if (duration <= 0) return project;
   const sliced = cloneProjectWithRange(project, startTicks, duration);
   const named: Project = { ...sliced, id: project.id, name: project.name };
+  if (options.targetWidth && options.targetHeight) {
+    if (options.targetWidth === 1080 && options.targetHeight === 1080) return reframe1x1(named);
+    if (options.targetWidth === 1080 && options.targetHeight === 1350) return reframe4x5(named);
+    if (options.targetWidth < options.targetHeight) return reframe9x16(named);
+  }
   return options.reframeVertical ? reframe9x16(named) : named;
 }
 
@@ -2465,5 +2558,630 @@ export function auditVideoPacing(project: Project): PacingAuditReport {
     suggestions,
   };
 }
+
+// ============================================================================
+// Full Suite of Video, Text, Motion, Color, Speed & Masking Tool Operations
+// ============================================================================
+
+function findTargetVideoClipIds(project: Project, explicitClipId?: string): string[] {
+  if (explicitClipId && findClip(project, explicitClipId)) {
+    return [explicitClipId];
+  }
+  const ids: string[] = [];
+  for (const track of project.tracks) {
+    if (track.kind !== 'video' || track.locked) continue;
+    for (const clip of track.clips) {
+      if (clip.kind === 'media' || clip.kind === 'adjustment') {
+        ids.push(clip.id);
+      }
+    }
+  }
+  if (ids.length > 0) return ids;
+  for (const track of project.tracks) {
+    if (track.kind !== 'video' || track.locked) continue;
+    for (const clip of track.clips) {
+      ids.push(clip.id);
+    }
+  }
+  return ids;
+}
+
+function findTargetTextClipIds(project: Project, explicitClipId?: string): string[] {
+  if (explicitClipId && findClip(project, explicitClipId)) {
+    return [explicitClipId];
+  }
+  const ids: string[] = [];
+  for (const track of project.tracks) {
+    if (track.kind !== 'video' || track.locked) continue;
+    for (const clip of track.clips) {
+      if (clip.kind === 'title' && clip.text) {
+        ids.push(clip.id);
+      }
+    }
+  }
+  return ids;
+}
+
+function findTargetElementClipIds(project: Project, explicitClipId?: string): string[] {
+  if (explicitClipId && findClip(project, explicitClipId)) {
+    return [explicitClipId];
+  }
+  const ids: string[] = [];
+  for (const track of project.tracks) {
+    if (track.locked) continue;
+    for (const clip of track.clips) {
+      ids.push(clip.id);
+    }
+  }
+  return ids;
+}
+
+/**
+ * 1. Core Video Effects & Dynamic Motion (148 Video Effects)
+ * Tool: `applyEffect(effect: string)` (Target: `video`, Neutral state: `'none'`)
+ * Supports both `applyEffect(project, effect)` and `applyEffect(project, clipId, effect)`.
+ */
+export function applyEffect(project: Project, effectOrClipId: string, maybeEffect?: string): Project {
+  const hasExplicitClip = maybeEffect !== undefined;
+  const clipId = hasExplicitClip ? effectOrClipId : undefined;
+  const rawEffect = hasExplicitClip ? maybeEffect : effectOrClipId;
+
+  if (!rawEffect || rawEffect === 'none' || rawEffect === 'normal') {
+    const targetIds = new Set(findTargetVideoClipIds(project, clipId));
+    if (targetIds.size === 0) return project;
+    return mapTracks(project, (track) => {
+      if (track.locked) return track;
+      return {
+        ...track,
+        clips: track.clips.map((clip) =>
+          targetIds.has(clip.id)
+            ? { ...clip, effects: { ...clip.effects, videoEffect: 'none' } }
+            : clip,
+        ),
+      };
+    });
+  }
+
+  const resolved = resolveVideoEffect(rawEffect);
+  const effectId = resolved ? resolved.id : rawEffect;
+  const targetIds = new Set(findTargetVideoClipIds(project, clipId));
+  if (targetIds.size === 0) return project;
+
+  return mapTracks(project, (track) => {
+    if (track.locked) return track;
+    return {
+      ...track,
+      clips: track.clips.map((clip) =>
+        targetIds.has(clip.id)
+          ? { ...clip, effects: { ...clip.effects, videoEffect: effectId } }
+          : clip,
+      ),
+    };
+  });
+}
+
+/**
+ * 2. Boundary Video Transitions (51 Filters)
+ * Tool: `addTransition(filterId: string)` (Target: `videoBoundary`, Removal/neutral state: `'normal'`)
+ * Supports both `addTransition(project, filterId)` and `addTransition(project, clipId, filterId, durationTicks?, edge?)`.
+ */
+export function addTransition(
+  project: Project,
+  filterIdOrClipId: string,
+  maybeFilterId?: string,
+  durationTicks?: Tick,
+  edge: 'both' | 'in' | 'out' = 'both',
+): Project {
+  const isClipFirst = maybeFilterId !== undefined && Boolean(findClip(project, filterIdOrClipId));
+  const clipId = isClipFirst ? filterIdOrClipId : undefined;
+  const rawFilterId = isClipFirst ? maybeFilterId! : filterIdOrClipId;
+
+  const isNeutral = !rawFilterId || rawFilterId === 'normal' || rawFilterId === 'none';
+  if (isNeutral) {
+    const targetIds = new Set(findTargetVideoClipIds(project, clipId));
+    if (targetIds.size === 0) return project;
+    const cleared: TransitionProps = { type: 'none', durationTicks: 0 };
+    return mapTracks(project, (track) => {
+      if (track.locked) return track;
+      return {
+        ...track,
+        clips: track.clips.map((clip) => {
+          if (!targetIds.has(clip.id)) return clip;
+          return {
+            ...clip,
+            transitionIn: edge === 'in' || edge === 'both' ? cleared : clip.transitionIn,
+            transitionOut: edge === 'out' || edge === 'both' ? cleared : clip.transitionOut,
+          };
+        }),
+      };
+    });
+  }
+
+  const spec = resolveBoundaryTransition(rawFilterId);
+  const filterId = spec ? spec.id : rawFilterId;
+  const defaultTicks = Math.round((spec?.defaultDurationSeconds ?? 0.5) * TICKS_PER_SECOND);
+  const targetIds = new Set(findTargetVideoClipIds(project, clipId));
+  if (targetIds.size === 0) return project;
+
+  return mapTracks(project, (track) => {
+    if (track.locked) return track;
+    return {
+      ...track,
+      clips: track.clips.map((clip) => {
+        if (!targetIds.has(clip.id)) return clip;
+        const dur = Math.min(
+          Math.max(1, durationTicks ?? defaultTicks),
+          Math.max(1, Math.floor(clip.durationTicks / 2)),
+        );
+        const transition: TransitionProps = {
+          type: filterId,
+          durationTicks: dur,
+          easing: spec?.easing ?? 'ease-in-out',
+        };
+        return {
+          ...clip,
+          transitionIn: edge === 'in' || edge === 'both' ? transition : clip.transitionIn,
+          transitionOut: edge === 'out' || edge === 'both' ? transition : clip.transitionOut,
+        };
+      }),
+    };
+  });
+}
+
+/**
+ * 3A. Color Grading Filters (77 Presets)
+ * Tool: `applyFilter(filter: string)` (Target: `video`, Neutral state: `'normal'`)
+ * Supports both `applyFilter(project, filter)` and `applyFilter(project, clipId, filter)`.
+ */
+export function applyFilter(project: Project, filterOrClipId: string, maybeFilter?: string): Project {
+  const hasExplicitClip = maybeFilter !== undefined;
+  const clipId = hasExplicitClip ? filterOrClipId : undefined;
+  const rawFilter = hasExplicitClip ? maybeFilter : filterOrClipId;
+
+  const targetIds = new Set(findTargetVideoClipIds(project, clipId));
+  if (targetIds.size === 0) return project;
+
+  if (!rawFilter || rawFilter === 'normal' || rawFilter === 'none') {
+    return mapTracks(project, (track) => {
+      if (track.locked) return track;
+      return {
+        ...track,
+        clips: track.clips.map((clip) =>
+          targetIds.has(clip.id)
+            ? {
+                ...clip,
+                effects: {
+                  ...clip.effects,
+                  colorFilter: 'normal',
+                  brightness: 0,
+                  contrast: 0,
+                  exposure: 0,
+                  saturation: 0,
+                  temperature: 0,
+                  vibrance: 0,
+                  vignette: 0,
+                },
+              }
+            : clip,
+        ),
+      };
+    });
+  }
+
+  const spec = resolveColorFilter(rawFilter);
+  const filterId = spec ? spec.id : rawFilter;
+  return mapTracks(project, (track) => {
+    if (track.locked) return track;
+    return {
+      ...track,
+      clips: track.clips.map((clip) => {
+        if (!targetIds.has(clip.id)) return clip;
+        return {
+          ...clip,
+          effects: {
+            ...clip.effects,
+            colorFilter: filterId,
+            brightness: spec ? spec.brightness : clip.effects.brightness,
+            contrast: spec ? spec.contrast : clip.effects.contrast,
+            exposure: spec ? spec.exposure : clip.effects.exposure,
+            saturation: spec ? spec.saturation : clip.effects.saturation,
+            temperature: spec ? spec.temperature : clip.effects.temperature,
+            vibrance: spec ? spec.vibrance : clip.effects.vibrance,
+            vignette: spec ? spec.vignette : clip.effects.vignette,
+          },
+        };
+      }),
+    };
+  });
+}
+
+/**
+ * Create an Adjustment Layer clip spanning `[atTicks, atTicks + durationTicks)` on an
+ * `'Adjustment Layer'` overlay video track so 3D LUTs and color grades can affect the timeline.
+ */
+export function addAdjustmentLayer(
+  project: Project,
+  atTicks: Tick = 0,
+  durationTicks?: Tick,
+  lut = 'rec709_standard',
+): { project: Project; clipId: string } {
+  const ensured = ensureOverlayVideoTrack(project, 'Adjustment Layer');
+  const span = durationTicks ?? Math.max(TICKS_PER_SECOND * 5, project.durationTicks || TICKS_PER_SECOND * 5);
+  const spec = resolveCinematicLut(lut);
+  const clip = createClip({
+    kind: 'adjustment',
+    startTicks: Math.max(0, atTicks),
+    durationTicks: Math.max(1, span),
+    label: spec ? `LUT: ${spec.name}` : `Adjustment Layer`,
+    effects: {
+      ...defaultEffects(),
+      lut: spec ? spec.id : lut,
+      contrast: spec ? spec.contrast : 0,
+      saturation: spec ? spec.saturation : 0,
+      temperature: spec ? spec.temperature : 0,
+    },
+  });
+  return {
+    project: placeClip(ensured.project, ensured.trackId, clip, 'overwrite'),
+    clipId: clip.id,
+  };
+}
+
+/**
+ * 3B. Look-Up Tables (16 Cinematic 3D LUTs)
+ * Tool: `applyLUT(table: string)` (Target: `video`, `adjustmentLayer`)
+ * Supports both `applyLUT(project, table)` and `applyLUT(project, clipId, table)`.
+ */
+export function applyLUT(project: Project, tableOrClipId: string, maybeTable?: string): Project {
+  const hasExplicitClip = maybeTable !== undefined;
+  const clipId = hasExplicitClip ? tableOrClipId : undefined;
+  const rawTable = hasExplicitClip ? maybeTable : tableOrClipId;
+
+  const targetIds = new Set(findTargetVideoClipIds(project, clipId));
+  if (targetIds.size === 0) return project;
+
+  if (!rawTable || rawTable === 'none' || rawTable === 'normal') {
+    return mapTracks(project, (track) => {
+      if (track.locked) return track;
+      return {
+        ...track,
+        clips: track.clips.map((clip) =>
+          targetIds.has(clip.id)
+            ? { ...clip, effects: { ...clip.effects, lut: 'none' } }
+            : clip,
+        ),
+      };
+    });
+  }
+
+  const spec = resolveCinematicLut(rawTable);
+  const lutId = spec ? spec.id : rawTable;
+  return mapTracks(project, (track) => {
+    if (track.locked) return track;
+    return {
+      ...track,
+      clips: track.clips.map((clip) => {
+        if (!targetIds.has(clip.id)) return clip;
+        return {
+          ...clip,
+          effects: {
+            ...clip.effects,
+            lut: lutId,
+            contrast: spec ? spec.contrast : clip.effects.contrast,
+            saturation: spec ? spec.saturation : clip.effects.saturation,
+            temperature: spec ? spec.temperature : clip.effects.temperature,
+          },
+        };
+      }),
+    };
+  });
+}
+
+/**
+ * 4A. Text Animations (77 Kinetic Typography Animations)
+ * Tool: `setTextAnimation(animation: string)` (Target: `text`)
+ * Supports both `setTextAnimation(project, animation)` and `setTextAnimation(project, clipId, animation)`.
+ */
+export function setTextAnimation(project: Project, animationOrClipId: string, maybeAnimation?: string): Project {
+  const hasExplicitClip = maybeAnimation !== undefined;
+  const clipId = hasExplicitClip ? animationOrClipId : undefined;
+  const rawAnimation = hasExplicitClip ? maybeAnimation : animationOrClipId;
+
+  const targetIds = new Set(findTargetTextClipIds(project, clipId));
+  if (targetIds.size === 0) return project;
+
+  const isNeutral = !rawAnimation || rawAnimation === 'none' || rawAnimation === 'normal';
+  const spec = isNeutral ? null : resolveTextAnimation(rawAnimation);
+  const animId = isNeutral ? 'none' : spec ? spec.id : rawAnimation;
+
+  return mapTracks(project, (track) => {
+    if (track.locked) return track;
+    return {
+      ...track,
+      clips: track.clips.map((clip) => {
+        if (!targetIds.has(clip.id) || !clip.text) return clip;
+        return {
+          ...clip,
+          text: {
+            ...clip.text,
+            animation: animId,
+            typewriter: spec?.behavior === 'typewriter' ? true : isNeutral ? false : clip.text.typewriter,
+          },
+        };
+      }),
+    };
+  });
+}
+
+/**
+ * 4B. Text Style Presets (34 Presets)
+ * Tool: `applyTextPreset(name: string)` (Target: `text`)
+ * Supports both `applyTextPreset(project, name)` and `applyTextPreset(project, clipId, name)`.
+ */
+export function applyTextPreset(project: Project, nameOrClipId: string, maybeName?: string): Project {
+  const hasExplicitClip = maybeName !== undefined;
+  const clipId = hasExplicitClip ? nameOrClipId : undefined;
+  const rawName = hasExplicitClip ? maybeName : nameOrClipId;
+
+  const targetIds = new Set(findTargetTextClipIds(project, clipId));
+  if (targetIds.size === 0) return project;
+
+  const spec = resolveTextStylePreset(rawName);
+  return mapTracks(project, (track) => {
+    if (track.locked) return track;
+    return {
+      ...track,
+      clips: track.clips.map((clip) => {
+        if (!targetIds.has(clip.id) || !clip.text) return clip;
+        if (!spec) {
+          return {
+            ...clip,
+            text: { ...clip.text, stylePreset: rawName },
+          };
+        }
+        return {
+          ...clip,
+          text: {
+            ...clip.text,
+            stylePreset: spec.id,
+            fontFamily: spec.fontFamily,
+            fontWeight: spec.fontWeight,
+            fontSize: spec.fontSize,
+            color: normalizeHexColor(spec.color),
+            gradientToColor: spec.gradientToColor ? normalizeHexColor(spec.gradientToColor) : undefined,
+            background: normalizeHexColor(spec.background),
+            backgroundOpacity: spec.backgroundOpacity,
+            strokeColor: normalizeHexColor(spec.strokeColor),
+            strokeWidth: spec.strokeWidth,
+            shadowColor: normalizeHexColor(spec.shadowColor),
+            shadowBlur: spec.shadowBlur,
+            glowColor: spec.glowColor ? normalizeHexColor(spec.glowColor) : undefined,
+            glowBlur: spec.glowBlur,
+            letterSpacing: spec.letterSpacing,
+          },
+        };
+      }),
+    };
+  });
+}
+
+/**
+ * 4C. Font Engine (406 Font Families)
+ * Tool: `setTextFont(family: string)` (Target: `text`)
+ * Supports both `setTextFont(project, family)` and `setTextFont(project, clipId, family)`.
+ */
+export function setTextFont(project: Project, familyOrClipId: string, maybeFamily?: string): Project {
+  const hasExplicitClip = maybeFamily !== undefined;
+  const clipId = hasExplicitClip ? familyOrClipId : undefined;
+  const rawFamily = hasExplicitClip ? maybeFamily : familyOrClipId;
+
+  const targetIds = new Set(findTargetTextClipIds(project, clipId));
+  if (targetIds.size === 0) return project;
+
+  const resolvedFamily = resolveFontFamily(rawFamily);
+  return mapTracks(project, (track) => {
+    if (track.locked) return track;
+    return {
+      ...track,
+      clips: track.clips.map((clip) => {
+        if (!targetIds.has(clip.id) || !clip.text) return clip;
+        return {
+          ...clip,
+          text: {
+            ...clip.text,
+            fontFamily: resolvedFamily,
+          },
+        };
+      }),
+    };
+  });
+}
+
+/**
+ * 4D. Emphasis Styles (5 Styles: Highlight, Underline, Circle, Sparkle, Strikethrough)
+ * Tool: `setEmphasis(style: string)` (Target: `text`, Neutral state: `'none'`)
+ * Supports both `setEmphasis(project, style)` and `setEmphasis(project, clipId, style)`.
+ */
+export function setEmphasis(project: Project, styleOrClipId: string, maybeStyle?: string): Project {
+  const hasExplicitClip = maybeStyle !== undefined;
+  const clipId = hasExplicitClip ? styleOrClipId : undefined;
+  const rawStyle = hasExplicitClip ? maybeStyle : styleOrClipId;
+
+  const targetIds = new Set(findTargetTextClipIds(project, clipId));
+  if (targetIds.size === 0) return project;
+
+  const spec = resolveEmphasisStyle(rawStyle);
+  const emphasis: EmphasisStyle = spec ? spec.id : 'none';
+  return mapTracks(project, (track) => {
+    if (track.locked) return track;
+    return {
+      ...track,
+      clips: track.clips.map((clip) => {
+        if (!targetIds.has(clip.id) || !clip.text) return clip;
+        return {
+          ...clip,
+          text: {
+            ...clip.text,
+            emphasis,
+          },
+        };
+      }),
+    };
+  });
+}
+
+/**
+ * 5. Automated Subtitles & Caption Styles (39 Styles)
+ * Tool: `setCaptionStyle(style: string)` (Target: `captions`)
+ */
+export function setCaptionStyle(project: Project, style: string): Project {
+  const resolved = resolveCaptionStylePreset(style);
+  const presetId = resolved ? resolved.id : style;
+  return {
+    ...project,
+    captionStyle: applyCaptionPreset(project.captionStyle, presetId),
+  };
+}
+
+/**
+ * 6. Time Remapping & Speed Curves (8 Curve Profiles)
+ * Tool: `selectSpeedPanelPreset(preset: string)` (Target: `element`)
+ * Supports both `selectSpeedPanelPreset(project, preset)` and `selectSpeedPanelPreset(project, clipId, preset)`.
+ */
+export function selectSpeedPanelPreset(
+  project: Project,
+  presetOrClipId: string,
+  maybePreset?: string,
+): Project {
+  const hasExplicitClip = maybePreset !== undefined;
+  const clipId = hasExplicitClip ? presetOrClipId : undefined;
+  const rawPreset = hasExplicitClip ? maybePreset : presetOrClipId;
+
+  const targetIds = new Set(findTargetElementClipIds(project, clipId));
+  if (targetIds.size === 0) return project;
+
+  const spec = resolveSpeedCurveProfile(rawPreset);
+  const curveId = spec ? spec.id : rawPreset;
+  const nominalSpeed = spec ? spec.nominalSpeed : 1;
+
+  return mapTracks(project, (track) => {
+    if (track.locked) return track;
+    return {
+      ...track,
+      clips: track.clips.map((clip) => {
+        if (!targetIds.has(clip.id)) return clip;
+        return {
+          ...clip,
+          speedCurve: curveId,
+          speed: nominalSpeed,
+          audio: {
+            ...clip.audio,
+            preservePitch: spec ? spec.preservePitch : true,
+          },
+        };
+      }),
+    };
+  });
+}
+
+/**
+ * 7. Alpha Masking & Compositing (5 Shapes: Rectangle, Circle, Star, Heart, Split Screen)
+ * Tool: `setMask(shape: string)` (Target: `element`)
+ * Supports `setMask(project, shape, options?)` and `setMask(project, clipId, shape, options?)`.
+ */
+export function setMask(
+  project: Project,
+  shapeOrClipId: string,
+  maybeShapeOrOptions?: string | Partial<AlphaMaskProps>,
+  maybeOptions?: Partial<AlphaMaskProps>,
+): Project {
+  const hasExplicitClip = typeof maybeShapeOrOptions === 'string';
+  const clipId = hasExplicitClip ? shapeOrClipId : undefined;
+  const rawShape = hasExplicitClip ? maybeShapeOrOptions : shapeOrClipId;
+  const options = hasExplicitClip ? maybeOptions : (maybeShapeOrOptions as Partial<AlphaMaskProps> | undefined);
+
+  const targetIds = new Set(findTargetElementClipIds(project, clipId));
+  if (targetIds.size === 0) return project;
+
+  if (!rawShape || rawShape === 'none' || rawShape === 'normal') {
+    return mapTracks(project, (track) => {
+      if (track.locked) return track;
+      return {
+        ...track,
+        clips: track.clips.map((clip) =>
+          targetIds.has(clip.id) ? { ...clip, alphaMask: undefined } : clip,
+        ),
+      };
+    });
+  }
+
+  const spec = resolveAlphaMaskShape(rawShape);
+  const shapeId = spec ? spec.id : 'rectangle';
+  const mask: AlphaMaskProps = {
+    shape: shapeId,
+    feather: clamp01(options?.feather ?? spec?.defaultFeather ?? 0),
+    invert: options?.invert ?? spec?.defaultInvert ?? false,
+    x: clamp01(options?.x ?? 0.5),
+    y: clamp01(options?.y ?? 0.5),
+    scaleX: Math.max(0.05, Math.min(2, options?.scaleX ?? spec?.defaultScaleX ?? 0.8)),
+    scaleY: Math.max(0.05, Math.min(2, options?.scaleY ?? spec?.defaultScaleY ?? 0.8)),
+    rotationDeg: normalizeRotationDeg(options?.rotationDeg ?? 0),
+  };
+
+  return mapTracks(project, (track) => {
+    if (track.locked) return track;
+    return {
+      ...track,
+      clips: track.clips.map((clip) =>
+        targetIds.has(clip.id) ? { ...clip, alphaMask: mask } : clip,
+      ),
+    };
+  });
+}
+
+/**
+ * 8. One-Click Platform Workflow & Styling Preset (YouTube, Instagram, LinkedIn)
+ * Tool: `applyPlatformPreset(presetId: string)`
+ * Reframes the composition (16:9 4K/1080p, 9:16 Vertical, 4:5 Portrait, or 1:1 Square)
+ * and applies the coordinated caption style, color filter, 3D LUT, video effect,
+ * boundary transition, and kinetic title preset so every effect is 100% compatible.
+ */
+export function applyPlatformPreset(project: Project, presetId: string): Project {
+  const spec = resolvePlatformPreset(presetId);
+  if (!spec) return project;
+
+  let next: Project;
+  if (spec.aspectRatio === '9:16') {
+    next = reframe9x16(project);
+  } else if (spec.aspectRatio === '4:5') {
+    next = reframe4x5(project);
+  } else if (spec.aspectRatio === '1:1') {
+    next = reframe1x1(project);
+  } else {
+    next = reframe16x9(project, spec.width >= 3840);
+  }
+
+  next = {
+    ...next,
+    canvas: {
+      ...next.canvas,
+      width: spec.width,
+      height: spec.height,
+      fps: { num: spec.fps, den: 1 },
+      safeMargin: spec.safeAreaMargin,
+    },
+  };
+
+  next = setCaptionStyle(next, spec.captionStyleId);
+  next = applyFilter(next, spec.colorFilterId);
+  next = applyLUT(next, spec.lutId);
+  next = applyEffect(next, spec.videoEffectId);
+  next = addTransition(next, spec.transitionId);
+  next = applyTextPreset(next, spec.textPresetId);
+  next = setTextAnimation(next, spec.textAnimationId);
+  return next;
+}
+
+
 
 

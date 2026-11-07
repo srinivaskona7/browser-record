@@ -4,6 +4,19 @@ import { useEditor } from '../project/store';
 import { useSession } from '../app/session';
 import * as ops from '../project/ops';
 import type { BrandKit, Clip, ContactStyle, Project } from '../project/types';
+import {
+  ALPHA_MASK_SHAPES,
+  BOUNDARY_TRANSITIONS,
+  CINEMATIC_LUTS,
+  COLOR_FILTERS,
+  EMPHASIS_STYLES,
+  FONT_FAMILIES,
+  PLATFORM_WORKFLOW_PRESETS,
+  SPEED_CURVE_PROFILES,
+  TEXT_ANIMATIONS,
+  TEXT_STYLE_PRESETS,
+  VIDEO_EFFECTS,
+} from '../effects/catalog';
 import { Badge, Button, Field, Panel, Select, Slider, Toggle } from './components';
 import { DeleteProjectDialog } from './DeleteProjectDialog';
 
@@ -68,6 +81,26 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
             onChange={(value) => setClip('Set speed', { speed: value })}
           />
         </Field>
+        <Field label="Speed curve preset (8 curves)">
+          <Select
+            value={clip.speedCurve ?? 'constant_speed'}
+            onChange={(value) => apply(`Speed curve: ${value}`, (p) => ops.selectSpeedPanelPreset(p, clip.id, value))}
+            options={SPEED_CURVE_PROFILES.map((item) => ({
+              value: item.id,
+              label: `${item.name} (${item.nominalSpeed}×)`,
+            }))}
+          />
+        </Field>
+        <Field label="Boundary transition (51 filters)">
+          <Select
+            value={clip.transitionIn?.type ?? 'normal'}
+            onChange={(value) => apply(`Transition: ${value}`, (p) => ops.addTransition(p, clip.id, value))}
+            options={[
+              { value: 'normal', label: 'Normal (no transition)' },
+              ...BOUNDARY_TRANSITIONS.map((item) => ({ value: item.id, label: item.name })),
+            ]}
+          />
+        </Field>
         <div className="row" style={{ gap: 6 }}>
           <Button size="sm" onClick={() => apply('Fade in', (p) => ops.updateClipDeep(p, clip.id, { transitionIn: { type: 'fade', durationTicks: Math.round(0.5 * TICKS_PER_SECOND) } }))}>
             Fade in 0.5s
@@ -103,6 +136,48 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
               ]}
             />
           </Field>
+          <Field label="Video effect & dynamic motion (148 effects)">
+            <Select
+              value={clip.effects.videoEffect ?? 'none'}
+              onChange={(value) => apply(`Effect: ${value}`, (p) => ops.applyEffect(p, clip.id, value))}
+              options={[
+                { value: 'none', label: 'None (neutral)' },
+                ...VIDEO_EFFECTS.map((item) => ({ value: item.id, label: `${item.name} (${item.category})` })),
+              ]}
+            />
+          </Field>
+          <Field label="Alpha shape mask (5 shapes)">
+            <Select
+              value={clip.alphaMask?.shape ?? 'none'}
+              onChange={(value) => apply(`Alpha mask: ${value}`, (p) => ops.setMask(p, clip.id, value))}
+              options={[
+                { value: 'none', label: 'None' },
+                ...ALPHA_MASK_SHAPES.map((item) => ({ value: item.id, label: item.name })),
+              ]}
+            />
+          </Field>
+          {clip.alphaMask && clip.alphaMask.shape !== 'none' && (
+            <>
+              <Slider
+                label="Mask feather"
+                min={0}
+                max={1}
+                step={0.02}
+                value={clip.alphaMask.feather}
+                format={(v) => `${Math.round(v * 100)}%`}
+                onChange={(value) =>
+                  apply('Mask feather', (p) => ops.setMask(p, clip.id, clip.alphaMask!.shape, { ...clip.alphaMask, feather: value }))
+                }
+              />
+              <Toggle
+                label="Invert alpha mask"
+                checked={clip.alphaMask.invert}
+                onChange={(value) =>
+                  apply('Invert mask', (p) => ops.setMask(p, clip.id, clip.alphaMask!.shape, { ...clip.alphaMask, invert: value }))
+                }
+              />
+            </>
+          )}
           <Field label="Blend mode">
             <Select
               value={clip.transform.blendMode ?? 'normal'}
@@ -264,6 +339,43 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
             checked={Boolean(clip.text.typewriter)}
             onChange={(value) => patch('Typewriter reveal', { text: { typewriter: value } })}
           />
+          <Field label="Kinetic animation (77 animations)">
+            <Select
+              value={clip.text.animation ?? 'none'}
+              onChange={(value) => apply(`Text animation: ${value}`, (p) => ops.setTextAnimation(p, clip.id, value))}
+              options={[
+                { value: 'none', label: 'None' },
+                ...TEXT_ANIMATIONS.map((item) => ({ value: item.id, label: item.name })),
+              ]}
+            />
+          </Field>
+          <Field label="Typography preset (34 presets)">
+            <Select
+              value={clip.text.stylePreset ?? 'none'}
+              onChange={(value) => apply(`Text preset: ${value}`, (p) => ops.applyTextPreset(p, clip.id, value))}
+              options={[
+                { value: 'none', label: 'Custom style' },
+                ...TEXT_STYLE_PRESETS.map((item) => ({ value: item.id, label: item.name })),
+              ]}
+            />
+          </Field>
+          <Field label="Font family (406 fonts)">
+            <Select
+              value={clip.text.fontFamily}
+              onChange={(value) => apply(`Font: ${value}`, (p) => ops.setTextFont(p, clip.id, value))}
+              options={FONT_FAMILIES.map((family) => ({ value: family, label: family }))}
+            />
+          </Field>
+          <Field label="Emphasis style (5 styles)">
+            <Select
+              value={clip.text.emphasis ?? 'none'}
+              onChange={(value) => apply(`Emphasis: ${value}`, (p) => ops.setEmphasis(p, clip.id, value))}
+              options={[
+                { value: 'none', label: 'None' },
+                ...EMPHASIS_STYLES.map((item) => ({ value: item.id, label: item.name })),
+              ]}
+            />
+          </Field>
           <Slider label="Font size" min={16} max={220} step={1} value={clip.text.fontSize} format={(v) => `${v}px`} onChange={(value) => patch('Title size', { text: { fontSize: value } })} />
           <Slider label="Background opacity" min={0} max={1} step={0.01} value={clip.text.backgroundOpacity} format={(v) => `${Math.round(v * 100)}%`} onChange={(value) => patch('Title background', { text: { backgroundOpacity: value } })} />
           <Field label="Align">
@@ -344,6 +456,26 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
       )}
 
       <InspectorSection title="Colour">
+        <Field label="Color filter (77 presets)">
+          <Select
+            value={clip.effects.colorFilter ?? 'normal'}
+            onChange={(value) => apply(`Color filter: ${value}`, (p) => ops.applyFilter(p, clip.id, value))}
+            options={[
+              { value: 'normal', label: 'Normal (neutral)' },
+              ...COLOR_FILTERS.map((item) => ({ value: item.id, label: item.name })),
+            ]}
+          />
+        </Field>
+        <Field label="3D LUT (16 cinematic tables)">
+          <Select
+            value={clip.effects.lut ?? 'none'}
+            onChange={(value) => apply(`3D LUT: ${value}`, (p) => ops.applyLUT(p, clip.id, value))}
+            options={[
+              { value: 'none', label: 'None' },
+              ...CINEMATIC_LUTS.map((item) => ({ value: item.id, label: item.name })),
+            ]}
+          />
+        </Field>
         <Field label="Look preset">
           <div className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
             {(['neutral', 'cinema-teal', 'warm-creator', 'high-contrast-terminal', 'crisp-daylight', 'vibrant-reel', 'noir-mono'] as const).map((look) => (
@@ -593,17 +725,46 @@ export function ProjectSettingsPanel({ project }: { project: Project }) {
           <Button
             size="sm"
             variant="ghost"
-            onClick={() => apply('Set 16:9 1080p', (p) => ({ ...p, canvas: { ...p.canvas, width: 1920, height: 1080 } }))}
+            onClick={() => apply('Reframe 16:9 4K', (p) => ops.reframe16x9(p, true))}
+          >
+            16:9 4K (3840×2160)
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => apply('Reframe 16:9 1080p', (p) => ops.reframe16x9(p, false))}
           >
             16:9 (1920×1080)
           </Button>
           <Button size="sm" variant="ghost" onClick={() => apply('Reframe 9:16', (p) => ops.reframe9x16(p))}>
-            9:16 Shorts (1080×1920)
+            9:16 Shorts / Reels (1080×1920)
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => apply('Reframe 4:5', (p) => ops.reframe4x5(p))}>
+            4:5 Insta / LinkedIn (1080×1350)
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => apply('Reframe 1:1', (p) => ops.reframe1x1(p))}>
+            1:1 Square Post (1080×1080)
           </Button>
           <Button size="sm" variant="ghost" onClick={() => apply('9:16 follow presenter', (p) => ops.reframeFollowPresenter(p))}>
             9:16 follow presenter
           </Button>
         </div>
+      </Field>
+      <Field label="YouTube / Instagram / LinkedIn workflow preset" hint="One-click reframe + compatible LUT, color filter, transition, caption style, and title preset.">
+        <Select
+          value=""
+          onChange={(value) => {
+            if (!value) return;
+            apply(`Platform preset: ${value}`, (p) => ops.applyPlatformPreset(p, value));
+          }}
+          options={[
+            { value: '', label: 'Choose a YouTube, Instagram, or LinkedIn preset…' },
+            ...PLATFORM_WORKFLOW_PRESETS.map((item) => ({
+              value: item.id,
+              label: `${item.name} — ${item.width}×${item.height}`,
+            })),
+          ]}
+        />
       </Field>
       <Field label="Frame rate">
         <Select

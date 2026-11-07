@@ -4,6 +4,7 @@ import { useEditor } from '../project/store';
 import { useSession } from '../app/session';
 import * as ops from '../project/ops';
 import type { Project } from '../project/types';
+import { CAPTION_STYLES } from '../effects/catalog';
 import { Badge, Button, Field, Panel, Select, Slider } from './components';
 import {
   normalizePunctuation,
@@ -349,23 +350,13 @@ export function CaptionsPanel({
       </Panel>
 
       <Panel title="Style" bodyClassName="stack">
-        <Field label="Preset">
+        <Field label="Preset (39 caption styles)">
           <Select
             value={project.captionStyle.preset}
             onChange={(value) =>
-              apply('Caption preset', (p) => ({ ...p, captionStyle: ops.applyCaptionPreset(p.captionStyle, value) }))
+              apply(`Caption style: ${value}`, (p) => ops.setCaptionStyle(p, value))
             }
-            options={[
-              { value: 'classroom', label: 'Classroom readable' },
-              { value: 'documentary', label: 'Clean documentary' },
-              { value: 'lower-third', label: 'Lower third' },
-              { value: 'outlined', label: 'Outlined' },
-              { value: 'box', label: 'Background box' },
-              { value: 'word-highlight', label: 'Word highlight' },
-              { value: 'devops-terminal', label: 'DevOps terminal (monospace)' },
-              { value: 'hormozi-pop', label: 'Short-form pop (bold uppercase)' },
-              { value: 'minimal-pill', label: 'Minimal dark pill' },
-            ]}
+            options={CAPTION_STYLES.map((item) => ({ value: item.id, label: item.name }))}
           />
         </Field>
         <Slider

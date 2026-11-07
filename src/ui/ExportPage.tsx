@@ -85,6 +85,8 @@ export function ExportPage() {
     if (!activeSegment) return project;
     return extractSegmentProject(project, activeSegment.startTicks, activeSegment.endTicks, {
       reframeVertical: preset.width < preset.height,
+      targetWidth: preset.width,
+      targetHeight: preset.height,
     });
   }, [project, activeSegment, preset.width, preset.height]);
 

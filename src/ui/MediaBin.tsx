@@ -313,6 +313,12 @@ export function MediaBin({ project, onOpenVoiceover }: { project: Project; onOpe
             </Button>
             <Button
               size="sm"
+              onClick={() => apply('Add adjustment layer', (p) => ops.addAdjustmentLayer(p, playhead).project)}
+            >
+              Adjustment layer (3D LUT)
+            </Button>
+            <Button
+              size="sm"
               onClick={() => apply('Add warning banner', (p) => ops.addAlertBanner(p, playhead, 'warning').project)}
             >
               ⚠️ Warning
