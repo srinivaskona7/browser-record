@@ -28,10 +28,11 @@ export function instantaneousSpeed(clip: Clip, timelineTicks: Tick): number {
   return clip.speed || 1;
 }
 
-/** Where to read the source media, accounting for trim-in, constant speed, and variable speed curves. */
+/** Where to read the source media, accounting for trim-in, constant speed, reverse playback, and variable speed curves. */
 export function sourceTicks(clip: Clip, timelineTicks: Tick): Tick {
   if (clip.freezeAt !== undefined) return clip.freezeAt;
-  const local = localTicks(clip, timelineTicks);
+  const rawLocal = localTicks(clip, timelineTicks);
+  const local = clip.reverse ? Math.max(0, clip.durationTicks - rawLocal) : rawLocal;
   if (clip.speedCurve) {
     const curve = resolveSpeedCurveProfile(clip.speedCurve);
     if (curve && curve.id !== 'constant_speed') {

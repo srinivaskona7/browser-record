@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { createContext, useContext, useMemo, useState } from 'react';
 import { TICKS_PER_SECOND, formatClock } from '../core/time';
 import { useEditor } from '../project/store';
 import { useSession } from '../app/session';
@@ -20,9 +20,13 @@ import {
 import { Badge, Button, Field, Panel, Select, Slider, Toggle } from './components';
 import { DeleteProjectDialog } from './DeleteProjectDialog';
 
+const InspectorFocus = createContext<{ section: string; query: string }>({ section: 'All', query: '' });
+
 export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }) {
   const apply = useEditor((state) => state.apply);
   const playhead = useEditor((state) => state.playheadTicks);
+  const [section, setSection] = useState('All');
+  const [query, setQuery] = useState('');
   const localTicks = Math.max(0, playhead - clip.startTicks);
 
   const patch = (label: string, deep: Parameters<typeof ops.updateClipDeep>[2]) =>
@@ -40,7 +44,16 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
     apply(`Keyframe ${target}`, (p) => ops.upsertKeyframe(p, clip.id, target, localTicks, value));
 
   return (
+    <InspectorFocus.Provider value={{ section, query }}>
     <div className="stack" style={{ gap: 10 }}>
+      <input
+        className="input"
+        aria-label="Search inspector controls"
+        placeholder="Search inspector controls…"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+      />
+      <Select label="Clip inspector section" value={section} onChange={setSection} options={['All', 'Transform', 'Timing', 'Colour', 'Audio', 'Text', 'Masks (manual)', 'Keyframes', ...(isPresenter ? ['Presenter layout'] : [])].map((value) => ({ value, label: value === 'All' ? 'All clip controls' : value }))} />
       <div className="panel" style={{ boxShadow: 'none' }}>
         <div className="panel-body" style={{ padding: 12 }}>
           <div className="row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
@@ -50,7 +63,7 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
           <div style={{ fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.6 }} className="mono">
             start {formatClock(clip.startTicks)} · dur {formatClock(clip.durationTicks)}
             <br />
-            in {formatClock(clip.inTicks)} · {clip.speed.toFixed(2)}×
+            in {formatClock(clip.inTicks)} · {clip.speed.toFixed(2)}×{clip.reverse ? ' · reversed' : ''}
           </div>
         </div>
       </div>
@@ -81,6 +94,11 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
             onChange={(value) => setClip('Set speed', { speed: value })}
           />
         </Field>
+        <Toggle
+          label="Reverse playback"
+          checked={Boolean(clip.reverse)}
+          onChange={(value) => apply('Reverse playback', (p) => ops.toggleClipReverse(p, clip.id, value))}
+        />
         <Field label="Speed curve preset (8 curves)">
           <Select
             value={clip.speedCurve ?? 'constant_speed'}
@@ -117,14 +135,42 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
           <Slider label="Position Y" min={0} max={1} step={0.005} value={clip.transform.y} format={(v) => `${Math.round(v * 100)}%`} onChange={(value) => patch('Move clip', { transform: { y: value } })} />
           <Slider label="Scale" min={0.05} max={3} step={0.01} value={clip.transform.scale} format={(v) => `${Math.round(v * 100)}%`} onChange={(value) => patch('Scale clip', { transform: { scale: value } })} />
           <Slider label="Zoom (teaching)" min={1} max={4} step={0.01} value={clip.effects.zoom} format={(v) => `${v.toFixed(2)}×`} onChange={(value) => patch('Zoom', { effects: { zoom: value } })} />
-          <div className="row" style={{ gap: 6 }}>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
             <Button size="sm" onClick={() => addKeyframe('zoom', clip.effects.zoom)}>
               Key zoom here
             </Button>
             <Button size="sm" onClick={() => addKeyframe('x', clip.transform.x)}>
               Key position
             </Button>
+            <Button
+              size="sm"
+              aria-pressed={Boolean(clip.transform.flipX)}
+              onClick={() => apply('Flip horizontal', (p) => ops.toggleClipFlip(p, clip.id, 'x'))}
+            >
+              Flip H
+            </Button>
+            <Button
+              size="sm"
+              aria-pressed={Boolean(clip.transform.flipY)}
+              onClick={() => apply('Flip vertical', (p) => ops.toggleClipFlip(p, clip.id, 'y'))}
+            >
+              Flip V
+            </Button>
           </div>
+          <Field label="Alignment">
+            <div className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
+              {(['left', 'center', 'right', 'top', 'middle', 'bottom'] as const).map((align) => (
+                <Button
+                  key={align}
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => apply(`Align ${align}`, (p) => ops.alignClip(p, clip.id, align))}
+                >
+                  {align}
+                </Button>
+              ))}
+            </div>
+          </Field>
           <Field label="Fit">
             <Select
               value={clip.transform.fit}
@@ -302,10 +348,22 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
           )}
           <Toggle label="Mirror camera" checked={clip.presenter!.mirror} onChange={(value) => patch('Mirror camera', { presenter: { mirror: value } })} />
           <Toggle
+            label="Visible in preview & export"
+            checked={clip.presenter!.visible !== false}
+            onChange={(value) => patch('Presenter visibility', { presenter: { visible: value } })}
+          />
+          <Toggle
             label="Chroma key (experimental)"
             checked={clip.presenter!.chromaKey}
             onChange={(value) => patch('Chroma key', { presenter: { chromaKey: value } })}
           />
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => apply('Reset presenter position', (p) => ops.resetPresenterPosition(p, clip.id))}
+          >
+            Reset camera position
+          </Button>
         </InspectorSection>
       )}
 
@@ -490,6 +548,8 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
             ))}
           </div>
         </Field>
+        <Slider label="Exposure" min={-1} max={1} step={0.01} value={clip.effects.exposure} format={(v) => v.toFixed(2)} onChange={(value) => patch('Exposure', { effects: { exposure: value } })} />
+        <Slider label="Vibrance" min={-1} max={1} step={0.01} value={clip.effects.vibrance} format={(v) => `${Math.round(v * 100)}%`} onChange={(value) => patch('Vibrance', { effects: { vibrance: value } })} />
         <Slider label="Brightness" min={-0.5} max={0.5} step={0.01} value={clip.effects.brightness} format={(v) => `${Math.round(v * 100)}`} onChange={(value) => patch('Brightness', { effects: { brightness: value } })} />
         <Slider label="Contrast" min={-0.5} max={0.5} step={0.01} value={clip.effects.contrast} format={(v) => `${Math.round(v * 100)}`} onChange={(value) => patch('Contrast', { effects: { contrast: value } })} />
         <Slider label="Saturation" min={-1} max={1} step={0.01} value={clip.effects.saturation} format={(v) => `${Math.round(v * 100)}`} onChange={(value) => patch('Saturation', { effects: { saturation: value } })} />
@@ -592,12 +652,18 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
         </div>
       </InspectorSection>
     </div>
+    </InspectorFocus.Provider>
   );
 }
 
 function InspectorSection({ title, children }: { title: string; children: React.ReactNode }) {
+  const { section: focus, query } = useContext(InspectorFocus);
+  if (focus !== 'All' && focus !== title) return null;
+  if (query.trim() && !title.toLowerCase().includes(query.trim().toLowerCase())) {
+    // Keep section visible when its title matches or when query is cleared
+  }
   return (
-    <details className="panel" style={{ boxShadow: 'none' }} open={title === 'Transform' || title === 'Timing'}>
+    <details key={`${focus}-${title}`} className="panel" style={{ boxShadow: 'none' }} open={focus === title || Boolean(query.trim()) || title === 'Transform' || title === 'Timing'}>
       <summary
         style={{
           cursor: 'pointer',

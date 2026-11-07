@@ -22,14 +22,14 @@ const BIN_TABS: Array<{ id: BinTab; label: string }> = [
   { id: 'markers', label: 'Markers' },
 ];
 
-export function MediaBin({ project, onOpenVoiceover }: { project: Project; onOpenVoiceover: () => void }) {
+export function MediaBin({ project, onOpenVoiceover, initialTab = 'uploads' }: { project: Project; onOpenVoiceover: () => void; initialTab?: BinTab }) {
   const apply = useEditor((state) => state.apply);
   const selectedAssetId = useEditor((state) => state.selectedAssetId);
   const selectAsset = useEditor((state) => state.selectAsset);
   const playhead = useEditor((state) => state.playheadTicks);
   const editMode = useEditor((state) => state.editMode);
   const [importing, setImporting] = useState(false);
-  const [tab, setTab] = useState<BinTab>('uploads');
+  const [tab, setTab] = useState<BinTab>(initialTab);
   const [holdSeconds, setHoldSeconds] = useState(3);
   const selectedClipId = useEditor((state) => state.selectedClipIds[0] ?? null);
   const fileInput = useRef<HTMLInputElement>(null);

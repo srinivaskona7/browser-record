@@ -136,13 +136,12 @@ export function App() {
       <AboutDialog open={aboutOpen} onClose={() => setAboutOpen(false)} />
 
       <main className="app-main">
+        <RecordPage hidden={route !== 'record'} />
         {!booted && !workspace && route === 'projects' ? (
           <div className="page">
             <div className="hint-card">Checking for a previous workspace…</div>
           </div>
-        ) : route === 'record' ? (
-          <RecordPage />
-        ) : route === 'edit' ? (
+        ) : route === 'record' ? null : route === 'edit' ? (
           <EditPage />
         ) : route === 'export' ? (
           <ExportPage />

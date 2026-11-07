@@ -143,6 +143,10 @@ export interface Transform {
   borderColor: string;
   /** Layer composite blend mode. Defaults to 'normal'. */
   blendMode?: BlendMode;
+  /** Horizontal mirror flip. */
+  flipX?: boolean;
+  /** Vertical mirror flip. */
+  flipY?: boolean;
 }
 
 export type Easing = 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out';
@@ -270,6 +274,8 @@ export interface PresenterProps {
   /** Outline width in composition pixels; 0 disables the ring. */
   border: number;
   borderColor: string;
+  /** Whether the presenter overlay is visible in preview and export (default true). */
+  visible?: boolean;
 }
 
 export interface MaskProps {
@@ -379,6 +385,8 @@ export interface Clip {
   freezeAt?: Tick;
   /** Playback speed; 1 = real time. Rendered frames are sourced at in + local*speed. */
   speed: number;
+  /** Play source frames and audio in reverse from end of clip trim back to inTicks. */
+  reverse?: boolean;
   /** Active velocity remapping curve preset (8 curves, e.g. 'constant_speed', 'bullet_time'). */
   speedCurve?: string;
   /** Clips sharing a linkId are cut/moved together. */

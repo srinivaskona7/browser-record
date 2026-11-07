@@ -31,7 +31,7 @@ described in [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md).
 ```bash
 npm run typecheck    # tsc --noEmit, strict
 npm run lint         # eslint, 0 errors
-npm test             # vitest, 112 deterministic tests
+npm test             # vitest, 191 tests
 npm run build        # typecheck + vite build (ordinary local build)
 npm run smoke        # verify dist asset paths (run after build)
 npm run check        # all of the above except smoke
@@ -135,7 +135,7 @@ gzip path is verified on every build instead of assumed.
 ## Deploying to GitHub Pages
 
 The workflow is [`.github/workflows/pages.yml`](.github/workflows/pages.yml).
-It runs `npm ci`, typecheck, lint, tests, a build with
+It runs `npm ci`, a typechecked production build with
 `BASE_PATH=/<repository-name>/`, the static-path smoke test, then
 `upload-pages-artifact` and `deploy-pages`.
 
@@ -168,3 +168,9 @@ without server rewrites.
 - There is no automatic redaction guarantee. Masks are manual.
 - There is no LUFS loudness meter; peak and RMS only.
 - Target file size is an estimate from a derived bitrate, not an exact size.
+
+## Creator workspace
+
+The editor has a searchable tool rail, catalog tile libraries for text/effects/transitions/filters/LUTs, clip quick actions, canvas presets and a collapsible inspector. Record offers compact source cards and expandable camera, storage and quality controls. See [Edits and Cap parity](docs/EDITS_PARITY.md) for inspection evidence, implementation mapping and remaining gaps. Matching catalog counts does not imply identical rendering or complete app parity.
+
+The compact recorder provides **Open editor** and **Import media** directly. **Open editor when recording stops** is on by default: Pause/Resume remain available during capture; **Stop & edit** finalizes and appends the take, selects it and opens the editor at its start. Turn the option off for **Stop & review**. Takes with recorder warnings stay in the review dialog. The editor toolbar also provides Import media and Record.

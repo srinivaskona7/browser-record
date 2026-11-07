@@ -93,8 +93,9 @@ export function renderFrame(ctx: Ctx2D, project: Project, options: RenderOptions
     if (!clip.assetId) continue;
     const drawable = options.lookup(clip.assetId, sourceTicks(clip, ticks));
     if (!drawable) continue;
-    if (isPresenterClip(clip, track.name)) presenterClips.push({ clip, drawable });
-    else screenClips.push({ clip, drawable });
+    if (isPresenterClip(clip, track.name)) {
+      if (clip.presenter?.visible !== false) presenterClips.push({ clip, drawable });
+    } else screenClips.push({ clip, drawable });
   }
 
   const presenter = presenterClips[0];
@@ -246,8 +247,10 @@ function drawMediaClip(
     }
   }
   if (totalRotRad !== 0) ctx.rotate(totalRotRad);
-  if (effectSpec?.flipX || effectSpec?.flipY) {
-    ctx.scale(effectSpec.flipX ? -1 : 1, effectSpec.flipY ? -1 : 1);
+  const flipX = Boolean(clip.transform.flipX) !== Boolean(effectSpec?.flipX);
+  const flipY = Boolean(clip.transform.flipY) !== Boolean(effectSpec?.flipY);
+  if (flipX || flipY) {
+    ctx.scale(flipX ? -1 : 1, flipY ? -1 : 1);
   }
 
   ctx.translate(-placement.width / 2 + transState.offsetX, -placement.height / 2 + transState.offsetY);

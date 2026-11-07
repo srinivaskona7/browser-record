@@ -78,7 +78,7 @@ export async function mixdownProject(
         maxDriftSamples = Math.max(maxDriftSamples, Math.abs(drift));
       }
       const source = ctx.createBufferSource();
-      source.buffer = buffer;
+      source.buffer = clip.reverse ? reverseAudioBuffer(ctx, buffer) : buffer;
       const speed = clip.speed || 1;
       source.playbackRate.value = speed;
 
@@ -262,3 +262,17 @@ function pushSilence(
     ranges.push({ startTicks, endTicks, durationTicks: endTicks - startTicks });
   }
 }
+
+function reverseAudioBuffer(ctx: OfflineAudioContext, buffer: AudioBuffer): AudioBuffer {
+  if (typeof ctx.createBuffer !== 'function') return buffer;
+  const out = ctx.createBuffer(buffer.numberOfChannels, buffer.length, buffer.sampleRate);
+  for (let ch = 0; ch < buffer.numberOfChannels; ch += 1) {
+    const src = buffer.getChannelData(ch);
+    const dst = out.getChannelData(ch);
+    for (let i = 0, n = src.length; i < n; i += 1) {
+      dst[i] = src[n - 1 - i]!;
+    }
+  }
+  return out;
+}
+

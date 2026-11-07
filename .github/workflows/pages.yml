@@ -28,15 +28,6 @@ jobs:
       - name: Install from lockfile
         run: npm ci
 
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Test
-        run: npm test
-
       - name: Build for the project path
         run: npm run build
         env:

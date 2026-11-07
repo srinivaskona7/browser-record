@@ -3182,6 +3182,172 @@ export function applyPlatformPreset(project: Project, presetId: string): Project
   return next;
 }
 
+/** Rename the project while keeping non-empty fallback. */
+export function renameProject(project: Project, name: string): Project {
+  const trimmed = name.trim();
+  return { ...project, name: trimmed.length > 0 ? trimmed : project.name };
+}
+
+/** Toggle horizontal or vertical mirror flip on a clip's transform. */
+export function toggleClipFlip(project: Project, clipId: string, axis: 'x' | 'y'): Project {
+  const clip = findClip(project, clipId);
+  const track = project.tracks.find((t) => t.clips.some((c) => c.id === clipId));
+  if (!clip || !track || track.locked) return project;
+  const current = axis === 'x' ? Boolean(clip.transform.flipX) : Boolean(clip.transform.flipY);
+  return updateClipDeep(project, clipId, {
+    transform: axis === 'x' ? { flipX: !current } : { flipY: !current },
+  });
+}
+
+/** Snap clip center X/Y to standard canvas alignment positions. */
+export function alignClip(
+  project: Project,
+  clipId: string,
+  alignment: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom',
+): Project {
+  const clip = findClip(project, clipId);
+  const track = project.tracks.find((t) => t.clips.some((c) => c.id === clipId));
+  if (!clip || !track || track.locked) return project;
+  const patch =
+    alignment === 'left'
+      ? { x: 0.25 }
+      : alignment === 'center'
+        ? { x: 0.5 }
+        : alignment === 'right'
+          ? { x: 0.75 }
+          : alignment === 'top'
+            ? { y: 0.2 }
+            : alignment === 'middle'
+              ? { y: 0.5 }
+              : { y: 0.8 };
+  return updateClipDeep(project, clipId, { transform: patch });
+}
+
+/** Toggle reverse playback on a clip (and any linked audio/video clips). */
+export function toggleClipReverse(project: Project, clipId: string, reverse?: boolean): Project {
+  const clip = findClip(project, clipId);
+  const track = project.tracks.find((t) => t.clips.some((c) => c.id === clipId));
+  if (!clip || !track || track.locked) return project;
+  const nextReverse = reverse ?? !clip.reverse;
+  const linked = new Set(linkedClipIds(project, clip));
+  return mapTracks(project, (tr) => {
+    if (tr.locked) return tr;
+    return {
+      ...tr,
+      clips: tr.clips.map((c) => (linked.has(c.id) ? { ...c, reverse: nextReverse } : c)),
+    };
+  });
+}
+
+/** Paste copied clips at the given playhead tick on their matching tracks. */
+export function pasteClipsAtPlayhead(
+  project: Project,
+  copiedClips: Clip[],
+  atTicks: Tick,
+): { project: Project; newClipIds: string[] } {
+  if (copiedClips.length === 0) return { project, newClipIds: [] };
+  const minStart = Math.min(...copiedClips.map((c) => c.startTicks));
+  const linkMap = new Map<string, string>();
+  const newClipIds: string[] = [];
+  let working = project;
+
+  for (const src of copiedClips) {
+    const newClipId = newId('clip');
+    newClipIds.push(newClipId);
+    let newLinkId: string | undefined;
+    if (src.linkId) {
+      newLinkId = linkMap.get(src.linkId) ?? newId('link');
+      linkMap.set(src.linkId, newLinkId);
+    }
+    const clone: Clip = {
+      ...structuredClone(src),
+      id: newClipId,
+      startTicks: Math.max(0, atTicks + (src.startTicks - minStart)),
+      ...(newLinkId ? { linkId: newLinkId } : { linkId: undefined }),
+    };
+    const track =
+      working.tracks.find((t) => !t.locked && t.clips.some((c) => c.id === src.id)) ??
+      working.tracks.find((t) => !t.locked && t.kind === 'video');
+    if (track) {
+      working = placeClip(working, track.id, clone, 'overwrite');
+    }
+  }
+  return { project: withDuration(working), newClipIds };
+}
+
+/**
+ * Extract audio from a video clip onto a dedicated Audio track while muting
+ * the video clip's embedded audio so audio can be trimmed/faded independently.
+ */
+export function extractAudio(
+  project: Project,
+  clipId: string,
+): { project: Project; audioClipId: string | null } {
+  const sourceClip = findClip(project, clipId);
+  const sourceTrack = project.tracks.find((t) => t.clips.some((c) => c.id === clipId));
+  if (!sourceClip || !sourceTrack || sourceTrack.kind !== 'video' || !sourceClip.assetId) {
+    return { project, audioClipId: null };
+  }
+  let working = updateClipDeep(project, sourceClip.id, { audio: { muted: true } });
+  let audioTrack = working.tracks.find((t) => t.kind === 'audio' && !t.locked && t.name === 'Extracted Audio');
+  if (!audioTrack) {
+    audioTrack = createTrack('audio', 'Extracted Audio');
+    working = addTrack(working, audioTrack);
+  }
+  const extracted = createClip({
+    kind: 'media',
+    assetId: sourceClip.assetId,
+    startTicks: sourceClip.startTicks,
+    durationTicks: sourceClip.durationTicks,
+    inTicks: sourceClip.inTicks,
+    speed: sourceClip.speed,
+    reverse: sourceClip.reverse,
+    speedCurve: sourceClip.speedCurve,
+    label: `${sourceClip.label ?? 'Video'} (Audio)`,
+    audio: { ...sourceClip.audio, muted: false },
+  });
+  working = placeClip(working, audioTrack.id, extracted, 'overwrite');
+  return { project: withDuration(working), audioClipId: extracted.id };
+}
+
+/** Add rhythmic beat markers across the project duration at the specified BPM. */
+export function addBeatMarkers(project: Project, bpm = 120, maxMarkers = 32): Project {
+  const safeBpm = Math.max(40, Math.min(240, bpm));
+  const stepTicks = Math.max(1, Math.round((60 / safeBpm) * TICKS_PER_SECOND));
+  const totalTicks = Math.max(project.durationTicks, 4 * TICKS_PER_SECOND);
+  const beatMarkers = [];
+  let beatIndex = 1;
+  for (let tick = stepTicks; tick < totalTicks && beatIndex <= maxMarkers; tick += stepTicks) {
+    beatMarkers.push({
+      id: newId('marker'),
+      atTicks: tick,
+      label: `Beat ${beatIndex}`,
+      color: '#38bdf8',
+    });
+    beatIndex += 1;
+  }
+  return {
+    ...project,
+    markers: [...project.markers.filter((m) => !m.label.startsWith('Beat ')), ...beatMarkers],
+  };
+}
+
+/** Reset presenter camera bubble position, size, and visibility to defaults. */
+export function resetPresenterPosition(project: Project, clipId: string): Project {
+  const clip = findClip(project, clipId);
+  if (!clip || !clip.presenter) return project;
+  return updateClip(project, clipId, {
+    presenter: {
+      ...clip.presenter,
+      corner: 'bottom-right',
+      size: 0.24,
+      margin: 0.03,
+      visible: true,
+    },
+  });
+}
+
+
 
 
 

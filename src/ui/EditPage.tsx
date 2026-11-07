@@ -13,7 +13,17 @@ import { TranscribeDialog } from './TranscribeDialog';
 import { VoiceoverDialog } from './VoiceoverDialog';
 import { PreviewPlayer } from './player';
 import { downloadBlob, ensureAssetFile, saveNow } from '../app/actions';
+import { ImportMediaButton } from './ImportMediaButton';
 import { EditStart } from './EditStart';
+import {
+  EDITOR_TOOLS,
+  EditorToolLibrary,
+  ClipQuickActions,
+  getClipClipboard,
+  setClipClipboard,
+  type EditorTool,
+} from './EditorTools';
+import { SvgIcon } from './icons';
 
 export function EditPage() {
   const project = useEditor((state) => state.project);
@@ -35,6 +45,10 @@ export function EditPage() {
   const [captionsEnabled, setCaptionsEnabled] = useState(true);
   const [showEndScreenGuide, setShowEndScreenGuide] = useState(false);
   const [muted, setMuted] = useState(true);
+  const [tool, setTool] = useState<EditorTool>('media');
+  const [toolSearch, setToolSearch] = useState('');
+  const [inspectorVisible, setInspectorVisible] = useState(false);
+  const [advancedPreview, setAdvancedPreview] = useState(false);
   const timecodeRef = useRef<HTMLInputElement>(null);
 
   const assetSignature = project?.assets.map((asset) => `${asset.id}:${asset.path}`).join('|') ?? '';
@@ -103,6 +117,13 @@ export function EditPage() {
     return null;
   }, [project, selectedClipIds]);
 
+  useEffect(() => useEditor.subscribe((state, previous) => {
+    if (state.selectedClipIds !== previous.selectedClipIds && state.selectedClipIds.length > 0) {
+      setPanel('effects');
+      setInspectorVisible(true);
+    }
+  }), [setPanel]);
+
   const frameTicks = Math.round(TICKS_PER_SECOND / (project ? project.canvas.fps.num / project.canvas.fps.den : 30));
 
   useEffect(() => {
@@ -128,6 +149,39 @@ export function EditPage() {
       if (meta && event.key.toLowerCase() === 'd') {
         event.preventDefault();
         state.apply('Duplicate clips', (p) => ops.duplicateClips(p, state.selectedClipIds, Math.round(1 * TICKS_PER_SECOND)));
+        return;
+      }
+      if (meta && event.key.toLowerCase() === 'c') {
+        if (state.selectedClipIds.length > 0) {
+          event.preventDefault();
+          const clips = state.selectedClipIds
+            .map((id) => ops.findClipById(project, id))
+            .filter((c): c is NonNullable<typeof c> => Boolean(c));
+          setClipClipboard(clips);
+        }
+        return;
+      }
+      if (meta && event.key.toLowerCase() === 'v') {
+        const clipData = getClipClipboard();
+        if (clipData.length > 0) {
+          event.preventDefault();
+          let newIds: string[] = [];
+          state.apply('Paste clips', (p) => {
+            const res = ops.pasteClipsAtPlayhead(p, clipData, state.playheadTicks);
+            newIds = res.newClipIds;
+            return res.project;
+          });
+          if (newIds.length > 0) state.selectClips(newIds);
+        }
+        return;
+      }
+      if (meta && event.key.toLowerCase() === 'g') {
+        event.preventDefault();
+        if (event.shiftKey) {
+          state.apply('Ungroup clips', (p) => ops.ungroupClips(p, state.selectedClipIds));
+        } else if (state.selectedClipIds.length >= 2) {
+          state.apply('Group clips', (p) => ops.groupClips(p, state.selectedClipIds));
+        }
         return;
       }
       switch (event.key) {
@@ -194,9 +248,57 @@ export function EditPage() {
   const timecode = formatTimecode(playhead, project.canvas.fps);
 
   return (
-    <div className="editor">
+    <div className={`editor edits-workspace${inspectorVisible ? ' show-inspector' : ' inspector-collapsed'}`}>
+      <header className="edit-project-bar">
+        <div>
+          <span className="eyebrow">EDIT STUDIO</span>
+          <div className="row" style={{ gap: 8 }}>
+            <strong>{project.name}</strong>
+            <input
+              className="input"
+              aria-label="Edit project name"
+              value={project.name}
+              onChange={(event) =>
+                useEditor.getState().apply('Rename project', (p) => ops.renameProject(p, event.target.value))
+              }
+              style={{ width: 170, padding: '3px 7px', fontSize: 12 }}
+            />
+          </div>
+        </div>
+        <div className="row">
+          <ImportMediaButton />
+          <Button size="sm" onClick={() => { setPlaying(false); useSession.getState().setRoute('record'); }}>● Record</Button>
+          <Button size="sm" onClick={() => useEditor.getState().undo()} disabled={useEditor.getState().history.length === 0}>↶ Undo</Button>
+          <Button size="sm" onClick={() => useEditor.getState().redo()} disabled={useEditor.getState().future.length === 0}>↷ Redo</Button>
+          <Select label="Canvas aspect ratio" value={`${project.canvas.width}:${project.canvas.height}`} onChange={(value) => useEditor.getState().apply('Change canvas', (p) => value === '1080:1920' ? ops.reframe9x16(p) : value === '1080:1080' ? ops.reframe1x1(p) : value === '1080:1350' ? ops.reframe4x5(p) : ops.reframe16x9(p))} options={[{value: `${project.canvas.width}:${project.canvas.height}`, label: `${project.canvas.width} × ${project.canvas.height}`}, ...[{value: '1080:1920', label: '9:16 · Reel'}, {value: '1920:1080', label: '16:9 · Landscape'}, {value: '1080:1080', label: '1:1 · Square'}, {value: '1080:1350', label: '4:5 · Portrait'}].filter((o) => o.value !== `${project.canvas.width}:${project.canvas.height}`)]} />
+          <Button size="sm" aria-pressed={inspectorVisible} onClick={() => { setInspectorVisible(!inspectorVisible); setPanel('effects'); }}>Inspector</Button>
+          <Button variant="primary" onClick={() => { setPlaying(false); useSession.getState().setRoute('export'); }}>Export ↗</Button>
+        </div>
+      </header>
+      <nav className="edit-tool-rail" aria-label="Editing tools">
+        <input aria-label="Search editing tools" placeholder="Find…" value={toolSearch} onChange={(e) => setToolSearch(e.target.value)} />
+        {EDITOR_TOOLS.filter((item) => item.label.toLowerCase().includes(toolSearch.toLowerCase())).map((item) => (
+          <button
+            key={item.id}
+            aria-pressed={tool === item.id}
+            onClick={() => {
+              if (item.id === 'voiceover') {
+                setVoiceoverOpen(true);
+                return;
+              }
+              setTool(item.id as EditorTool);
+              setInspectorVisible(false);
+              if (item.id === 'captions') setPanel('captions');
+              else if (item.id === 'adjust') setPanel('effects');
+            }}
+          >
+            <SvgIcon name={item.iconName} size={18} />
+            {item.label}
+          </button>
+        ))}
+      </nav>
       <aside className="editor-side scroll-thin">
-        <MediaBin project={project} onOpenVoiceover={() => setVoiceoverOpen(true)} />
+        {tool === 'media' || tool === 'more' ? <MediaBin key={tool} initialTab={tool === 'more' ? 'add' : 'uploads'} project={project} onOpenVoiceover={() => setVoiceoverOpen(true)} /> : tool === 'captions' ? <CaptionsPanel project={project} onOpenTranscribe={() => setTranscribeOpen(true)} /> : <EditorToolLibrary key={tool} tool={tool} project={project} clip={selectedClip?.clip ?? null} />}
       </aside>
 
       <div className="editor-center">
@@ -211,6 +313,7 @@ export function EditPage() {
           captionsEnabled={captionsEnabled}
           revision={playerRevision}
         />
+        <ClipQuickActions project={project} />
         <div className="transport">
           <Button size="icon" variant="ghost" onClick={() => { setPlaying(false); setPlayhead(0); }} aria-label="Go to start">
             ⏮
@@ -279,6 +382,9 @@ export function EditPage() {
           <Button size="sm" variant="ghost" onClick={() => setMuted(!muted)} title="Preview audio monitoring">
             {muted ? '🔇 Preview muted' : '🔊 Preview audio'}
           </Button>
+          <Button size="sm" variant="ghost" aria-expanded={advancedPreview} onClick={() => setAdvancedPreview(!advancedPreview)}>View options</Button>
+          </div>
+          <div className="transport preview-options" hidden={!advancedPreview}>
           <Button
             size="sm"
             variant="ghost"
@@ -339,9 +445,9 @@ export function EditPage() {
             Clip
           </button>
         </div>
-        {panel === 'captions' ? (
+        {panel === 'captions' && tool !== 'captions' ? (
           <CaptionsPanel project={project} onOpenTranscribe={() => setTranscribeOpen(true)} />
-        ) : panel === 'effects' ? (
+        ) : panel === 'effects' || tool === 'captions' ? (
           selectedClip ? <Inspector clip={selectedClip.clip} trackKind={selectedClip.track.kind} /> : <NoSelection project={project} />
         ) : (
           <Panel title="Project">
