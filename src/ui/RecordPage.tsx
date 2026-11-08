@@ -23,8 +23,8 @@ import {
   reportTrackSettings,
   reportedSurface,
 } from '../capabilities/detect';
-import { CaptureSession, recoverInterruptedTake, type CaptureStats, type CaptureAssetSpec, type TakeResult } from '../capture/recorder';
-import { checkStorageHeadroom, cleanRecordingsFolder, deleteTake, listTakes } from '../workspace/workspace';
+import { CaptureSession, type CaptureStats, type CaptureAssetSpec, type TakeResult } from '../capture/recorder';
+import { checkStorageHeadroom, deleteTake, listTakes } from '../workspace/workspace';
 import { WORKSPACE_LAYOUT } from '../workspace/types';
 import { chooseFolderWorkspace, ensureDraftProject, saveSessionToFolder } from '../app/bootstrap';
 import { downloadBlob, ensureAssetFile } from '../app/actions';
@@ -36,7 +36,6 @@ import {
   type CaptureResolution,
 } from '../capture/quality';
 import { newId } from '../core/ids';
-import { takeIdsOf } from '../workspace/takeRefs';
 import type { TakeSummary } from '../workspace/types';
 import * as ops from '../project/ops';
 import { nextFreeStart } from '../project/ops';
@@ -76,7 +75,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
   const session = useSession();
   const [capMode, setCapMode] = useState<CapMode>('studio');
   const [openEditorAfterStop, setOpenEditorAfterStop] = useState(true);
-  const [showMonitor, setShowMonitor] = useState(true);
+  const [showMonitor, setShowMonitor] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [quietMode, setQuietMode] = useState<QuietMode>('full');
   const [controlsHidden, setControlsHidden] = useState(false);
@@ -130,10 +129,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
   const [error, setError] = useState<string | null>(null);
   const [takeResult, setTakeResult] = useState<TakeResult | null>(null);
   const [discardOpen, setDiscardOpen] = useState(false);
-  const [cleanOpen, setCleanOpen] = useState(false);
   const [takes, setTakes] = useState<TakeSummary[]>([]);
-  const [recoveryReport, setRecoveryReport] = useState<string | null>(null);
-  const [cleanBusy, setCleanBusy] = useState(false);
   /** The live sentinel. Unmount needs the real one, not the value captured at mount. */
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   /**
@@ -907,6 +903,8 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         void stopTake();
         return;
       }
+      // Plain single-key shortcuts stay with Edit (or other tabs) when recording runs in the background.
+      if (hidden) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       switch (event.key.toLowerCase()) {
         case ' ':
@@ -938,7 +936,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     return () => window.removeEventListener('keydown', onKey);
     // The handlers read refs and the current stage; re-binding on stage is enough.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stage, micOn, controlsHidden]);
+  }, [stage, micOn, controlsHidden, hidden]);
 
   /** Self-view position after the user drags it; null keeps the default corner. Remembered across reloads. */
   const SELF_VIEW_KEY = 'browser-record.self-view-position';
@@ -1196,68 +1194,6 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     useSession.getState().setRoute('edit');
   }
 
-  const recoverTake = async (take: TakeSummary) => {
-    if (!session.workspace || !session.projectFolder) return;
-    try {
-      const report = await recoverInterruptedTake(session.workspace.root, session.projectFolder, take.takeId);
-      if (!report) {
-        useSession.getState().pushToast(`Take ${take.takeId} has no readable manifest.`, 'error');
-        return;
-      }
-      const lines = [
-        `Committed data: ${formatBytes(report.committedBytes)}`,
-        `Uncommitted tail: ${formatBytes(report.uncommittedBytes)}`,
-        `Worst-case loss window: ${report.lossWindowSeconds}s`,
-        ...report.warnings,
-      ];
-      setRecoveryReport(lines.join('\n'));
-      if (report.assets.length === 0) {
-        useSession.getState().pushToast('This take has no committed media to add.', 'error');
-        return;
-      }
-      useEditor.getState().apply('Recover take', (p) => {
-        // Same placement as a live take: one track per source, camera gets a
-        // presenter bubble, everything appended after the existing edit.
-        const startTicks = nextFreeStart(p);
-        return placeTake(
-          { ...p, assets: [...p.assets, ...report.assets] },
-          report.assets,
-          startTicks,
-          defaultPresenter(),
-        );
-      });
-      useSession.getState().pushToast('Take added to the timeline.', 'success');
-      void refreshTakes();
-    } catch (err) {
-      useSession.getState().pushToast(`Could not recover the take: ${(err as Error).message}`, 'error');
-    }
-  };
-
-  /** Delete every take folder the current project does not reference. */
-  const cleanRecordings = async () => {
-    if (!project || !session.workspace || !session.projectFolder) return;
-    setCleanBusy(true);
-    try {
-      const referenced = new Set(takeIdsOf(project));
-      const result = await cleanRecordingsFolder(session.workspace.root, session.projectFolder, referenced);
-      setCleanOpen(false);
-      setTakes([]);
-      await refreshTakes();
-      useSession
-        .getState()
-        .pushToast(
-          `Removed ${result.deleted.length} take${result.deleted.length === 1 ? '' : 's'}${
-            result.failed.length > 0 ? `; ${result.failed.length} could not be deleted` : ''
-          }. Kept ${result.kept.length} take${result.kept.length === 1 ? '' : 's'} used by the timeline.`,
-          result.failed.length > 0 ? 'error' : 'info',
-        );
-    } catch (err) {
-      useSession.getState().pushToast(`Could not clean recordings: ${(err as Error).message}`, 'error');
-    } finally {
-      setCleanBusy(false);
-    }
-  };
-
   const elapsedSeconds = (stats?.elapsedMs ?? 0) / 1000;
   const assetsByKey = useMemo(() => stats?.assets ?? [], [stats]);
   const activeScreenVideoTrack = useMemo(
@@ -1299,13 +1235,6 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       }
     }
   }, [stage, countdown, elapsedSeconds, hideFloatingPreview]);
-
-  /** Take folders sitting under recordings/ that no clip points at. */
-  const unreferencedTakes = useMemo(() => {
-    if (!project) return [];
-    const referenced = new Set(takeIdsOf(project));
-    return takes.filter((take) => !referenced.has(take.takeId));
-  }, [project, takes]);
 
   if (!project) {
     if (hidden) return null;
@@ -1483,7 +1412,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         </div>
       )}
 
-      <details className="record-storage" open><summary>{session.storageMode === 'opfs' ? 'Temporary browser session · Save to a folder for a durable copy' : 'Recording locally to your folder'}<span>Storage options</span></summary>
+      <details className="record-storage"><summary>{session.storageMode === 'opfs' ? 'Temporary browser session · Save to a folder for a durable copy' : 'Recording locally to your folder'}<span>Storage options</span></summary>
       <div className={session.storageMode === 'opfs' ? 'warn-card' : 'hint-card'} style={{ marginBottom: 12 }} role="status">
         {session.storageMode === 'opfs' ? (
           <>
@@ -1553,7 +1482,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       )}
 
       {/* Loom/Cap-style floating control pill. Supports hiding/collapsing into a minimal
-          pill during recording so controls never block screen content. */}
+          pill during recording while keeping Stop available. */}
       {(stage === 'countdown' || stage === 'recording' || stage === 'paused' || stage === 'finishing') && (
         <div
           className={`rec-bar rec-dock${stage === 'paused' ? ' paused' : ''}${controlsHidden ? ' rec-dock-collapsed' : ''}`}
@@ -1583,6 +1512,14 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
               <div className="rec-dock-actions">
                 <Button
                   size="sm"
+                  variant="danger"
+                  onClick={() => void stopTake()}
+                  title="Shortcut: S"
+                >
+                  <span aria-hidden>■</span> {openEditorAfterStop && capMode !== 'instant' ? 'Stop & edit' : 'Stop & review'}
+                </Button>
+                <Button
+                  size="sm"
                   variant="ghost"
                   aria-label="Show recording controls"
                   title="Restore full recording controls (Shortcut: H)"
@@ -1594,67 +1531,81 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
             ) : (
               <div className="rec-dock-actions">
                 <RecordingActions paused={stage === 'paused'} openEditor={openEditorAfterStop && capMode !== 'instant'} onPause={togglePause} onStop={() => void stopTake()} />
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => void stopTake(true)}
-                  title="Stop and open Quick Export / Post-record sheet"
-                >
-                  Stop &amp; export
-                </Button>
-                <Button size="sm" variant="ghost" onClick={addMarker} title="Shortcut: M or K">
-                  Marker
-                </Button>
-                {cameraOn && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    aria-pressed={hideFloatingPreview}
-                    onClick={() => setHideFloatingPreview((prev) => !prev)}
-                    title="Hide floating camera preview on display while continuing to record camera separately for the editor"
-                  >
-                    {hideFloatingPreview ? 'Show floating preview' : 'Hide floating preview'}
+                {quietMode === 'full' && (
+                  <Button size="sm" variant="ghost" onClick={addMarker} title="Shortcut: M or K">
+                    Marker
                   </Button>
                 )}
-                {cameraOn && floatingClosedDuringTake && !floatingCameraOpen && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => void toggleFloatingCamera()}
-                    title="Reopen the floating Document PiP camera & controls window"
-                  >
-                    Reopen floating controls
-                  </Button>
-                )}
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="rec-restart"
-                  onClick={() => setRestartOpen(true)}
-                  aria-label="Restart take"
-                  title="Restart: discards this take, then counts down again"
-                >
-                  ↻
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setDiscardOpen(true)}
-                  title="Abandon this take without keeping it"
-                >
-                  Discard
-                </Button>
-                {micOn && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={toggleMicMute}
-                    aria-label={micMuted ? 'Unmute the microphone' : 'Mute the microphone'}
-                    title={micMuted ? 'Microphone is muted in the recording' : 'Mute the microphone'}
-                  >
-                    {micMuted ? 'Unmute' : 'Mute'}
-                  </Button>
-                )}
+                <details className="rec-more-menu">
+                  <summary className="btn btn-ghost btn-sm" aria-label="More recording controls">
+                    More
+                  </summary>
+                  <div className="rec-more-popover" role="group" aria-label="Secondary recording actions">
+                    {quietMode !== 'full' && (
+                      <Button size="sm" variant="ghost" onClick={addMarker} title="Shortcut: M or K">
+                        Marker
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => void stopTake(true)}
+                      title="Stop and open Quick Export / Post-record sheet"
+                    >
+                      Stop &amp; export
+                    </Button>
+                    {cameraOn && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        aria-pressed={hideFloatingPreview}
+                        onClick={() => setHideFloatingPreview((prev) => !prev)}
+                        title="Hide floating camera preview on display while continuing to record camera separately for the editor"
+                      >
+                        {hideFloatingPreview ? 'Show floating preview' : 'Hide floating preview'}
+                      </Button>
+                    )}
+                    {cameraOn && floatingClosedDuringTake && !floatingCameraOpen && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => void toggleFloatingCamera()}
+                        title="Reopen the floating Document PiP camera & controls window"
+                      >
+                        Reopen floating controls
+                      </Button>
+                    )}
+                    {micOn && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={toggleMicMute}
+                        aria-label={micMuted ? 'Unmute the microphone' : 'Mute the microphone'}
+                        title={micMuted ? 'Microphone is muted in the recording' : 'Mute the microphone'}
+                      >
+                        {micMuted ? 'Unmute' : 'Mute'}
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="rec-restart"
+                      onClick={() => setRestartOpen(true)}
+                      aria-label="Restart take"
+                      title="Restart: discards this take, then counts down again"
+                    >
+                      ↻ Restart
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setDiscardOpen(true)}
+                      title="Abandon this take without keeping it"
+                    >
+                      Discard
+                    </Button>
+                  </div>
+                </details>
                 <Button
                   size="sm"
                   variant="ghost"
@@ -1674,8 +1625,8 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
           <Panel
             title="Sources"
             action={
-              <Button size="sm" variant="ghost" onClick={() => setShowMonitor((prev) => !prev)}>
-                {showMonitor ? 'Hide monitor' : 'Show monitor'}
+              <Button size="sm" variant="ghost" aria-pressed={showMonitor} onClick={() => setShowMonitor((prev) => !prev)}>
+                {showMonitor ? 'Hide preview' : 'Show preview'}
               </Button>
             }
             bodyClassName="stack"
@@ -1761,7 +1712,9 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
               )}
             </div>
 
-            <div className="hint-card stack" style={{ gap: 8 }} role="region" aria-label="Across tabs and display capture">
+            <details className="record-details">
+              <summary>Capture guidance<span>Across tabs, windows &amp; displays</span></summary>
+            <div className="hint-card stack" style={{ gap: 8, marginTop: 8 }} role="region" aria-label="Across tabs and display capture">
               <div className="row" style={{ justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
                 <strong style={{ fontSize: 12.5 }}>What makes capture work across tabs &amp; apps</strong>
                 <Badge tone={actualReturnedSurface.surface ? 'ok' : 'neutral'}>
@@ -1798,9 +1751,9 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                   checked={hideMonitorDuringDisplay}
                   onChange={setHideMonitorDuringDisplay}
                 />
-                {cameraOn && screenOn && surface !== 'tab' && (
+                {cameraOn && screenOn && surface === 'screen' && (
                   <Select
-                    label="Camera export mode on Display/Window"
+                    label="Camera export mode on Display"
                     value={cameraDuplicationMode}
                     onChange={(v) => setCameraDuplicationMode(v as CameraDuplicationMode)}
                     options={[
@@ -1821,6 +1774,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                 </div>
               )}
             </div>
+            </details>
 
             <div className="cap-device-rows">
               <div className="cap-device-row">
@@ -2325,7 +2279,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
             </div>
           </Panel>
 
-          <details className="record-details" open><summary>Capture quality report<span>Actual track settings</span></summary>
+          <details className="record-details"><summary>Capture quality report<span>Actual track settings</span></summary>
           <Panel title="Applied track settings">
             <div className="table-scroll">
               <table className="table">
@@ -2373,49 +2327,6 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
           </Panel>
 
           </details>
-          {takes.length > 0 && (
-            <Panel title={`Takes in this project (${takes.length})`}>
-              <div className="stack" style={{ gap: 8 }}>
-                {takes.map((take) => {
-                  const used = project ? takeIdsOf(project).includes(take.takeId) : false;
-                  return (
-                    <div key={take.takeId} className="stack" style={{ gap: 4, border: '1px solid var(--line)', borderRadius: 8, padding: 10 }}>
-                      <div className="row" style={{ justifyContent: 'space-between' }}>
-                        <span className="mono" style={{ fontSize: 11.5 }}>{take.takeId}</span>
-                        <span className="row" style={{ gap: 6 }}>
-                          {take.interrupted ? <Badge tone="warn">interrupted</Badge> : <Badge tone="ok">finished</Badge>}
-                          {used && <Badge>on timeline</Badge>}
-                        </span>
-                      </div>
-                      <div className="field-hint">
-                        Started {new Date(take.manifest.startedAt).toLocaleString()} · committed{' '}
-                        {formatBytes(take.manifest.assets.reduce((sum, asset) => sum + asset.committedBytes, 0))}
-                      </div>
-                      {!used && (
-                        <div className="row" style={{ gap: 8 }}>
-                          <Button size="sm" onClick={() => void recoverTake(take)}>
-                            Add to timeline
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={() => void deleteTakeFiles(take.takeId)}>
-                            Delete files
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-                {recoveryReport && <pre className="danger-card mono" style={{ whiteSpace: 'pre-wrap', fontSize: 11.5 }}>{recoveryReport}</pre>}
-                <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                  <Button size="sm" variant="danger" onClick={() => setCleanOpen(true)}>
-                    Clean all unused recordings…
-                  </Button>
-                  <span className="field-hint">
-                    Deletes take folders this timeline does not use. Takes referenced by clips are always kept.
-                  </span>
-                </div>
-              </div>
-            </Panel>
-          )}
         </div>
       </div>
 
@@ -2458,37 +2369,6 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         <p style={{ margin: 0, color: 'var(--text-2)', lineHeight: 1.6 }}>
           The recorded files for this take{activeTakeId ? <> (<span className="mono">{activeTakeId}</span>)</> : null} will be abandoned and not added to the project. Existing media is never
           deleted by this action.
-        </p>
-      </Dialog>
-
-      <Dialog
-        open={cleanOpen}
-        onClose={() => (cleanBusy ? undefined : setCleanOpen(false))}
-        title="Delete unused recordings?"
-        footer={
-          <>
-            <Button variant="ghost" disabled={cleanBusy} onClick={() => setCleanOpen(false)}>
-              Cancel
-            </Button>
-            <Button variant="danger" disabled={cleanBusy || unreferencedTakes.length === 0} onClick={() => void cleanRecordings()}>
-              {cleanBusy
-                ? 'Deleting…'
-                : unreferencedTakes.length === 0
-                  ? 'Nothing to delete'
-                  : `Delete ${unreferencedTakes.length} unused take${unreferencedTakes.length === 1 ? '' : 's'}`}
-            </Button>
-          </>
-        }
-      >
-        <p style={{ margin: 0, color: 'var(--text-2)', lineHeight: 1.6 }}>
-          This deletes every take folder under this project&apos;s{' '}
-          <span className="mono">recordings/</span> that no clip on the timeline references. Imported media, exports
-          and captions are never touched. Takes currently in use are kept.
-        </p>
-        <p style={{ margin: '10px 0 0', color: 'var(--text-2)', lineHeight: 1.6 }}>
-          {unreferencedTakes.length === 0
-            ? 'Every take under recordings/ is used by the current timeline.'
-            : `${unreferencedTakes.length} of ${takes.length} take${takes.length === 1 ? '' : 's'} under recordings/ ${unreferencedTakes.length === 1 ? 'is' : 'are'} unused and will be deleted.`}
         </p>
       </Dialog>
 

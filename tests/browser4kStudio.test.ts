@@ -439,5 +439,20 @@ describe('Browser 4K Studio — Release Gate Suite', () => {
     expect(secondRun).toBe(false);
     expect(readLastSession()?.projectFolder).toBe('active-opfs-draft');
   });
+
+  it('requires a decoded video frame with valid dimensions and duration for Playback verified and marks timeouts as unverified', async () => {
+    const { verifyDecodedVideoBlob } = await import('../src/export/exporter');
+
+    // Empty blob fails
+    const emptyRes = await verifyDecodedVideoBlob(new Blob([]), 30);
+    expect(emptyRes.ok).toBe(false);
+    expect(emptyRes.verified).toBe(false);
+
+    // Timeout in jsdom (no native video decoder firing loadeddata) leaves saved export ok=true, verified=false
+    const timeoutRes = await verifyDecodedVideoBlob(new Blob([new Uint8Array([1, 2, 3, 4])], { type: 'video/mp4' }), 20);
+    expect(timeoutRes.ok).toBe(true);
+    expect(timeoutRes.verified).toBe(false);
+  });
 });
+
 

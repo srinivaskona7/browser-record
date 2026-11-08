@@ -56,7 +56,10 @@ export function EditPage() {
   const [drawerOpen, setDrawerOpen] = useState(true);
   const [toolSearch, setToolSearch] = useState('');
   const [inspectorVisible, setInspectorVisible] = useState(true);
+  const [focusMode, setFocusMode] = useState(false);
   const [advancedPreview, setAdvancedPreview] = useState(false);
+  const [timecodeFocused, setTimecodeFocused] = useState(false);
+  const [timecodeDraft, setTimecodeDraft] = useState<string | null>(null);
   const timecodeRef = useRef<HTMLInputElement>(null);
 
   const assetSignature = project?.assets.map((asset) => `${asset.id}:${asset.path}`).join('|') ?? '';
@@ -317,7 +320,12 @@ export function EditPage() {
           }));
           break;
         case 'Escape':
-          state.stepBackSelection();
+          if (focusMode) {
+            event.preventDefault();
+            setFocusMode(false);
+          } else {
+            state.stepBackSelection();
+          }
           break;
         default:
           break;
@@ -325,7 +333,7 @@ export function EditPage() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [frameTicks, setPlayhead, setPlaying]);
+  }, [frameTicks, setPlayhead, setPlaying, focusMode]);
 
   if (!project) {
     return <EditStart />;
@@ -334,11 +342,14 @@ export function EditPage() {
   const timecode = formatTimecode(playhead, project.canvas.fps);
 
   return (
-    <div className={`editor edits-workspace${inspectorVisible ? ' show-inspector' : ' inspector-collapsed'}`}>
+    <div
+      className={`editor edits-workspace${focusMode ? ' focus-mode' : inspectorVisible ? ' show-inspector' : ' inspector-collapsed'}`}
+      data-focus-mode={focusMode ? 'true' : undefined}
+    >
       <header className="edit-project-bar">
-        <div>
-          <span className="eyebrow">BROWSER 4K STUDIO · EDIT WORKSPACE</span>
+        <div className="stack" style={{ gap: 6 }}>
           <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <span className="eyebrow">BROWSER 4K STUDIO · EDIT WORKSPACE</span>
             <strong>{project.name}</strong>
             <input
               className="input"
@@ -349,7 +360,9 @@ export function EditPage() {
               }
               style={{ width: 170, padding: '3px 7px', fontSize: 12 }}
             />
-            <div className="row" role="tablist" aria-label="Specialist workspace views" style={{ gap: 4, flexWrap: 'wrap' }}>
+          </div>
+          {!focusMode && (
+            <div className="row edit-workspace-row" role="tablist" aria-label="Specialist workspace views" style={{ gap: 4, flexWrap: 'wrap' }}>
               {(
                 [
                   { id: '05-timeline', num: '05', label: 'Timeline', tool: 'media' as EditorTool },
@@ -367,16 +380,19 @@ export function EditPage() {
                   className="workspace-view-pill"
                   aria-pressed={workspaceView === v.id}
                   onClick={() => {
+                    setFocusMode(false);
                     setWorkspaceView(v.id);
                     setTool(v.tool);
                     setDrawerOpen(true);
+                    setInspectorVisible(true);
+                    setPanel('effects');
                   }}
                 >
                   <span className="workspace-view-num">{v.num}</span> {v.label}
                 </button>
               ))}
             </div>
-          </div>
+          )}
         </div>
         <div className="row">
           <ImportMediaButton />
@@ -384,37 +400,50 @@ export function EditPage() {
           <Button size="sm" onClick={() => useEditor.getState().undo()} disabled={historyLength === 0}>↶ Undo</Button>
           <Button size="sm" onClick={() => useEditor.getState().redo()} disabled={futureLength === 0}>↷ Redo</Button>
           <Select label="Canvas aspect ratio" value={`${project.canvas.width}:${project.canvas.height}`} onChange={(value) => useEditor.getState().apply('Change canvas', (p) => value === '1080:1920' ? ops.reframe9x16(p) : value === '1080:1080' ? ops.reframe1x1(p) : value === '1080:1350' ? ops.reframe4x5(p) : ops.reframe16x9(p))} options={[{value: `${project.canvas.width}:${project.canvas.height}`, label: `${project.canvas.width} × ${project.canvas.height}`}, ...[{value: '1080:1920', label: '9:16 · Reel'}, {value: '1920:1080', label: '16:9 · Landscape'}, {value: '1080:1080', label: '1:1 · Square'}, {value: '1080:1350', label: '4:5 · Portrait'}].filter((o) => o.value !== `${project.canvas.width}:${project.canvas.height}`)]} />
-          <Button size="sm" aria-pressed={inspectorVisible} onClick={() => { setInspectorVisible(!inspectorVisible); setPanel('effects'); }}>Inspector</Button>
+          <Button
+            size="sm"
+            variant={focusMode ? 'primary' : 'ghost'}
+            aria-pressed={focusMode}
+            onClick={() => setFocusMode((prev) => !prev)}
+            title="Hide tool rail and side panels to focus on preview and timeline (Shortcut: Esc to exit)"
+          >
+            {focusMode ? 'Exit focus' : 'Focus'}
+          </Button>
+          {!focusMode && (
+            <Button size="sm" aria-pressed={inspectorVisible} onClick={() => { setInspectorVisible(!inspectorVisible); setPanel('effects'); }}>Inspector</Button>
+          )}
           <Button variant="primary" onClick={() => { setPlaying(false); useSession.getState().setRoute('export'); }}>Export ↗</Button>
         </div>
       </header>
-      <nav className="edit-tool-rail" aria-label="Editing tools">
-        <input aria-label="Search editing tools" placeholder="Find…" value={toolSearch} onChange={(e) => setToolSearch(e.target.value)} />
-        {EDITOR_TOOLS.filter((item) => item.label.toLowerCase().includes(toolSearch.toLowerCase())).map((item) => (
-          <button
-            key={item.id}
-            aria-pressed={drawerOpen && tool === item.id}
-            onClick={() => {
-              if (item.id === 'voiceover') {
-                setVoiceoverOpen(true);
-                return;
-              }
-              if (tool === item.id) {
-                setDrawerOpen((prev) => !prev);
-                return;
-              }
-              setTool(item.id as EditorTool);
-              setDrawerOpen(true);
-              if (item.id === 'captions') setPanel('captions');
-              else if (item.id === 'adjust') setPanel('effects');
-            }}
-          >
-            <SvgIcon name={item.iconName} size={18} />
-            {item.label}
-          </button>
-        ))}
-      </nav>
-      {drawerOpen && (
+      {!focusMode && (
+        <nav className="edit-tool-rail" aria-label="Editing tools">
+          <input aria-label="Search editing tools" placeholder="Find…" value={toolSearch} onChange={(e) => setToolSearch(e.target.value)} />
+          {EDITOR_TOOLS.filter((item) => item.label.toLowerCase().includes(toolSearch.toLowerCase())).map((item) => (
+            <button
+              key={item.id}
+              aria-pressed={drawerOpen && tool === item.id}
+              onClick={() => {
+                if (item.id === 'voiceover') {
+                  setVoiceoverOpen(true);
+                  return;
+                }
+                if (tool === item.id) {
+                  setDrawerOpen((prev) => !prev);
+                  return;
+                }
+                setTool(item.id as EditorTool);
+                setDrawerOpen(true);
+                if (item.id === 'captions') setPanel('captions');
+                else if (item.id === 'adjust') setPanel('effects');
+              }}
+            >
+              <SvgIcon name={item.iconName} size={18} />
+              {item.label}
+            </button>
+          ))}
+        </nav>
+      )}
+      {!focusMode && drawerOpen && (
       <aside className="editor-side scroll-thin">
         {tool === 'media' || tool === 'more' ? <MediaBin key={tool} initialTab={tool === 'more' ? 'add' : 'uploads'} project={project} onOpenVoiceover={() => setVoiceoverOpen(true)} /> : tool === 'captions' ? <CaptionsPanel project={project} onOpenTranscribe={() => setTranscribeOpen(true)} /> : tool === 'planning' ? <PlanningPanel project={project} /> : <EditorToolLibrary key={tool} tool={tool} project={project} clip={selectedClip?.clip ?? null} />}
       </aside>
@@ -472,21 +501,36 @@ export function EditPage() {
           <form
             onSubmit={(event) => {
               event.preventDefault();
-              const parsed = parseTimecode(timecodeRef.current?.value ?? '', project.canvas.fps);
+              const raw = (timecodeDraft ?? timecodeRef.current?.value ?? '').trim();
+              const parsed = parseTimecode(raw, project.canvas.fps);
               if (parsed === null) {
                 setToast('Use HH:MM:SS:FF or HH:MM:SS.mmm.', 'error');
                 return;
               }
               setPlaying(false);
               setPlayhead(Math.min(project.durationTicks, Math.max(0, parsed)));
+              setTimecodeFocused(false);
+              setTimecodeDraft(null);
+              timecodeRef.current?.blur();
             }}
             className="row"
             style={{ gap: 6 }}
           >
             <input
               ref={timecodeRef}
-              key={timecode}
-              defaultValue={timecode}
+              value={timecodeFocused && timecodeDraft !== null ? timecodeDraft : timecode}
+              onFocus={() => {
+                setPlaying(false);
+                setTimecodeFocused(true);
+                setTimecodeDraft(timecode);
+              }}
+              onChange={(event) => {
+                setTimecodeDraft(event.target.value);
+              }}
+              onBlur={() => {
+                setTimecodeFocused(false);
+                setTimecodeDraft(null);
+              }}
               className="input timecode"
               style={{ width: 132, padding: '5px 8px', fontSize: 12.5 }}
               aria-label="Playhead timecode"
@@ -548,6 +592,7 @@ export function EditPage() {
         </div>
       </div>
 
+      {!focusMode && (
       <aside className="editor-side editor-right scroll-thin">
         <div className="nav-tabs" style={{ alignSelf: 'flex-start' }}>
           <button type="button" className="nav-tab" aria-current={panel === 'media' ? 'page' : undefined} onClick={() => setPanel('media')}>
@@ -591,6 +636,7 @@ export function EditPage() {
           </div>
         </Panel>
       </aside>
+      )}
 
       <Timeline project={project} />
 

@@ -284,7 +284,7 @@ it('enforces the 3-case Camera-Duplication Rule so export contains the camera at
   });
   expect(case2.compositeInExport).toBe(true);
 
-  // Case 3: Browser tab capture => PiP is not in tab stream, so composite separate camera layer once in export
+  // Case 3: Browser tab and Window capture => PiP is not in tab/window stream, so composite separate camera layer once in export
   const case3 = resolveCameraLayerVisibility({
     cameraOn: true,
     surface: 'tab',
@@ -293,8 +293,22 @@ it('enforces the 3-case Camera-Duplication Rule so export contains the camera at
   });
   expect(case3.compositeInExport).toBe(true);
 
-  // Verify hideable recording controls (.rec-dock) and Instant mode Post-Record Quick Export sheet
+  const windowCase = resolveCameraLayerVisibility({
+    cameraOn: true,
+    surface: 'window',
+    hideFloatingPreview: false,
+    duplicationMode: 'baked-in-screen',
+  });
+  expect(windowCase.compositeInExport).toBe(true);
+
+  // Verify compact setup with Show preview toggle, hideable recording controls (.rec-dock), and Instant mode Post-Record Quick Export sheet
   await act(async () => root.render(<RecordPage />));
+  expect(host.querySelector('.cap-recorder.monitor-expanded')).toBeNull();
+  await act(async () => button('Show preview').click());
+  expect(host.querySelector('.cap-recorder.monitor-expanded')).not.toBeNull();
+  await act(async () => button('Hide preview').click());
+  expect(host.querySelector('.cap-recorder.monitor-expanded')).toBeNull();
+
   await act(async () => button('Instant').click());
   await act(() => {
     checkbox('Camera').click();
@@ -305,12 +319,21 @@ it('enforces the 3-case Camera-Duplication Rule so export contains the camera at
   });
   await act(async () => button('Start recording').click());
 
-  // Collapse recording controls into minimal pill and restore them
+  // Collapse recording controls into minimal pill — Stop remains available in the collapsed bar
   await act(async () => button('Hide controls ▾').click());
   expect(host.querySelector('.rec-dock.rec-dock-collapsed')).not.toBeNull();
+  expect(button('Stop & review')).toBeDefined();
   await act(async () => button('Show controls ▴').click());
   expect(host.querySelector('.rec-dock.rec-dock-collapsed')).toBeNull();
 
+  // While RecordPage is hidden (user is in Edit), plain 's' key does not stop the background recording
+  await act(async () => root.render(<RecordPage hidden={true} />));
+  await act(async () => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', bubbles: true }));
+  });
+  expect(capture.stop).not.toHaveBeenCalled();
+
+  await act(async () => root.render(<RecordPage hidden={false} />));
   // Stopping in Instant mode opens the Post-Record Quick Export sheet with Export now, Edit recording, Record another take, Discard
   await act(async () => button('Stop & review').click());
   expect(host.textContent).toContain('Recording finished — Post-record actions');

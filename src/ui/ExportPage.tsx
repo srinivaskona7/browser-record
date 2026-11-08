@@ -18,7 +18,14 @@ import {
   type ExportPreset as Preset,
   type PresetId,
 } from '../export/presets';
-import { ExportCancelled, describeExport, exportProject, type ExportProgress, type ExportResult } from '../export/exporter';
+import {
+  ExportCancelled,
+  describeExport,
+  exportProject,
+  verifyDecodedVideoBlob,
+  type ExportProgress,
+  type ExportResult,
+} from '../export/exporter';
 import { AUDIO_CODECS, VIDEO_CODECS, probeAudioEncoder, probeVideoEncoder, type CodecCandidate, type CodecSupport } from '../capabilities/codecs';
 import { runEncodeBenchmark, type BenchmarkResult } from '../capabilities/benchmark';
 import { cloneProjectWithRange, extractSegmentProject, markerSegments } from '../project/ops';
@@ -57,6 +64,8 @@ export function ExportPage() {
   const [sidecarFormat, setSidecarFormat] = useState<'none' | 'srt' | 'vtt' | 'both'>('none');
   const [wavExportBusy, setWavExportBusy] = useState(false);
   const [resultPreviewUrl, setResultPreviewUrl] = useState<string | null>(null);
+  const [playbackVerified, setPlaybackVerified] = useState<boolean | null>(null);
+  const [exportSection, setExportSection] = useState<'video' | 'downloads' | 'planning'>('video');
   const [segmentId, setSegmentId] = useState<string>('all');
   const [cancelRef, setCancelRef] = useState<AbortController | null>(null);
   const [progress, setProgress] = useState<ExportProgress | null>(null);
@@ -281,6 +290,7 @@ export function ExportPage() {
         onProgress: setProgress,
       });
       setResult(out);
+      setPlaybackVerified(null);
       const activeProj = exportTargetProject ?? project;
       const slug = activeProj.name.replace(/[^\w\-. ]+/g, '').trim().replace(/\s+/g, '-').toLowerCase() || 'lesson';
       if (sidecarFormat === 'srt' || sidecarFormat === 'both') {
@@ -296,16 +306,20 @@ export function ExportPage() {
           if (prev) URL.revokeObjectURL(prev);
           return url;
         });
+        const check = await verifyDecodedVideoBlob(blob);
+        setPlaybackVerified(check.verified);
       } else if (out.path && session.workspace) {
         void readBlob(session.workspace.root, out.path)
-          .then((file) => {
+          .then(async (file) => {
             const url = URL.createObjectURL(file);
             setResultPreviewUrl((prev) => {
               if (prev) URL.revokeObjectURL(prev);
               return url;
             });
+            const check = await verifyDecodedVideoBlob(file);
+            setPlaybackVerified(check.verified);
           })
-          .catch(() => undefined);
+          .catch(() => setPlaybackVerified(false));
       }
       if (out.warnings.length > 0) {
         session.pushToast(
@@ -421,8 +435,130 @@ export function ExportPage() {
             export gets a new timestamped file under <span className="mono">{WORKSPACE_LAYOUT.exports}/</span>.
           </p>
         </div>
-        <Badge>{project.name}</Badge>
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <div className="row" role="tablist" aria-label="Export sections" style={{ gap: 6 }}>
+            <Button
+              size="sm"
+              variant={exportSection === 'video' ? 'primary' : 'ghost'}
+              aria-pressed={exportSection === 'video'}
+              onClick={() => setExportSection('video')}
+            >
+              Video export
+            </Button>
+            <Button
+              size="sm"
+              variant={exportSection === 'downloads' ? 'primary' : 'ghost'}
+              aria-pressed={exportSection === 'downloads'}
+              onClick={() => setExportSection('downloads')}
+            >
+              Standalone downloads
+            </Button>
+            <Button
+              size="sm"
+              variant={exportSection === 'planning' ? 'primary' : 'ghost'}
+              aria-pressed={exportSection === 'planning'}
+              onClick={() => setExportSection('planning')}
+            >
+              Planning &amp; Share
+            </Button>
+          </div>
+          <Badge>{project.name}</Badge>
+        </div>
       </header>
+
+      {exportSection === 'planning' && <PlanningPanel project={project} />}
+      {exportSection === 'downloads' && (
+        <Panel
+          title="Standalone downloads"
+          subtitle="Download cover PNG frames, 16-bit PCM WAV audio mixdown, editable SRT/VTT subtitles, or project JSON without encoding video."
+        >
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={async () => {
+                const blob = await snapshotThumbnail(
+                  exportTargetProject ?? project,
+                  null,
+                  project.coverTimeTicks ?? useEditor.getState().playheadTicks,
+                  includeCaptions,
+                );
+                if (blob) {
+                  downloadBlob(blob, `${project.name.replace(/[^\w-]+/g, '-') || 'thumbnail'}-1280x720.png`);
+                }
+              }}
+            >
+              Download PNG cover (1280×720)
+            </Button>
+            <Button
+              size="sm"
+              disabled={wavExportBusy}
+              onClick={async () => {
+                setWavExportBusy(true);
+                try {
+                  const target = exportTargetProject ?? project;
+                  const decoded = await decodeAudioForExport(target, (path) => ensureAssetFile(path));
+                  const mix = await mixdownTimeline({
+                    project: target,
+                    decoded,
+                    sampleRate: target.settings.sampleRate || 48_000,
+                  });
+                  const wavBytes = encodeWav(mix.channels, mix.sampleRate);
+                  const copy = new Uint8Array(wavBytes.byteLength);
+                  copy.set(wavBytes);
+                  downloadBlob(
+                    new Blob([copy.buffer], { type: 'audio/wav' }),
+                    `${project.name.replace(/[^\w-]+/g, '-') || 'lesson'}-audio.wav`,
+                  );
+                  session.pushToast('Exported WAV audio mixdown.', 'success');
+                } catch (err) {
+                  setError(`WAV export failed: ${(err as Error).message}`);
+                } finally {
+                  setWavExportBusy(false);
+                }
+              }}
+            >
+              {wavExportBusy ? 'Exporting WAV…' : 'Download WAV audio'}
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                const slug = project.name.replace(/[^\w-]+/g, '-') || 'lesson';
+                downloadBlob(
+                  new Blob([toSrt((exportTargetProject ?? project).captions)], { type: 'application/x-subrip' }),
+                  `${slug}.srt`,
+                );
+              }}
+            >
+              Download .SRT
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                const slug = project.name.replace(/[^\w-]+/g, '-') || 'lesson';
+                downloadBlob(
+                  new Blob([toVtt((exportTargetProject ?? project).captions)], { type: 'text/vtt' }),
+                  `${slug}.vtt`,
+                );
+              }}
+            >
+              Download .VTT
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                const slug = project.name.replace(/[^\w-]+/g, '-') || 'lesson';
+                downloadBlob(
+                  new Blob([serializeProject(project)], { type: 'application/json' }),
+                  `${slug}-project-bundle.json`,
+                );
+              }}
+            >
+              Download project bundle (.json)
+            </Button>
+          </div>
+        </Panel>
+      )}
 
       <div className="split-grid">
         <div className="stack" style={{ gap: 14 }}>
@@ -774,8 +910,10 @@ export function ExportPage() {
             {error && <div className="danger-card">{error}</div>}
             {result && (
               <div className="stack" style={{ gap: 8 }}>
-                <div className="row" style={{ gap: 14, flexWrap: 'wrap' }}>
+                <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
                   <Badge tone="ok">exported</Badge>
+                  {playbackVerified === true && <Badge tone="ok">Playback verified</Badge>}
+                  {playbackVerified === false && <Badge tone="warn">Saved · unverified</Badge>}
                   <span className="field-hint mono" style={{ whiteSpace: 'pre-line' }}>
                     {describeExport(result)}
                   </span>

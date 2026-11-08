@@ -517,35 +517,78 @@ export function estimateForDuration(project: Project, preset: ExportPreset, dura
 }
 
 /**
- * Verify that an exported video Blob is non-empty and can be loaded into a `<video>` element.
+ * Verify that an exported video Blob is non-empty and decodes a frame with valid
+ * dimensions and duration in a `<video>` element. A timeout leaves the saved
+ * export intact (`ok: true`) but marked as unverified (`verified: false`).
  */
 export async function verifyDecodedVideoBlob(
   blob: Blob,
-): Promise<{ ok: boolean; bytes: number; durationSeconds: number }> {
+  timeoutMs = 1200,
+): Promise<{
+  ok: boolean;
+  verified: boolean;
+  bytes: number;
+  durationSeconds: number;
+  width: number;
+  height: number;
+}> {
   if (!blob || blob.size === 0) {
-    return { ok: false, bytes: 0, durationSeconds: 0 };
+    return { ok: false, verified: false, bytes: 0, durationSeconds: 0, width: 0, height: 0 };
   }
   if (typeof document === 'undefined' || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
-    return { ok: true, bytes: blob.size, durationSeconds: 0 };
+    return { ok: true, verified: false, bytes: blob.size, durationSeconds: 0, width: 0, height: 0 };
   }
   return new Promise((resolve) => {
     const url = URL.createObjectURL(blob);
     const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'auto';
     let settled = false;
-    const finish = (ok: boolean, durationSeconds: number) => {
+    const finish = (ok: boolean, verified: boolean, durationSeconds: number, width: number, height: number) => {
       if (settled) return;
       settled = true;
+      video.removeAttribute('src');
       URL.revokeObjectURL(url);
-      resolve({ ok, bytes: blob.size, durationSeconds });
+      resolve({ ok, verified, bytes: blob.size, durationSeconds, width, height });
     };
-    const timer = setTimeout(() => finish(true, 0), 300);
+    const timer = setTimeout(() => {
+      // Timeout leaves the saved export marked as unverified rather than failing the file write.
+      finish(true, false, 0, 0, 0);
+    }, timeoutMs);
+
+    const checkDecodedFrame = () => {
+      const width = video.videoWidth || 0;
+      const height = video.videoHeight || 0;
+      const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
+      if (width > 0 && height > 0 && duration > 0) {
+        clearTimeout(timer);
+        finish(true, true, duration, width, height);
+        return true;
+      }
+      return false;
+    };
+
+    video.onloadeddata = () => {
+      if (!checkDecodedFrame()) {
+        clearTimeout(timer);
+        finish(true, false, Number.isFinite(video.duration) ? video.duration : 0, video.videoWidth || 0, video.videoHeight || 0);
+      }
+    };
     video.onloadedmetadata = () => {
-      clearTimeout(timer);
-      finish(true, Number.isFinite(video.duration) ? video.duration : 0);
+      if (checkDecodedFrame()) return;
+      try {
+        video.currentTime = Math.min(0.05, Number.isFinite(video.duration) && video.duration > 0 ? video.duration * 0.1 : 0);
+      } catch {
+        // Wait for loadeddata or timeout
+      }
+    };
+    video.onseeked = () => {
+      checkDecodedFrame();
     };
     video.onerror = () => {
       clearTimeout(timer);
-      finish(false, 0);
+      finish(false, false, 0, 0, 0);
     };
     video.src = url;
   });

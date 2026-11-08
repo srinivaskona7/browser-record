@@ -1903,6 +1903,65 @@ select:disabled {
   pointer-events: none;
 }
 
+/* Focus mode in Edit: hide tool rail and side panels, keep preview, transport, and timeline full width */
+.edits-workspace.focus-mode {
+  grid-template-columns: minmax(0, 1fr);
+}
+.edits-workspace.focus-mode .editor-center {
+  grid-column: 1 / -1;
+}
+
+.edit-workspace-row {
+  padding-top: 2px;
+}
+
+/* Cap-style desktop side-by-side preview when Show preview is active */
+@media (min-width: 981px) {
+  .cap-recorder.monitor-expanded .split-grid {
+    grid-template-columns: minmax(380px, 520px) minmax(0, 1fr);
+    align-items: start;
+  }
+}
+
+/* Recording dock More menu popover */
+.rec-dock {
+  overflow: visible;
+}
+.rec-dock-actions {
+  overflow: visible;
+}
+.rec-more-menu {
+  position: relative;
+}
+.rec-more-menu > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+.rec-more-menu > summary::-webkit-details-marker {
+  display: none;
+}
+.rec-more-popover {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  right: 0;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  min-width: 196px;
+  padding: 8px;
+  border-radius: 12px;
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.48);
+}
+.rec-more-popover .btn {
+  justify-content: flex-start;
+  width: 100%;
+}
+
 @media (max-width: 1024px) {
   .topbar {
     flex-wrap: wrap;

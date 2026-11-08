@@ -1,12 +1,37 @@
 import { useEffect, useRef, useState } from 'react';
-import { renderFrame } from '../render/compose';
+import { renderFrame, type SourceLookup } from '../render/compose';
+import { MediaAssetResolver, prepareFrameSources } from '../render/sources';
+import { ensureAssetFile } from '../app/actions';
 import type { Project } from '../project/types';
 import type { PreviewPlayer } from './player';
 import { ManipulationOverlay } from './ManipulationOverlay';
 import { useEditor } from '../project/store';
 import { ensureProjectFontsLoaded } from '../effects/catalog';
 
-/** Renders one frame at full project resolution as a PNG, with the same compositor as export. */
+async function withResolvedLookup<T>(
+  project: Project,
+  player: PreviewPlayer | null,
+  timeTicks: number,
+  fn: (lookup: SourceLookup) => Promise<T> | T,
+): Promise<T> {
+  await ensureProjectFontsLoaded(project);
+  if (player) {
+    return fn(player.sourceLookup());
+  }
+  const resolver = new MediaAssetResolver(project, {
+    getFile: (asset) => ensureAssetFile(asset.path),
+  });
+  try {
+    const prepared = await prepareFrameSources(project, timeTicks, resolver);
+    return await fn((assetId) => prepared.sources.get(assetId) ?? null);
+  } catch {
+    return await fn(() => null);
+  } finally {
+    await resolver.close();
+  }
+}
+
+/** Renders one frame at full project resolution as a PNG, with the same compositor and decoded media as export. */
 export async function snapshotFrame(
   project: Project,
   player: PreviewPlayer | null,
@@ -19,14 +44,16 @@ export async function snapshotFrame(
   const ctx = canvas.getContext('2d', { alpha: false });
   if (!ctx) return null;
   const timeTicks = ticks >= project.durationTicks ? Math.max(0, project.durationTicks - 1) : ticks;
-  renderFrame(ctx, project, {
-    timeTicks,
-    lookup: player ? player.sourceLookup() : () => null,
-    showSafeAreas: false,
-    showCaptionGuides: false,
-    captionsEnabled,
+  return withResolvedLookup(project, player, timeTicks, (lookup) => {
+    renderFrame(ctx, project, {
+      timeTicks,
+      lookup,
+      showSafeAreas: false,
+      showCaptionGuides: false,
+      captionsEnabled,
+    });
+    return new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
   });
-  return new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
 }
 
 /**
@@ -47,29 +74,31 @@ export async function snapshotThumbnail(
   const sctx = sourceCanvas.getContext('2d', { alpha: false });
   if (!sctx) return null;
   const timeTicks = ticks >= project.durationTicks ? Math.max(0, project.durationTicks - 1) : ticks;
-  renderFrame(sctx, project, {
-    timeTicks,
-    lookup: player ? player.sourceLookup() : () => null,
-    showSafeAreas: false,
-    showCaptionGuides: false,
-    showEndScreenGuide: false,
-    captionsEnabled,
-  });
+  return withResolvedLookup(project, player, timeTicks, (lookup) => {
+    renderFrame(sctx, project, {
+      timeTicks,
+      lookup,
+      showSafeAreas: false,
+      showCaptionGuides: false,
+      showEndScreenGuide: false,
+      captionsEnabled,
+    });
 
-  const thumb = document.createElement('canvas');
-  thumb.width = width;
-  thumb.height = height;
-  const tctx = thumb.getContext('2d', { alpha: false });
-  if (!tctx) return null;
-  tctx.fillStyle = project.canvas.background;
-  tctx.fillRect(0, 0, width, height);
-  const scale = Math.min(width / sourceCanvas.width, height / sourceCanvas.height);
-  const drawW = Math.round(sourceCanvas.width * scale);
-  const drawH = Math.round(sourceCanvas.height * scale);
-  const dx = Math.round((width - drawW) / 2);
-  const dy = Math.round((height - drawH) / 2);
-  tctx.drawImage(sourceCanvas, 0, 0, sourceCanvas.width, sourceCanvas.height, dx, dy, drawW, drawH);
-  return new Promise((resolve) => thumb.toBlob(resolve, 'image/png'));
+    const thumb = document.createElement('canvas');
+    thumb.width = width;
+    thumb.height = height;
+    const tctx = thumb.getContext('2d', { alpha: false });
+    if (!tctx) return Promise.resolve(null);
+    tctx.fillStyle = project.canvas.background;
+    tctx.fillRect(0, 0, width, height);
+    const scale = Math.min(width / sourceCanvas.width, height / sourceCanvas.height);
+    const drawW = Math.round(sourceCanvas.width * scale);
+    const drawH = Math.round(sourceCanvas.height * scale);
+    const dx = Math.round((width - drawW) / 2);
+    const dy = Math.round((height - drawH) / 2);
+    tctx.drawImage(sourceCanvas, 0, 0, sourceCanvas.width, sourceCanvas.height, dx, dy, drawW, drawH);
+    return new Promise((resolve) => thumb.toBlob(resolve, 'image/png'));
+  });
 }
 
 export function Preview({

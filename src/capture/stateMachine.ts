@@ -98,13 +98,16 @@ export function resolveCameraLayerVisibility(options: {
       summary: 'Camera is off.',
     };
   }
-  if (options.surface === 'tab' || options.surface === null) {
+  if (options.surface === 'tab' || options.surface === 'window' || options.surface === null) {
     return {
       compositeInExport: true,
-      summary: 'Browser tab capture excludes the floating PiP window — camera layer is composited once in preview and export.',
+      summary:
+        options.surface === 'window'
+          ? 'Window capture keeps the separate camera layer available to the editor and exporter.'
+          : 'Browser tab capture excludes the floating PiP window — camera layer is composited once in preview and export.',
     };
   }
-  // Display ('screen') or Window ('window')
+  // Entire display ('screen')
   if (options.hideFloatingPreview) {
     return {
       compositeInExport: true,
