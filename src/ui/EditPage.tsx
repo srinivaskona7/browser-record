@@ -47,7 +47,7 @@ export function EditPage() {
   const [muted, setMuted] = useState(true);
   const [tool, setTool] = useState<EditorTool>('media');
   const [toolSearch, setToolSearch] = useState('');
-  const [inspectorVisible, setInspectorVisible] = useState(false);
+  const [inspectorVisible, setInspectorVisible] = useState(true);
   const [advancedPreview, setAdvancedPreview] = useState(false);
   const timecodeRef = useRef<HTMLInputElement>(null);
 
@@ -287,7 +287,6 @@ export function EditPage() {
                 return;
               }
               setTool(item.id as EditorTool);
-              setInspectorVisible(false);
               if (item.id === 'captions') setPanel('captions');
               else if (item.id === 'adjust') setPanel('effects');
             }}

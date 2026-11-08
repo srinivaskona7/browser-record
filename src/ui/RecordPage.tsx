@@ -16,7 +16,13 @@ import {
 } from '../capture/devices';
 import { InputMeter, meterPosition, type MeterReading } from '../capture/audioMeter';
 import { chooseRecorderMime } from '../capabilities/codecs';
-import { displayConstraints, describeCaptureFidelity, reportTrackSettings, reportedSurface } from '../capabilities/detect';
+import {
+  displayConstraints,
+  describeCaptureFidelity,
+  describeReturnedSurface,
+  reportTrackSettings,
+  reportedSurface,
+} from '../capabilities/detect';
 import { CaptureSession, recoverInterruptedTake, type CaptureStats, type CaptureAssetSpec, type TakeResult } from '../capture/recorder';
 import { checkStorageHeadroom, cleanRecordingsFolder, deleteTake, listTakes } from '../workspace/workspace';
 import { WORKSPACE_LAYOUT } from '../workspace/types';
@@ -60,8 +66,10 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
   const project = useEditor((state) => state.project);
   const session = useSession();
   const [openEditorAfterStop, setOpenEditorAfterStop] = useState(true);
-  const [showMonitor, setShowMonitor] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [showMonitor, setShowMonitor] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(true);
+  const [hideFloatingPreview, setHideFloatingPreview] = useState(false);
+  const [hideMonitorDuringDisplay, setHideMonitorDuringDisplay] = useState(true);
   const stoppingRef = useRef(false);
   const [stage, setStage] = useState<Stage>('idle');
   const preparedSpecsRef = useRef<CaptureAssetSpec[] | null>(null);
@@ -404,6 +412,14 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         stream,
         videoElement: selfViewRef.current ?? cameraPreviewRef.current,
         presenter,
+        initialControlState: {
+          stage,
+          elapsedText: formatElapsed(((stats?.elapsedMs ?? 0) / 1000)),
+          previewHidden: hideFloatingPreview,
+        },
+        onTogglePause: () => togglePause(),
+        onStop: () => void stopTake(),
+        onToggleHidePreview: () => setHideFloatingPreview((prev) => !prev),
         onClose: () => {
           floatingCameraRef.current = null;
           if (mountedRef.current) setFloatingCameraOpen(false);
@@ -1160,6 +1176,26 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
 
   const elapsedSeconds = (stats?.elapsedMs ?? 0) / 1000;
   const assetsByKey = useMemo(() => stats?.assets ?? [], [stats]);
+  const activeScreenVideoTrack = useMemo(
+    () => screenTracks.find((t) => t.kind === 'video') ?? null,
+    [screenTracks],
+  );
+  const actualReturnedSurface = useMemo(
+    () => describeReturnedSurface(activeScreenVideoTrack),
+    [activeScreenVideoTrack],
+  );
+  const isRecordingDisplaySurface =
+    (stage === 'countdown' || stage === 'recording' || stage === 'paused') &&
+    screenOn &&
+    (actualReturnedSurface.surface === 'screen' || (!actualReturnedSurface.surface && surface === 'screen'));
+
+  useEffect(() => {
+    floatingCameraRef.current?.updateRecordingState({
+      stage,
+      elapsedText: stage === 'countdown' ? `${countdown}s` : formatElapsed(elapsedSeconds),
+      previewHidden: hideFloatingPreview,
+    });
+  }, [stage, countdown, elapsedSeconds, hideFloatingPreview]);
 
   /** Take folders sitting under recordings/ that no clip points at. */
   const unreferencedTakes = useMemo(() => {
@@ -1344,7 +1380,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         </div>
       )}
 
-      <details className="record-storage"><summary>{session.storageMode === 'opfs' ? 'Temporary browser session · Save to a folder for a durable copy' : 'Recording locally to your folder'}<span>Storage options</span></summary>
+      <details className="record-storage" open><summary>{session.storageMode === 'opfs' ? 'Temporary browser session · Save to a folder for a durable copy' : 'Recording locally to your folder'}<span>Storage options</span></summary>
       <div className={session.storageMode === 'opfs' ? 'warn-card' : 'hint-card'} style={{ marginBottom: 12 }} role="status">
         {session.storageMode === 'opfs' ? (
           <>
@@ -1381,8 +1417,9 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
 
       </details>
       {/* The same camera stream the monitor shows, pinned to the viewport for
-          the whole take: the monitor can scroll away, this cannot. */}
-      {cameraOn && (stage === 'countdown' || stage === 'recording' || stage === 'paused' || stage === 'finishing') && (
+          the whole take: the monitor can scroll away, this cannot. Hidden when
+          hideFloatingPreview is enabled so Entire screen capture never records a double bubble. */}
+      {cameraOn && !hideFloatingPreview && (stage === 'countdown' || stage === 'recording' || stage === 'paused' || stage === 'finishing') && (
         <div
           ref={selfViewBox}
           className="rec-selfview"
@@ -1445,6 +1482,17 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
               <Button size="sm" variant="ghost" onClick={addMarker} title="Shortcut: M">
                 Marker
               </Button>
+              {cameraOn && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-pressed={hideFloatingPreview}
+                  onClick={() => setHideFloatingPreview((prev) => !prev)}
+                  title="Hide floating camera preview on display while continuing to record camera separately for the editor"
+                >
+                  {hideFloatingPreview ? 'Show floating preview' : 'Hide floating preview'}
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="ghost"
@@ -1537,7 +1585,36 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                 </Button>
               )}
             </div>
-            {screenOn && surface === 'screen' && <p className="field-hint">Display captures this page too. Choose Window or Browser tab to exclude it.</p>}
+
+            <div className="hint-card stack" style={{ gap: 8 }} role="region" aria-label="Across tabs and display capture">
+              <div className="row" style={{ justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                <strong style={{ fontSize: 12.5 }}>What makes capture work across tabs &amp; apps</strong>
+                <Badge tone={actualReturnedSurface.surface ? 'ok' : 'neutral'}>
+                  {actualReturnedSurface.surface ? `Chrome returned: ${actualReturnedSurface.label}` : 'Source: waiting for Chrome picker'}
+                </Badge>
+              </div>
+              <div className="field-hint" style={{ lineHeight: 1.5 }}>
+                • <strong>Entire screen (Display)</strong> is the right mode for DevOps lessons when moving between Chrome tabs, your terminal, and diagrams on the same display.
+                <br />
+                • <strong>Window</strong> follows the selected application window.
+                <br />
+                • <strong>Browser tab</strong> captures the selected tab — use Chrome&apos;s <strong>&ldquo;Share this tab instead&rdquo;</strong> bar when switching tabs.
+                <br />
+                • <strong>Floating PiP &amp; controls</strong>: Open the floating camera via Document PiP from an explicit click. Closing the floating window leaves the take running. Chrome lets you move the PiP window, while the editor controls the separate presenter layer in the export.
+              </div>
+              <div className="row" style={{ gap: 12, flexWrap: 'wrap' }}>
+                <Toggle
+                  label="Hide floating preview (keep recording camera separately for editor to avoid double bubble)"
+                  checked={hideFloatingPreview}
+                  onChange={setHideFloatingPreview}
+                />
+                <Toggle
+                  label="Hide live screen monitor while recording display (reduce mirror effect)"
+                  checked={hideMonitorDuringDisplay}
+                  onChange={setHideMonitorDuringDisplay}
+                />
+              </div>
+            </div>
 
             <div className="cap-device-rows">
               <div className="cap-device-row">
@@ -1903,7 +1980,46 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                 placeItems: 'center',
               }}
             >
-              <video ref={previewRef} muted playsInline style={{ width: '100%', height: '100%', objectFit: 'contain' }} aria-label="Screen capture preview" />
+              <video
+                ref={previewRef}
+                muted
+                playsInline
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'contain',
+                  display: isRecordingDisplaySurface && hideMonitorDuringDisplay ? 'none' : 'block',
+                }}
+                aria-label="Screen capture preview"
+              />
+              {isRecordingDisplaySurface && hideMonitorDuringDisplay && (
+                <div
+                  role="status"
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    display: 'grid',
+                    placeItems: 'center',
+                    padding: 24,
+                    textAlign: 'center',
+                    color: 'var(--text-2)',
+                    fontSize: 13,
+                    lineHeight: 1.5,
+                    background: '#05070a',
+                  }}
+                >
+                  <div className="stack" style={{ gap: 8, alignItems: 'center', maxWidth: 420 }}>
+                    <strong>Live screen monitor hidden during display capture</strong>
+                    <span>
+                      Hiding the live screen mirror prevents the infinite hall-of-mirrors effect when recording your
+                      entire screen. Your screen and camera tracks are recording normally.
+                    </span>
+                    <Button size="sm" variant="ghost" onClick={() => setHideMonitorDuringDisplay(false)}>
+                      Show live monitor anyway
+                    </Button>
+                  </div>
+                </div>
+              )}
               {stage === 'idle' && !cameraReady && (
                 <div
                   style={{
@@ -2001,7 +2117,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
             </div>
           </Panel>
 
-          <details className="record-details"><summary>Capture quality report<span>Actual track settings</span></summary>
+          <details className="record-details" open><summary>Capture quality report<span>Actual track settings</span></summary>
           <Panel title="Applied track settings">
             <div className="table-scroll">
               <table className="table">

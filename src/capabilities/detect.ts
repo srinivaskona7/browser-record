@@ -126,7 +126,12 @@ export function displayConstraints(options: {
     const displaySurface = options.surface === 'screen' ? 'monitor' : options.surface === 'window' ? 'window' : 'browser';
     (video as MediaTrackConstraints & { displaySurface?: string }).displaySurface = displaySurface;
   }
-  const constraints: DisplayMediaStreamOptions & { preferCurrentTab?: boolean; selfBrowserSurface?: string } = {
+  const constraints: DisplayMediaStreamOptions & {
+    preferCurrentTab?: boolean;
+    selfBrowserSurface?: string;
+    surfaceSwitching?: string;
+    systemAudio?: string;
+  } = {
     video,
     audio: options.systemAudio
       ? ({
@@ -140,6 +145,8 @@ export function displayConstraints(options: {
       : false,
     preferCurrentTab: options.preferCurrentTab ?? false,
     selfBrowserSurface: 'exclude',
+    surfaceSwitching: 'include',
+    ...(options.systemAudio ? { systemAudio: 'include' } : {}),
   };
   return constraints;
 }
@@ -151,6 +158,61 @@ export function reportedSurface(settings: MediaTrackSettings): 'screen' | 'windo
   if (value === 'window') return 'window';
   if (value === 'browser') return 'tab';
   return null;
+}
+
+/** Human-readable description of the surface Chrome actually returned. */
+export function describeReturnedSurface(track: MediaStreamTrack | null | undefined): {
+  surface: 'screen' | 'window' | 'tab' | null;
+  rawDisplaySurface: string;
+  label: string;
+  summary: string;
+} {
+  if (!track) {
+    return {
+      surface: null,
+      rawDisplaySurface: 'none',
+      label: 'No source selected yet',
+      summary: 'Chrome has not returned a display, window, or tab stream yet.',
+    };
+  }
+  const settings = (track.getSettings?.() ?? {}) as MediaTrackSettings & { displaySurface?: string };
+  const rawDisplaySurface = settings.displaySurface ?? 'unknown';
+  const surface = reportedSurface(settings);
+  const w = settings.width ?? 0;
+  const h = settings.height ?? 0;
+  const fps = settings.frameRate ? Math.round(settings.frameRate) : 30;
+  const dims = w && h ? `${w}×${h} @ ${fps} fps` : `${fps} fps`;
+  const trackLabel = track.label || 'Shared surface';
+  if (surface === 'screen') {
+    return {
+      surface,
+      rawDisplaySurface,
+      label: `Entire screen (monitor) — ${trackLabel}`,
+      summary: `Chrome returned Entire screen (${dims}). Captures across Chrome tabs, terminal, and desktop apps on this display.`,
+    };
+  }
+  if (surface === 'window') {
+    return {
+      surface,
+      rawDisplaySurface,
+      label: `Window (window) — ${trackLabel}`,
+      summary: `Chrome returned Application window (${dims}). Follows this selected window only.`,
+    };
+  }
+  if (surface === 'tab') {
+    return {
+      surface,
+      rawDisplaySurface,
+      label: `Browser tab (browser) — ${trackLabel}`,
+      summary: `Chrome returned Browser tab (${dims}). Use Chrome's "Share this tab instead" bar to switch which tab is captured.`,
+    };
+  }
+  return {
+    surface: null,
+    rawDisplaySurface,
+    label: trackLabel,
+    summary: `Chrome returned ${trackLabel} (${dims}).`,
+  };
 }
 
 /**
