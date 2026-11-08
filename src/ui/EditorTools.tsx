@@ -17,7 +17,8 @@ import {
 } from '../effects/catalog';
 import { SFX_PRESETS } from '../audio/sfx';
 import { TICKS_PER_SECOND } from '../core/time';
-import { Button } from './components';
+import { formatSelectionScopeChip } from '../editor/selection';
+import { Badge, Button } from './components';
 import { SvgIcon, type IconName } from './icons';
 
 export const EDITOR_TOOLS: ReadonlyArray<{ id: string; label: string; iconName: IconName }> = [
@@ -356,6 +357,7 @@ export function EditorToolLibrary({ tool, project, clip }: { tool: EditorTool; p
 }
 
 export function ClipQuickActions({ project }: { project: Project }) {
+  const selection = useEditor((s) => s.selection);
   const selected = useEditor((s) => s.selectedClipIds);
   const tick = useEditor((s) => s.playheadTicks);
   const apply = useEditor((s) => s.apply);
@@ -366,9 +368,11 @@ export function ClipQuickActions({ project }: { project: Project }) {
   const selectedClips = selected
     .map((id) => ops.findClipById(project, id))
     .filter((c): c is Clip => Boolean(c));
+  const scopeChip = formatSelectionScopeChip(selection, project);
 
   return (
     <div className="clip-quick-actions" role="toolbar" aria-label="Clip actions">
+      <Badge tone={selection.kind === 'none' ? 'neutral' : 'ok'}>{scopeChip}</Badge>
       <Button size="sm" disabled={!inside} onClick={() => apply('Trim start', (p) => ops.trimStart(p, clip!.id, tick))}>
         Trim start
       </Button>

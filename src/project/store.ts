@@ -2,6 +2,16 @@ import { create } from 'zustand';
 import type { Tick } from '../core/time';
 import type { AlphaMaskProps, Project, Clip } from './types';
 import * as ops from './ops';
+import {
+  NONE_SELECTION,
+  createCaptionSelection,
+  createClipsSelection,
+  createRangeSelection,
+  stepBackSelection as stepBackSel,
+  type EditorSelection,
+  type SelectionOrigin,
+} from '../editor/selection';
+import { EDITOR_COMMAND_REGISTRY } from '../editor/actions';
 
 export interface HistoryEntry {
   label: string;
@@ -13,10 +23,11 @@ export type Clipboard =
   | { kind: 'clips'; clips: Array<{ trackKind: string; clip: Clip }>; atTicks: Tick }
   | null;
 
-const HISTORY_LIMIT = 120;
+const HISTORY_LIMIT = 200;
 
 export interface EditorState {
   project: Project | null;
+  selection: EditorSelection;
   selectedClipIds: string[];
   selectedAssetId: string | null;
   selectedCueId: string | null;
@@ -45,7 +56,12 @@ export interface EditorState {
   redo: () => void;
   setPlayhead: (ticks: Tick) => void;
   setPlaying: (playing: boolean) => void;
-  selectClips: (ids: string[], additive?: boolean) => void;
+  setSelection: (selection: EditorSelection) => void;
+  selectClips: (ids: string[], additive?: boolean, origin?: SelectionOrigin) => void;
+  selectRange: (start: Tick, end: Tick, tracks?: 'unlocked' | string[]) => void;
+  selectCaption: (cueId: string | null, wordIndex?: number) => void;
+  stepBackSelection: () => void;
+  runCommand: (commandId: string, arg?: unknown) => boolean;
   selectAsset: (id: string | null) => void;
   selectCue: (id: string | null) => void;
   setZoom: (zoom: number) => void;
@@ -86,6 +102,7 @@ function cloneProject(project: Project): Project {
 
 export const useEditor = create<EditorState>((set, get) => ({
   project: null,
+  selection: NONE_SELECTION,
   selectedClipIds: [],
   selectedAssetId: null,
   selectedCueId: null,
@@ -108,9 +125,11 @@ export const useEditor = create<EditorState>((set, get) => ({
   loadProject: (project) =>
     set({
       project,
+      selection: NONE_SELECTION,
       history: [],
       future: [],
       selectedClipIds: [],
+      selectedCueId: null,
       playheadTicks: 0,
       playing: false,
       revision: 0,
@@ -121,9 +140,11 @@ export const useEditor = create<EditorState>((set, get) => ({
   closeProject: () =>
     set({
       project: null,
+      selection: NONE_SELECTION,
       history: [],
       future: [],
       selectedClipIds: [],
+      selectedCueId: null,
       playheadTicks: 0,
       playing: false,
       dirty: false,
@@ -184,13 +205,64 @@ export const useEditor = create<EditorState>((set, get) => ({
 
   setPlayhead: (ticks) => set({ playheadTicks: Math.max(0, Math.round(ticks)) }),
   setPlaying: (playing) => set({ playing }),
-  selectClips: (ids, additive = false) => {
+  setSelection: (selection) =>
+    set({
+      selection,
+      selectedClipIds: selection.kind === 'clips' ? selection.ids : [],
+      selectedCueId: selection.kind === 'caption' ? selection.cueId : null,
+    }),
+  selectClips: (ids, additive = false, origin = 'timeline') => {
     const state = get();
-    const next = additive ? Array.from(new Set([...state.selectedClipIds, ...ids])) : ids;
-    set({ selectedClipIds: next });
+    const nextIds = additive ? Array.from(new Set([...state.selectedClipIds, ...ids])) : ids;
+    const selection = createClipsSelection(nextIds, origin);
+    set({
+      selection,
+      selectedClipIds: selection.kind === 'clips' ? selection.ids : [],
+      selectedCueId: null,
+    });
+  },
+  selectRange: (start, end, tracks = 'unlocked') => {
+    const selection = createRangeSelection(start, end, tracks);
+    set({
+      selection,
+      selectedClipIds: [],
+      selectedCueId: null,
+    });
+  },
+  selectCaption: (cueId, wordIndex) => {
+    if (!cueId) {
+      set({ selection: NONE_SELECTION, selectedClipIds: [], selectedCueId: null });
+      return;
+    }
+    const selection = createCaptionSelection(cueId, wordIndex);
+    set({
+      selection,
+      selectedClipIds: [],
+      selectedCueId: cueId,
+    });
+  },
+  stepBackSelection: () => {
+    const next = stepBackSel(get().selection);
+    get().setSelection(next);
+  },
+  runCommand: (commandId, arg) => {
+    const state = get();
+    if (!state.project) return false;
+    const cmd = EDITOR_COMMAND_REGISTRY.find((c) => c.id === commandId);
+    if (!cmd) return false;
+    const eligibility = cmd.isEligible(state.selection, state.project, state.playheadTicks);
+    if (!eligibility.ok) return false;
+    state.apply(cmd.label, (p) => cmd.run(state.selection, p, state.playheadTicks, arg));
+    return true;
   },
   selectAsset: (id) => set({ selectedAssetId: id }),
-  selectCue: (id) => set({ selectedCueId: id }),
+  selectCue: (id) => {
+    if (!id) {
+      set({ selection: NONE_SELECTION, selectedCueId: null, selectedClipIds: [] });
+    } else {
+      set({ selection: createCaptionSelection(id), selectedCueId: id, selectedClipIds: [] });
+    }
+  },
   setZoom: (zoom) => set({ zoom: Math.min(Math.max(zoom, 10), 800) }),
   setEditMode: (mode) => set({ editMode: mode }),
   setSnapping: (on) => set({ snapping: on }),

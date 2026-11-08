@@ -1,5 +1,6 @@
 import { createContext, useContext, useMemo, useState } from 'react';
 import { TICKS_PER_SECOND, formatClock } from '../core/time';
+import { formatSelectionScopeChip } from '../editor/selection';
 import { useEditor } from '../project/store';
 import { useSession } from '../app/session';
 import * as ops from '../project/ops';
@@ -25,6 +26,8 @@ const InspectorFocus = createContext<{ section: string; query: string }>({ secti
 export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }) {
   const apply = useEditor((state) => state.apply);
   const playhead = useEditor((state) => state.playheadTicks);
+  const project = useEditor((state) => state.project);
+  const selection = useEditor((state) => state.selection);
   const [section, setSection] = useState('All');
   const [query, setQuery] = useState('');
   const localTicks = Math.max(0, playhead - clip.startTicks);
@@ -43,9 +46,15 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
   const addKeyframe = (target: 'x' | 'y' | 'scale' | 'opacity' | 'volume' | 'zoom', value: number) =>
     apply(`Keyframe ${target}`, (p) => ops.upsertKeyframe(p, clip.id, target, localTicks, value));
 
+  const scopeChip = project ? formatSelectionScopeChip(selection, project) : 'No selection';
+
   return (
     <InspectorFocus.Provider value={{ section, query }}>
     <div className="stack" style={{ gap: 10 }}>
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+        <span className="eyebrow">ACTIVE SCOPE</span>
+        <Badge tone="ok">{scopeChip}</Badge>
+      </div>
       <input
         className="input"
         aria-label="Search inspector controls"

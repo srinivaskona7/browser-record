@@ -26,8 +26,11 @@ src/capture/devices.ts
 src/capture/floatingCamera.ts
 src/capture/quality.ts
 src/capture/recorder.ts
+src/capture/stateMachine.ts
 src/core/ids.ts
 src/core/time.ts
+src/editor/actions.ts
+src/editor/selection.ts
 src/effects/catalog.ts
 src/export/exporter.ts
 src/export/presets.ts
@@ -46,6 +49,7 @@ src/render/layout.ts
 src/render/sources.ts
 src/render/text.ts
 src/styles.css
+src/styles/tokens.css
 src/ui/AboutDialog.tsx
 src/ui/CapabilityMatrix.tsx
 src/ui/CaptionsPanel.tsx
