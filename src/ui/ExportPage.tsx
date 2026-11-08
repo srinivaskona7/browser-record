@@ -57,6 +57,9 @@ export function ExportPage() {
   const [presetId, setPresetId] = useState<PresetId>(() => (project ? defaultPresetId(project.canvas) : '4k-balanced'));
   const [width, setWidth] = useState(project?.canvas.width ?? 1920);
   const [height, setHeight] = useState(project?.canvas.height ?? 1080);
+  const [outputFps, setOutputFps] = useState<number>(() =>
+    project ? Math.round(project.canvas.fps.num / project.canvas.fps.den) : 30,
+  );
   const [videoMbps, setVideoMbps] = useState(10);
   const [audioKbps, setAudioKbps] = useState(128);
   const [targetGb, setTargetGb] = useState('');
@@ -65,6 +68,9 @@ export function ExportPage() {
   const [wavExportBusy, setWavExportBusy] = useState(false);
   const [resultPreviewUrl, setResultPreviewUrl] = useState<string | null>(null);
   const [playbackVerified, setPlaybackVerified] = useState<boolean | null>(null);
+  const [verificationReason, setVerificationReason] = useState<string | null>(null);
+  const [verifying, setVerifying] = useState(false);
+  const [cropPreviewUrl, setCropPreviewUrl] = useState<string | null>(null);
   const [exportSection, setExportSection] = useState<'video' | 'downloads' | 'planning'>('video');
   const [segmentId, setSegmentId] = useState<string>('all');
   const [cancelRef, setCancelRef] = useState<AbortController | null>(null);
@@ -87,9 +93,18 @@ export function ExportPage() {
   const preset: Preset = useMemo(() => {
     const base = presetById(presetId) ?? PRESETS[1]!;
     return presetId === CUSTOM_ID
-      ? { ...base, id: CUSTOM_ID, label: 'Custom', width, height, videoBitrate: Math.round(videoMbps * 1_000_000), audioBitrate: Math.round(audioKbps * 1000) }
-      : base;
-  }, [presetId, width, height, videoMbps, audioKbps]);
+      ? {
+          ...base,
+          id: CUSTOM_ID,
+          label: 'Custom',
+          width,
+          height,
+          fps: outputFps,
+          videoBitrate: Math.round(videoMbps * 1_000_000),
+          audioBitrate: Math.round(audioKbps * 1000),
+        }
+      : { ...base, fps: outputFps };
+  }, [presetId, width, height, outputFps, videoMbps, audioKbps]);
 
   const segments = useMemo(() => (project ? markerSegments(project) : []), [project]);
   const activeSegment = useMemo(
@@ -98,7 +113,16 @@ export function ExportPage() {
   );
   const exportTargetProject = useMemo(() => {
     if (!project) return null;
-    if (!activeSegment) return project;
+    if (!activeSegment) {
+      if (preset.width < preset.height && project.canvas.width >= project.canvas.height) {
+        return extractSegmentProject(project, 0, project.durationTicks, {
+          reframeVertical: true,
+          targetWidth: preset.width,
+          targetHeight: preset.height,
+        });
+      }
+      return project;
+    }
     return extractSegmentProject(project, activeSegment.startTicks, activeSegment.endTicks, {
       reframeVertical: preset.width < preset.height,
       targetWidth: preset.width,
@@ -107,21 +131,38 @@ export function ExportPage() {
   }, [project, activeSegment, preset.width, preset.height]);
 
   const durationSeconds = exportTargetProject ? exportTargetProject.durationTicks / TICKS_PER_SECOND : 0;
+  // Custom target file size only applies when Custom preset is active; never leaks into standard presets.
+  const useCustomTargetSize = presetId === CUSTOM_ID && Boolean(targetGb && Number(targetGb) > 0);
   const budget = useMemo(() => {
     if (!exportTargetProject) return null;
     return planBitrate({
       durationSeconds,
       width: preset.width,
       height: preset.height,
-      fps: exportTargetProject.canvas.fps.num / exportTargetProject.canvas.fps.den,
+      fps: outputFps,
       audioBitrate: preset.audioBitrate,
       maxDurationSeconds: preset.maxDurationSeconds,
       maxBytes: preset.maxBytes,
-      ...(targetGb && Number(targetGb) > 0 ? { targetBytes: Number(targetGb) * 1_000_000_000 } : { videoBitrate: preset.videoBitrate }),
+      ...(useCustomTargetSize ? { targetBytes: Number(targetGb) * 1_000_000_000 } : { videoBitrate: preset.videoBitrate }),
     });
-  }, [exportTargetProject, preset, durationSeconds, targetGb]);
+  }, [exportTargetProject, preset, durationSeconds, outputFps, useCustomTargetSize, targetGb]);
 
-  const effectiveVideoBitrate = targetGb && Number(targetGb) > 0 ? Math.round((budget?.videoMbps ?? 0) * 1_000_000) : preset.videoBitrate;
+  const effectiveVideoBitrate = useCustomTargetSize
+    ? Math.round((budget?.videoMbps ?? 0) * 1_000_000)
+    : preset.videoBitrate;
+
+  const resolvedOutput = useMemo(
+    () => ({
+      width: preset.width,
+      height: preset.height,
+      fps: outputFps,
+      container: preset.container,
+      videoBitrate: effectiveVideoBitrate,
+      audioBitrate: preset.audioBitrate,
+      sampleRate: project?.settings.sampleRate ?? 48_000,
+    }),
+    [preset.width, preset.height, outputFps, preset.container, effectiveVideoBitrate, preset.audioBitrate, project?.settings.sampleRate],
+  );
 
   useEffect(() => {
     if (!project) return;
@@ -129,6 +170,8 @@ export function ExportPage() {
     // project's preset. Restart from this composition's own size.
     const target = defaultPresetId(project.canvas);
     setPresetId(target);
+    const defaultFps = presetById(target)?.fps ?? Math.round(project.canvas.fps.num / project.canvas.fps.den);
+    setOutputFps(defaultFps);
     if (target === CUSTOM_ID) {
       setWidth(project.canvas.width);
       setHeight(project.canvas.height);
@@ -144,8 +187,41 @@ export function ExportPage() {
     if (next) {
       setVideoMbps(next.videoBitrate / 1_000_000);
       setAudioKbps(next.audioBitrate / 1000);
+      if (next.fps) {
+        setOutputFps(next.fps);
+      } else {
+        setOutputFps(Math.round(project.canvas.fps.num / project.canvas.fps.den));
+      }
     }
   }, [presetId, project]);
+
+  const probeCodecs = async () => {
+    if (!project) return;
+    setSupportBusy(true);
+    try {
+      const list: CodecSupport[] = [];
+      for (const codec of VIDEO_CODECS) {
+        list.push(
+          await probeVideoEncoder(
+            codec,
+            resolvedOutput.width,
+            resolvedOutput.height,
+            resolvedOutput.fps,
+            resolvedOutput.videoBitrate,
+          ),
+        );
+      }
+      for (const codec of AUDIO_CODECS) {
+        list.push(
+          await probeAudioEncoder(codec, resolvedOutput.sampleRate, 2, resolvedOutput.audioBitrate),
+        );
+      }
+      setSupport(list);
+      session.setCodecSupport(list);
+    } finally {
+      setSupportBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (!project) return;
@@ -154,10 +230,20 @@ export function ExportPage() {
     void (async () => {
       const list: CodecSupport[] = [];
       for (const codec of VIDEO_CODECS) {
-        list.push(await probeVideoEncoder(codec, preset.width, preset.height, project.canvas.fps.num / project.canvas.fps.den, effectiveVideoBitrate));
+        list.push(
+          await probeVideoEncoder(
+            codec,
+            resolvedOutput.width,
+            resolvedOutput.height,
+            resolvedOutput.fps,
+            resolvedOutput.videoBitrate,
+          ),
+        );
       }
       for (const codec of AUDIO_CODECS) {
-        list.push(await probeAudioEncoder(codec, project.settings.sampleRate, 2, preset.audioBitrate));
+        list.push(
+          await probeAudioEncoder(codec, resolvedOutput.sampleRate, 2, resolvedOutput.audioBitrate),
+        );
       }
       if (!cancelled) {
         setSupport(list);
@@ -169,7 +255,46 @@ export function ExportPage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project?.id, preset.width, preset.height, effectiveVideoBitrate]);
+  }, [
+    project?.id,
+    resolvedOutput.width,
+    resolvedOutput.height,
+    resolvedOutput.fps,
+    resolvedOutput.videoBitrate,
+    resolvedOutput.audioBitrate,
+    resolvedOutput.sampleRate,
+  ]);
+
+  useEffect(() => {
+    if (!exportTargetProject) return;
+    let cancelled = false;
+    const isReframedOrSegment =
+      Boolean(activeSegment) ||
+      resolvedOutput.width < resolvedOutput.height ||
+      Math.abs(resolvedOutput.width / resolvedOutput.height - exportTargetProject.canvas.width / exportTargetProject.canvas.height) > 0.01;
+    if (!isReframedOrSegment) {
+      setCropPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+      return;
+    }
+    const previewW = resolvedOutput.width < resolvedOutput.height ? 360 : 640;
+    const previewH = Math.round((previewW * resolvedOutput.height) / resolvedOutput.width);
+    void snapshotThumbnail(exportTargetProject, null, 0, includeCaptions, previewW, previewH)
+      .then((blob) => {
+        if (cancelled || !blob) return;
+        const url = URL.createObjectURL(blob);
+        setCropPreviewUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev);
+          return url;
+        });
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [exportTargetProject, activeSegment, resolvedOutput.width, resolvedOutput.height, includeCaptions]);
 
   useEffect(
     () => () => {
@@ -247,7 +372,7 @@ export function ExportPage() {
   const destinationPath = (() => {
     const base = project.name.replace(/[^\w\-. ]+/g, '').trim().replace(/\s+/g, '-').toLowerCase() || 'lesson';
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-    return `${WORKSPACE_LAYOUT.exports}/${base}-${preset.width}x${preset.height}-${stamp}.${preset.container}`;
+    return `${WORKSPACE_LAYOUT.exports}/${base}-${resolvedOutput.width}x${resolvedOutput.height}-${resolvedOutput.fps}fps-${stamp}.${resolvedOutput.container}`;
   })();
 
   const runExport = async (overwrite = false, ignoreStorage = false) => {
@@ -257,6 +382,7 @@ export function ExportPage() {
     }
     setError(null);
     setResult(null);
+    setVerificationReason(null);
     const controller = new AbortController();
     setCancelRef(controller);
     setProgress(null);
@@ -279,10 +405,11 @@ export function ExportPage() {
       const out = await exportProject({
         project: exportTargetProject ?? project,
         preset,
-        videoBitrate: effectiveVideoBitrate,
-        audioBitrate: preset.audioBitrate,
-        width: preset.width,
-        height: preset.height,
+        videoBitrate: resolvedOutput.videoBitrate,
+        audioBitrate: resolvedOutput.audioBitrate,
+        width: resolvedOutput.width,
+        height: resolvedOutput.height,
+        fps: resolvedOutput.fps,
         destination: { root: session.workspace.root, path: destinationPath },
         getAssetFile: (path) => ensureAssetFile(path),
         signal: controller.signal,
@@ -290,6 +417,7 @@ export function ExportPage() {
         onProgress: setProgress,
       });
       setPlaybackVerified(null);
+      setVerifying(true);
       const activeProj = exportTargetProject ?? project;
       const slug = activeProj.name.replace(/[^\w\-. ]+/g, '').trim().replace(/\s+/g, '-').toLowerCase() || 'lesson';
       if (sidecarFormat === 'srt' || sidecarFormat === 'both') {
@@ -307,6 +435,7 @@ export function ExportPage() {
         });
         const check = await verifyDecodedVideoBlob(blob);
         setPlaybackVerified(check.verified);
+        setVerificationReason(check.reason ?? null);
       } else if (out.path && session.workspace) {
         try {
           const file = await readBlob(session.workspace.root, out.path);
@@ -317,10 +446,13 @@ export function ExportPage() {
           });
           const check = await verifyDecodedVideoBlob(file);
           setPlaybackVerified(check.verified);
-        } catch {
+          setVerificationReason(check.reason ?? null);
+        } catch (verifyErr) {
           setPlaybackVerified(false);
+          setVerificationReason((verifyErr as Error).message);
         }
       }
+      setVerifying(false);
       setResult(out);
       if (out.warnings.length > 0) {
         session.pushToast(
@@ -344,6 +476,7 @@ export function ExportPage() {
         setError((err as Error).message);
       }
     } finally {
+      setVerifying(false);
       setCancelRef(null);
       setProgress(null);
       setConfirmOverwrite(false);
@@ -354,16 +487,18 @@ export function ExportPage() {
     setSampleBusy(true);
     setError(null);
     try {
-      const plan = planQualitySamples(project, 6);
-      const sample = cloneProjectWithRange(project, plan.busy.startTicks, plan.busy.durationTicks);
+      const targetProj = exportTargetProject ?? project;
+      const plan = planQualitySamples(targetProj, 6);
+      const sample = cloneProjectWithRange(targetProj, plan.busy.startTicks, plan.busy.durationTicks);
       if (sample.durationTicks === 0) throw new Error('Nothing to sample in this range.');
       const out = await exportProject({
         project: sample,
         preset,
-        videoBitrate: effectiveVideoBitrate,
-        audioBitrate: preset.audioBitrate,
-        width: preset.width,
-        height: preset.height,
+        videoBitrate: resolvedOutput.videoBitrate,
+        audioBitrate: resolvedOutput.audioBitrate,
+        width: resolvedOutput.width,
+        height: resolvedOutput.height,
+        fps: resolvedOutput.fps,
         getAssetFile: (path) => ensureAssetFile(path),
         includeCaptions,
       });
@@ -390,12 +525,12 @@ export function ExportPage() {
     try {
       const codec = (VIDEO_CODECS.find((item) => item.family === 'h264') ?? VIDEO_CODECS[0]) as CodecCandidate;
       const outcome = await runEncodeBenchmark({
-        width: preset.width,
-        height: preset.height,
-        fps: project.canvas.fps.num / project.canvas.fps.den,
+        width: resolvedOutput.width,
+        height: resolvedOutput.height,
+        fps: resolvedOutput.fps,
         frames: 45,
         codec,
-        bitrate: effectiveVideoBitrate,
+        bitrate: resolvedOutput.videoBitrate,
       });
       setBenchmark(outcome);
       session.setBenchmark(outcome);
@@ -471,96 +606,106 @@ export function ExportPage() {
       {exportSection === 'downloads' && (
         <Panel
           title="Standalone downloads"
-          subtitle="Download cover PNG frames, 16-bit PCM WAV audio mixdown, editable SRT/VTT subtitles, or project JSON without encoding video."
+          subtitle="Download cover PNG frames, 16-bit PCM WAV audio mixdown, editable SRT/VTT subtitles, or project settings & edits (.json) without encoding video."
         >
-          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-            <Button
-              size="sm"
-              variant="primary"
-              onClick={async () => {
-                const blob = await snapshotThumbnail(
-                  exportTargetProject ?? project,
-                  null,
-                  project.coverTimeTicks ?? useEditor.getState().playheadTicks,
-                  includeCaptions,
-                );
-                if (blob) {
-                  downloadBlob(blob, `${project.name.replace(/[^\w-]+/g, '-') || 'thumbnail'}-1280x720.png`);
-                }
-              }}
-            >
-              Download PNG cover (1280×720)
-            </Button>
-            <Button
-              size="sm"
-              disabled={wavExportBusy}
-              onClick={async () => {
-                setWavExportBusy(true);
-                try {
-                  const target = exportTargetProject ?? project;
-                  const decoded = await decodeAudioForExport(target, (path) => ensureAssetFile(path));
-                  const mix = await mixdownTimeline({
-                    project: target,
-                    decoded,
-                    sampleRate: target.settings.sampleRate || 48_000,
-                  });
-                  const wavBytes = encodeWav(mix.channels, mix.sampleRate);
-                  const copy = new Uint8Array(wavBytes.byteLength);
-                  copy.set(wavBytes);
-                  downloadBlob(
-                    new Blob([copy.buffer], { type: 'audio/wav' }),
-                    `${project.name.replace(/[^\w-]+/g, '-') || 'lesson'}-audio.wav`,
+          <div className="stack" style={{ gap: 12 }}>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={async () => {
+                  const blob = await snapshotThumbnail(
+                    exportTargetProject ?? project,
+                    null,
+                    project.coverTimeTicks ?? useEditor.getState().playheadTicks,
+                    includeCaptions,
                   );
-                  session.pushToast('Exported WAV audio mixdown.', 'success');
-                } catch (err) {
-                  setError(`WAV export failed: ${(err as Error).message}`);
-                } finally {
-                  setWavExportBusy(false);
-                }
-              }}
-            >
-              {wavExportBusy ? 'Exporting WAV…' : 'Download WAV audio'}
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => {
-                const slug = project.name.replace(/[^\w-]+/g, '-') || 'lesson';
-                downloadBlob(
-                  new Blob([toSrt((exportTargetProject ?? project).captions)], { type: 'application/x-subrip' }),
-                  `${slug}.srt`,
-                );
-              }}
-            >
-              Download .SRT
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => {
-                const slug = project.name.replace(/[^\w-]+/g, '-') || 'lesson';
-                downloadBlob(
-                  new Blob([toVtt((exportTargetProject ?? project).captions)], { type: 'text/vtt' }),
-                  `${slug}.vtt`,
-                );
-              }}
-            >
-              Download .VTT
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => {
-                const slug = project.name.replace(/[^\w-]+/g, '-') || 'lesson';
-                downloadBlob(
-                  new Blob([serializeProject(project)], { type: 'application/json' }),
-                  `${slug}-project-bundle.json`,
-                );
-              }}
-            >
-              Download project bundle (.json)
-            </Button>
+                  if (blob) {
+                    downloadBlob(blob, `${project.name.replace(/[^\w-]+/g, '-') || 'thumbnail'}-1280x720.png`);
+                  }
+                }}
+              >
+                Download PNG cover (1280×720)
+              </Button>
+              <Button
+                size="sm"
+                disabled={wavExportBusy}
+                onClick={async () => {
+                  setWavExportBusy(true);
+                  try {
+                    const target = exportTargetProject ?? project;
+                    const decoded = await decodeAudioForExport(target, (path) => ensureAssetFile(path));
+                    const mix = await mixdownTimeline({
+                      project: target,
+                      decoded,
+                      sampleRate: target.settings.sampleRate || 48_000,
+                    });
+                    const wavBytes = encodeWav(mix.channels, mix.sampleRate);
+                    const copy = new Uint8Array(wavBytes.byteLength);
+                    copy.set(wavBytes);
+                    downloadBlob(
+                      new Blob([copy.buffer], { type: 'audio/wav' }),
+                      `${project.name.replace(/[^\w-]+/g, '-') || 'lesson'}-audio.wav`,
+                    );
+                    session.pushToast('Exported WAV audio mixdown.', 'success');
+                  } catch (err) {
+                    setError(`WAV export failed: ${(err as Error).message}`);
+                  } finally {
+                    setWavExportBusy(false);
+                  }
+                }}
+              >
+                {wavExportBusy ? 'Exporting WAV…' : 'Download WAV audio'}
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  const slug = project.name.replace(/[^\w-]+/g, '-') || 'lesson';
+                  downloadBlob(
+                    new Blob([toSrt((exportTargetProject ?? project).captions)], { type: 'application/x-subrip' }),
+                    `${slug}.srt`,
+                  );
+                }}
+              >
+                Download .SRT
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  const slug = project.name.replace(/[^\w-]+/g, '-') || 'lesson';
+                  downloadBlob(
+                    new Blob([toVtt((exportTargetProject ?? project).captions)], { type: 'text/vtt' }),
+                    `${slug}.vtt`,
+                  );
+                }}
+              >
+                Download .VTT
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  const slug = project.name.replace(/[^\w-]+/g, '-') || 'lesson';
+                  downloadBlob(
+                    new Blob([serializeProject(project)], { type: 'application/json' }),
+                    `${slug}-settings-and-edits.json`,
+                  );
+                }}
+              >
+                Project settings and edits (.json)
+              </Button>
+            </div>
+            <div className="field-hint">
+              <strong>Note on .json files:</strong> <code>Project settings and edits (.json)</code> saves your timeline
+              cuts, tracks, keyframes, color grade, captions, and storyboard metadata. Raw recorded takes (
+              <code>recordings/&lt;take&gt;/</code>) and imported media (<code>media/originals/</code>) must be retained
+              in your workspace folder (or downloaded via <em>Download raw</em> in the Recordings Library) when moving
+              between machines.
+            </div>
           </div>
         </Panel>
       )}
 
+      {exportSection === 'video' && (
       <div className="split-grid">
         <div className="stack" style={{ gap: 14 }}>
           <Panel title="Delivery preset" bodyClassName="stack">
@@ -581,7 +726,8 @@ export function ExportPage() {
                   <div className="row" style={{ justifyContent: 'space-between' }}>
                     <strong style={{ fontSize: 13 }}>{item.label}</strong>
                     <span className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
-                      {item.width}×{item.height} · {(item.videoBitrate / 1e6).toFixed(0)} Mbps
+                      {item.width}×{item.height}
+                      {item.fps ? ` · ${item.fps} fps` : ''} · {(item.videoBitrate / 1e6).toFixed(0)} Mbps
                     </span>
                   </div>
                   <div className="field-hint" style={{ marginTop: 4 }}>
@@ -597,9 +743,38 @@ export function ExportPage() {
               >
                 <strong style={{ fontSize: 13 }}>Custom</strong>
                 <div className="field-hint" style={{ marginTop: 4 }}>
-                  Set size, bitrate or a target file size. The budget calculator explains what that actually buys.
+                  Set size, frame rate, bitrate or a target file size. The budget calculator explains what that actually buys.
                 </div>
               </button>
+            </div>
+
+            <div className="grid-2" style={{ gap: 10, borderTop: '1px solid var(--line)', paddingTop: 12 }}>
+              <Field label="Output frame rate (FPS)" hint="Applied to codec probing, 6s sample encode, and final file.">
+                <Select
+                  aria-label="Output frame rate"
+                  value={String(outputFps)}
+                  onChange={(v) => setOutputFps(Number(v))}
+                  options={[
+                    { value: '24', label: '24 fps · Cinematic' },
+                    { value: '30', label: '30 fps · Standard' },
+                    { value: '60', label: '60 fps · Smooth terminal & UI motion' },
+                  ]}
+                />
+              </Field>
+              <Field label="Timeline range (Full timeline / Chapter)" hint="Export the full lesson or a marker chapter.">
+                <Select
+                  aria-label="Timeline export range"
+                  value={segmentId}
+                  onChange={setSegmentId}
+                  options={[
+                    { value: 'all', label: `Full timeline (${formatClock(project.durationTicks)})` },
+                    ...segments.map((seg) => ({
+                      value: seg.id,
+                      label: `${seg.label} (${formatClock(seg.durationTicks)}${seg.withinShortsCap ? ' · ≤60s' : ' · >60s'})`,
+                    })),
+                  ]}
+                />
+              </Field>
             </div>
 
             {presetId === CUSTOM_ID && (
@@ -641,112 +816,9 @@ export function ExportPage() {
                 ]}
               />
             </Field>
-            {segments.length > 0 && (
-              <Field label="Timeline range / Shorts segment from markers" hint="Pick a marker-to-marker chapter to export as a standalone Short/Reel.">
-                <Select
-                  value={segmentId}
-                  onChange={setSegmentId}
-                  options={[
-                    { value: 'all', label: `Full timeline (${formatClock(project.durationTicks)})` },
-                    ...segments.map((seg) => ({
-                      value: seg.id,
-                      label: `${seg.label} (${formatClock(seg.durationTicks)}${seg.withinShortsCap ? ' · ≤60s' : ' · >60s'})`,
-                    })),
-                  ]}
-                />
-              </Field>
-            )}
-            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={async () => {
-                  const blob = await snapshotThumbnail(
-                    exportTargetProject ?? project,
-                    null,
-                    project.coverTimeTicks ?? useEditor.getState().playheadTicks,
-                    includeCaptions,
-                  );
-                  if (blob) {
-                    downloadBlob(blob, `${project.name.replace(/[^\w-]+/g, '-') || 'thumbnail'}-1280x720.png`);
-                  }
-                }}
-              >
-                Export thumbnail PNG (1280×720)
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={wavExportBusy}
-                onClick={async () => {
-                  setWavExportBusy(true);
-                  try {
-                    const target = exportTargetProject ?? project;
-                    const decoded = await decodeAudioForExport(target, (path) => ensureAssetFile(path));
-                    const mix = await mixdownTimeline({
-                      project: target,
-                      decoded,
-                      sampleRate: target.settings.sampleRate || 48_000,
-                    });
-                    const wavBytes = encodeWav(mix.channels, mix.sampleRate);
-                    const copy = new Uint8Array(wavBytes.byteLength);
-                    copy.set(wavBytes);
-                    downloadBlob(
-                      new Blob([copy.buffer], { type: 'audio/wav' }),
-                      `${project.name.replace(/[^\w-]+/g, '-') || 'lesson'}-audio.wav`,
-                    );
-                    session.pushToast('Exported WAV audio mixdown.', 'success');
-                  } catch (err) {
-                    setError(`WAV export failed: ${(err as Error).message}`);
-                  } finally {
-                    setWavExportBusy(false);
-                  }
-                }}
-              >
-                {wavExportBusy ? 'Exporting WAV…' : 'Export WAV audio'}
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  const slug = project.name.replace(/[^\w-]+/g, '-') || 'lesson';
-                  downloadBlob(
-                    new Blob([toSrt((exportTargetProject ?? project).captions)], { type: 'application/x-subrip' }),
-                    `${slug}.srt`,
-                  );
-                }}
-              >
-                Export .SRT
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  const slug = project.name.replace(/[^\w-]+/g, '-') || 'lesson';
-                  downloadBlob(
-                    new Blob([toVtt((exportTargetProject ?? project).captions)], { type: 'text/vtt' }),
-                    `${slug}.vtt`,
-                  );
-                }}
-              >
-                Export .VTT
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  const slug = project.name.replace(/[^\w-]+/g, '-') || 'lesson';
-                  downloadBlob(
-                    new Blob([serializeProject(project)], { type: 'application/json' }),
-                    `${slug}-project-bundle.json`,
-                  );
-                }}
-              >
-                Export project bundle (.json)
-              </Button>
-            </div>
             <div className="field-hint">
-              Burned-in captions are part of the frame; the separate SRT/VTT stays editable and can be exported independently.
+              Burned-in captions are part of the frame; standalone PNG, WAV, SRT/VTT, and project JSON downloads live in the{' '}
+              <strong>Standalone downloads</strong> tab above.
             </div>
           </Panel>
 
@@ -755,6 +827,7 @@ export function ExportPage() {
               <>
                 <div className="row" style={{ gap: 20, flexWrap: 'wrap' }}>
                   <Stat label="Duration" value={`${durationSeconds.toFixed(1)}s`} />
+                  <Stat label="Frame rate" value={`${resolvedOutput.fps} fps`} />
                   <Stat label="Video" value={`${budget.videoMbps.toFixed(2)} Mbps`} />
                   <Stat label="Audio" value={`${budget.audioMbps.toFixed(2)} Mbps`} />
                   <Stat label="Estimated size" value={formatBytes(budget.estimatedBytes)} hint="VBR lands near, not on, the target" />
@@ -776,83 +849,81 @@ export function ExportPage() {
               sample before exporting a long lesson.
             </div>
           </Panel>
-
-          <Panel title="Quality check" bodyClassName="stack">
-            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-              <Button size="sm" onClick={() => void runSample()} disabled={sampleBusy}>
-                {sampleBusy ? 'Encoding 6s sample…' : 'Encode a 6s sample'}
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => void runBenchmark()} disabled={benchmarkBusy}>
-                {benchmarkBusy ? 'Benchmarking…' : 'Run encoder benchmark'}
-              </Button>
-            </div>
-            {sampleUrl && (
-              <div className="stack" style={{ gap: 8 }}>
-                <video src={sampleUrl} controls style={{ width: '100%', borderRadius: 8, background: '#000' }} />
-                <div className="row" style={{ justifyContent: 'space-between' }}>
-                  <span className="field-hint mono" style={{ whiteSpace: 'pre-line' }}>
-                    {sampleInfo}
-                  </span>
-                  <a className="btn btn-ghost btn-sm" href={sampleUrl} download={`sample-${preset.width}x${preset.height}.${preset.container}`}>
-                    Download sample
-                  </a>
-                </div>
-                <div className="field-hint">
-                  Compare against the editor preview at 100%. A sample proves the encoder ran; it does not prove a whole
-                  lesson at this bitrate will look the same.
-                </div>
-              </div>
-            )}
-            {benchmark && (
-              <div className="stack" style={{ gap: 4 }}>
-                <div className="row" style={{ gap: 16, flexWrap: 'wrap' }}>
-                  <Badge tone={benchmark.sustainedFps >= 30 ? 'ok' : 'warn'}>
-                    {benchmark.sustainedFps.toFixed(1)} fps sustained
-                  </Badge>
-                  <span className="field-hint mono">
-                    {benchmark.encodedFrames} encoded / {benchmark.decodedFrames} decoded · {benchmark.elapsedMs.toFixed(0)} ms
-                    · {benchmark.avgEncodeMs.toFixed(1)} ms/frame · round trip {benchmark.decoderRoundTrip ? 'ok' : 'failed'}
-                  </span>
-                </div>
-                {benchmark.reason && <div className="warn-card">{benchmark.reason}</div>}
-              </div>
-            )}
-          </Panel>
         </div>
 
         <div className="stack" style={{ gap: 14 }}>
           <Panel title="Export" bodyClassName="stack">
+            <div
+              className="hint-card mono"
+              style={{ fontSize: 12.5, fontWeight: 600 }}
+              data-testid="export-output-summary"
+            >
+              {resolvedOutput.height}p ({resolvedOutput.width}×{resolvedOutput.height}) · {resolvedOutput.fps} fps ·{' '}
+              {resolvedOutput.container.toUpperCase()} · {formatDuration(durationSeconds)} · ~
+              {formatBytes(budget?.estimatedBytes ?? 0)}
+              {activeSegment ? ` · Chapter: ${activeSegment.label}` : ' · Full timeline'}
+              {resolvedOutput.width < resolvedOutput.height ? ' · Vertical 9:16' : ' · Landscape'}
+            </div>
             <div className="field-hint mono" style={{ wordBreak: 'break-all' }}>
               {destinationPath}
             </div>
-            {progress ? (
+            {cropPreviewUrl && (
+              <div className="stack" style={{ gap: 4 }}>
+                <span className="field-hint">
+                  Intended delivery framing preview ({resolvedOutput.width}×{resolvedOutput.height}
+                  {activeSegment ? ` · ${activeSegment.label}` : ''}):
+                </span>
+                <img
+                  src={cropPreviewUrl}
+                  alt="Intended export framing preview"
+                  style={{
+                    width: '100%',
+                    maxHeight: 220,
+                    objectFit: 'contain',
+                    background: '#111018',
+                    borderRadius: 8,
+                    border: '1px solid var(--line)',
+                  }}
+                />
+              </div>
+            )}
+            {(progress || verifying) ? (
               <div className="stack" style={{ gap: 8 }}>
-                <div className="row" style={{ justifyContent: 'space-between' }}>
-                  <span style={{ fontSize: 12.5 }}>{progress.phase}</span>
-                  <span className="mono" style={{ fontSize: 12 }}>
-                    {(progress.progress * 100).toFixed(1)}%
-                  </span>
+                <div className="row" style={{ gap: 6, flexWrap: 'wrap', fontSize: 12 }}>
+                  <Badge tone={progress?.phase === 'prepare' || progress?.phase === 'audio' ? 'ok' : 'default'}>
+                    1 · Preparing
+                  </Badge>
+                  <Badge tone={progress?.phase === 'video' ? 'ok' : 'default'}>2 · Encoding</Badge>
+                  <Badge tone={progress?.phase === 'finalize' ? 'ok' : 'default'}>3 · Saving</Badge>
+                  <Badge tone={verifying ? 'ok' : 'default'}>4 · Verifying</Badge>
                 </div>
-                <div className="meter">
-                  <div className="meter-fill" style={{ width: `${Math.min(100, progress.progress * 100)}%` }} />
-                </div>
-                <div className="row" style={{ justifyContent: 'space-between', fontSize: 11.5, color: 'var(--text-3)' }}>
-                  <span className="mono">
-                    frame {progress.frame}/{progress.totalFrames}
-                  </span>
-                  <span className="mono" title="Encode speed in frames per second">
-                    {progress.fps.toFixed(1)} fps · {formatSpeed(progress.fps, project?.canvas.fps)}
-                  </span>
-                  <span className="mono">{formatBytes(progress.bytesWritten)}</span>
-                  <span className="mono">{progress.etaSeconds > 0 ? `${formatDuration(progress.etaSeconds)} left` : 'finishing'}</span>
-                </div>
-                {progress.detail && <div className="field-hint">{progress.detail}</div>}
-                <Button variant="danger" onClick={cancel}>
-                  Cancel export
-                </Button>
-                <div className="field-hint">
-                  Cancelling tries to delete the partially written file; originals are untouched. If that fails you are told where it is.
-                </div>
+                {progress && (
+                  <>
+                    <div className="row" style={{ justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: 12.5 }}>{progress.phase}</span>
+                      <span className="mono" style={{ fontSize: 12 }}>
+                        {(progress.progress * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                    <div className="meter">
+                      <div className="meter-fill" style={{ width: `${Math.min(100, progress.progress * 100)}%` }} />
+                    </div>
+                    <div className="row" style={{ justifyContent: 'space-between', fontSize: 11.5, color: 'var(--text-3)' }}>
+                      <span className="mono">
+                        frame {progress.frame}/{progress.totalFrames}
+                      </span>
+                      <span className="mono" title="Encode speed in frames per second">
+                        {progress.fps.toFixed(1)} fps · {formatSpeed(progress.fps, { num: resolvedOutput.fps, den: 1 })}
+                      </span>
+                      <span className="mono">{formatBytes(progress.bytesWritten)}</span>
+                      <span className="mono">{progress.etaSeconds > 0 ? `${formatDuration(progress.etaSeconds)} left` : 'finishing'}</span>
+                    </div>
+                    {progress.detail && <div className="field-hint">{progress.detail}</div>}
+                    <Button variant="danger" onClick={cancel}>
+                      Cancel export
+                    </Button>
+                  </>
+                )}
               </div>
             ) : project.durationTicks === 0 ? (
               <div className="hint-card">
@@ -876,8 +947,6 @@ export function ExportPage() {
                   multiple
                   hidden
                   onChange={async (event) => {
-                    // Copy before resetting the input: clearing `value` empties
-                    // the live FileList too, which made this a silent no-op.
                     const files = Array.from(event.target.files ?? []);
                     event.target.value = '';
                     if (files.length === 0) return;
@@ -891,13 +960,35 @@ export function ExportPage() {
                 />
               </div>
             ) : (
-              <Button
-                variant="primary"
-                onClick={() => void runExport()}
-                disabled={!session.workspace}
-              >
-                Export {preset.width}×{preset.height} · {preset.container.toUpperCase()}
-              </Button>
+              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                <Button
+                  variant="primary"
+                  onClick={() => void runExport()}
+                  disabled={!session.workspace}
+                >
+                  Export {resolvedOutput.width}×{resolvedOutput.height} · {resolvedOutput.fps} fps · {resolvedOutput.container.toUpperCase()}
+                </Button>
+                <Button size="sm" onClick={() => void runSample()} disabled={sampleBusy}>
+                  {sampleBusy ? 'Encoding 6s sample…' : 'Encode a 6s sample'}
+                </Button>
+              </div>
+            )}
+            {sampleUrl && (
+              <div className="stack" style={{ gap: 8 }}>
+                <video src={sampleUrl} controls style={{ width: '100%', borderRadius: 8, background: '#000' }} />
+                <div className="row" style={{ justifyContent: 'space-between' }}>
+                  <span className="field-hint mono" style={{ whiteSpace: 'pre-line' }}>
+                    {sampleInfo}
+                  </span>
+                  <a
+                    className="btn btn-ghost btn-sm"
+                    href={sampleUrl}
+                    download={`sample-${resolvedOutput.width}x${resolvedOutput.height}-${resolvedOutput.fps}fps.${resolvedOutput.container}`}
+                  >
+                    Download sample
+                  </a>
+                </div>
+              </div>
             )}
             {session.workspace?.info.mode === 'opfs' && (
               <div className="warn-card">
@@ -905,7 +996,7 @@ export function ExportPage() {
                 <Button size="sm" variant="ghost" onClick={() => void saveSessionToFolder()}>
                   Save the project and media to a folder…
                 </Button>{' '}
-                or use “Save a copy to Downloads” after exporting.
+                or use “Download video” after exporting.
               </div>
             )}
             {error && <div className="danger-card">{error}</div>}
@@ -919,6 +1010,11 @@ export function ExportPage() {
                     {describeExport(result)}
                   </span>
                 </div>
+                {playbackVerified === false && verificationReason && (
+                  <div className="warn-card">
+                    Playback verification note: {verificationReason} The exported file is saved and downloadable below.
+                  </div>
+                )}
                 {resultPreviewUrl && (
                   <video
                     src={resultPreviewUrl}
@@ -934,97 +1030,134 @@ export function ExportPage() {
                     {warning}
                   </div>
                 ))}
-                <Button size="sm" onClick={() => void downloadResult(result)}>
-                  Save a copy to Downloads
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setResult(null)}>
-                  Dismiss
-                </Button>
+                <div className="row" style={{ gap: 8 }}>
+                  <Button size="sm" variant="primary" onClick={() => void downloadResult(result)}>
+                    Download video
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setResult(null)}>
+                    Dismiss
+                  </Button>
+                </div>
               </div>
             )}
           </Panel>
 
-          <PlanningPanel project={project} />
-
-          <Panel
-            title="Encoder support"
-            action={
-              <Button size="sm" variant="ghost" onClick={() => void runBenchmark()} disabled={supportBusy || benchmarkBusy}>
-                {supportBusy ? 'Probing…' : 'Re-probe'}
-              </Button>
-            }
-          >
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Codec</th>
-                  <th>Type</th>
-                  <th>Result</th>
-                </tr>
-              </thead>
-              <tbody>
-                {support.map((item) => (
-                  <tr key={item.codec.codec}>
-                    <td className="mono">{item.codec.label}</td>
-                    <td>{AUDIO_CODECS.includes(item.codec) ? 'audio' : 'video'}</td>
-                    <td>
-                      {item.encoderSupported ? (
-                        <Badge tone="ok">supported</Badge>
-                      ) : (
-                        <span className="field-hint">{item.reason ?? 'unsupported'}</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {support.length === 0 && (
-                  <tr>
-                    <td colSpan={3} className="field-hint">
-                      Probing…
-                    </td>
-                  </tr>
+          <details className="record-details">
+            <summary>
+              Encoder diagnostics<span>Codec support, benchmark &amp; capture comparison</span>
+            </summary>
+            <div className="stack" style={{ gap: 12, marginTop: 8 }}>
+              <Panel
+                title="Encoder support"
+                action={
+                  <div className="row" style={{ gap: 6 }}>
+                    <Button size="sm" variant="ghost" onClick={() => void probeCodecs()} disabled={supportBusy}>
+                      {supportBusy ? 'Probing…' : 'Re-probe codecs'}
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => void runBenchmark()} disabled={benchmarkBusy}>
+                      {benchmarkBusy ? 'Benchmarking…' : 'Run encoder benchmark'}
+                    </Button>
+                  </div>
+                }
+              >
+                {benchmark && (
+                  <div className="stack" style={{ gap: 4, marginBottom: 10 }}>
+                    <div className="row" style={{ gap: 16, flexWrap: 'wrap' }}>
+                      <Badge tone={benchmark.sustainedFps >= 30 ? 'ok' : 'warn'}>
+                        {benchmark.sustainedFps.toFixed(1)} fps sustained
+                      </Badge>
+                      <span className="field-hint mono">
+                        {benchmark.encodedFrames} encoded / {benchmark.decodedFrames} decoded ·{' '}
+                        {benchmark.elapsedMs.toFixed(0)} ms · {benchmark.avgEncodeMs.toFixed(1)} ms/frame · round trip{' '}
+                        {benchmark.decoderRoundTrip ? 'ok' : 'failed'}
+                      </span>
+                    </div>
+                    {benchmark.reason && <div className="warn-card">{benchmark.reason}</div>}
+                  </div>
                 )}
-              </tbody>
-            </table>
-            <div className="field-hint" style={{ marginTop: 8 }}>
-              Support is probed in this browser. When H.264 is missing the export falls back to VP9/WebM and says so.
-            </div>
-          </Panel>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Codec</th>
+                      <th>Type</th>
+                      <th>Result</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {support.map((item) => (
+                      <tr key={item.codec.codec}>
+                        <td className="mono">{item.codec.label}</td>
+                        <td>{AUDIO_CODECS.includes(item.codec) ? 'audio' : 'video'}</td>
+                        <td>
+                          {item.encoderSupported ? (
+                            <Badge tone="ok">supported</Badge>
+                          ) : (
+                            <span className="field-hint">{item.reason ?? 'unsupported'}</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                    {support.length === 0 && (
+                      <tr>
+                        <td colSpan={3} className="field-hint">
+                          Probing…
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+                <div className="field-hint" style={{ marginTop: 8 }}>
+                  Support is probed at {resolvedOutput.width}×{resolvedOutput.height} · {resolvedOutput.fps} fps ·{' '}
+                  {(resolvedOutput.videoBitrate / 1e6).toFixed(1)} Mbps video and{' '}
+                  {Math.round(resolvedOutput.audioBitrate / 1000)} kbps audio. When H.264 is missing the export falls
+                  back to VP9/WebM and says so.
+                </div>
+              </Panel>
 
-          <Panel title="Capture vs delivery">
-            <table className="table">
-              <tbody>
-                <tr>
-                  <td>Capture</td>
-                  <td className="mono">
-                    {project.canvas.width}×{project.canvas.height} · {project.canvas.fps.num}/{project.canvas.fps.den} fps
-                  </td>
-                </tr>
-                <tr>
-                  <td>Delivery</td>
-                  <td className="mono">
-                    {preset.width}×{preset.height} · {effectiveVideoBitrate / 1e6} Mbps video
-                  </td>
-                </tr>
-                <tr>
-                  <td>Originals</td>
-                  <td>Untouched in <span className="mono">media/originals/</span></td>
-                </tr>
-              </tbody>
-            </table>
-            {preset.width > project.canvas.width || preset.height > project.canvas.height ? (
-              <div className="warn-card" style={{ marginTop: 10 }}>
-                This delivery size is larger than the composition. It upscales; it cannot add detail.
-              </div>
-            ) : null}
-            {Math.abs(preset.width / preset.height - project.canvas.width / project.canvas.height) > 0.01 ? (
-              <div className="warn-card" style={{ marginTop: 10 }}>
-                This preset&apos;s aspect ratio differs from the composition ({project.canvas.width}×{project.canvas.height}). The
-                picture is letterboxed with bars, not stretched. Pick Custom at the composition size to fill the frame.
-              </div>
-            ) : null}
-          </Panel>
+              <Panel title="Capture vs delivery">
+                <table className="table">
+                  <tbody>
+                    <tr>
+                      <td>Capture</td>
+                      <td className="mono">
+                        {project.canvas.width}×{project.canvas.height} · {project.canvas.fps.num}/{project.canvas.fps.den}{' '}
+                        fps
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Delivery</td>
+                      <td className="mono">
+                        {resolvedOutput.width}×{resolvedOutput.height} · {resolvedOutput.fps} fps ·{' '}
+                        {resolvedOutput.videoBitrate / 1e6} Mbps video
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Originals</td>
+                      <td>
+                        Untouched in <span className="mono">media/originals/</span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+                {resolvedOutput.width > project.canvas.width || resolvedOutput.height > project.canvas.height ? (
+                  <div className="warn-card" style={{ marginTop: 10 }}>
+                    This delivery size is larger than the composition. It upscales; it cannot add detail.
+                  </div>
+                ) : null}
+                {Math.abs(
+                  resolvedOutput.width / resolvedOutput.height - project.canvas.width / project.canvas.height,
+                ) > 0.01 ? (
+                  <div className="warn-card" style={{ marginTop: 10 }}>
+                    This preset&apos;s aspect ratio differs from the composition ({project.canvas.width}×
+                    {project.canvas.height}).
+                  </div>
+                ) : null}
+              </Panel>
+            </div>
+          </details>
         </div>
       </div>
+      )}
 
       <Dialog
         open={storageBlock !== null}

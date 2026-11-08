@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSession } from '../app/session';
 import { useEditor } from '../project/store';
 import { downloadBlob, formatBytes } from '../app/actions';
-import { ensureDraftProject, openExistingProject } from '../app/bootstrap';
+import { openExistingProject } from '../app/bootstrap';
 import { buildAssetsFromManifest, recoverInterruptedTake } from '../capture/recorder';
 import { createTrack } from '../project/factory';
 import * as ops from '../project/ops';
@@ -11,7 +11,6 @@ import { takeIdsOf } from '../workspace/takeRefs';
 import type { TakeSummary } from '../workspace/types';
 import {
   committedBytes,
-  copyFile,
   deleteTake,
   executeClearUnusedPlan,
   listProjectFolders,
@@ -21,7 +20,6 @@ import {
   projectPath,
   readFile,
   renameTake,
-  writeTakeManifest,
   type ClearUnusedPlan,
   type ExecuteClearUnusedResult,
 } from '../workspace/workspace';
@@ -251,10 +249,12 @@ export function RecordingsLibrary({
 
   const handleAppendToTimeline = async (item: EnrichedTakeItem) => {
     if (!workspace) return;
-    let targetFolder = currentProjectFolder;
-    if (!targetFolder || !useEditor.getState().project) {
-      const ensured = await ensureDraftProject();
-      targetFolder = ensured.folder;
+    if (!currentProjectFolder || item.projectFolder !== currentProjectFolder) {
+      pushToast(
+        `Take "${item.label}" belongs to "${item.projectName}". Open "${item.projectName}" first to append to its timeline, or use Open in editor.`,
+        'info',
+      );
+      return;
     }
     const report =
       item.status === 'Recoverable'
@@ -262,33 +262,6 @@ export function RecordingsLibrary({
         : null;
     const manifest = report ? report.manifest : item.take.manifest;
     const builtAssets = report ? report.assets : buildAssetsFromManifest(manifest);
-
-    // If appending a take from another project, copy its files into the current project folder
-    // so the current project stays active and owns the media paths referenced by its timeline.
-    if (targetFolder && targetFolder !== item.projectFolder) {
-      await writeTakeManifest(workspace.root, targetFolder, {
-        ...manifest,
-        projectId: useEditor.getState().project?.id ?? manifest.projectId,
-      });
-      for (const rec of manifest.assets) {
-        await copyFile(
-          workspace.root,
-          projectPath(item.projectFolder, rec.path),
-          workspace.root,
-          projectPath(targetFolder, rec.path),
-        ).catch(() => undefined);
-        for (const seg of rec.segments) {
-          if (seg.path !== rec.path) {
-            await copyFile(
-              workspace.root,
-              projectPath(item.projectFolder, seg.path),
-              workspace.root,
-              projectPath(targetFolder, seg.path),
-            ).catch(() => undefined);
-          }
-        }
-      }
-    }
 
     let insertedAt = 0;
     let firstClipId: string | undefined;
@@ -515,19 +488,6 @@ export function RecordingsLibrary({
                   </div>
                 </div>
                 <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-                  <Button size="sm" variant="ghost" onClick={() => void handlePlayTake(item)}>
-                    Play
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => {
-                      setRenamingTakeId(item.take.takeId);
-                      setRenameDraft(item.label);
-                    }}
-                  >
-                    Rename
-                  </Button>
                   <Button
                     size="sm"
                     variant="primary"
@@ -539,34 +499,68 @@ export function RecordingsLibrary({
                   <Button
                     size="sm"
                     variant="ghost"
-                    title="Append this take after the existing clips on the current timeline"
+                    disabled={
+                      !currentProjectFolder ||
+                      item.projectFolder !== currentProjectFolder ||
+                      item.status === 'Active' ||
+                      item.status === 'Used in timeline'
+                    }
+                    title={
+                      !currentProjectFolder
+                        ? 'Open a project first to append takes to its timeline.'
+                        : item.projectFolder !== currentProjectFolder
+                          ? `This take belongs to "${item.projectName}". Open "${item.projectName}" first to append to its timeline, or use Open in editor.`
+                          : item.status === 'Used in timeline'
+                            ? 'This take is already on the current timeline.'
+                            : 'Append this take after the existing clips on the current timeline'
+                    }
                     onClick={() => void handleAppendToTimeline(item)}
                   >
                     + Add to timeline
                   </Button>
-                  <Button size="sm" variant="ghost" onClick={() => void handleDownloadRaw(item)}>
-                    Download raw
-                  </Button>
-                  {canSaveToFolder && (
-                    <Button size="sm" variant="ghost" onClick={() => void handleSaveToFolder(item)}>
-                      Save to folder
-                    </Button>
-                  )}
-                  <Button
-                    size="sm"
-                    variant="danger"
-                    disabled={item.status === 'Active' || item.status === 'Used in timeline'}
-                    title={
-                      item.status === 'Active'
-                        ? 'Active takes are pinned and protected while recording.'
-                        : item.status === 'Used in timeline'
-                          ? 'Used in timeline — remove the clip from the timeline before deleting this take.'
-                          : 'Permanently delete this raw take'
-                    }
-                    onClick={() => void handleDeleteSingleTake(item)}
-                  >
-                    {item.status === 'Recoverable' ? 'Discard' : 'Delete'}
-                  </Button>
+                  <details className="rec-more-menu">
+                    <summary className="btn btn-ghost btn-sm" aria-label={`More actions for ${item.label}`}>
+                      More ▾
+                    </summary>
+                    <div className="rec-more-popover">
+                      <Button size="sm" variant="ghost" onClick={() => void handlePlayTake(item)}>
+                        Play preview
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setRenamingTakeId(item.take.takeId);
+                          setRenameDraft(item.label);
+                        }}
+                      >
+                        Rename take
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => void handleDownloadRaw(item)}>
+                        Download raw
+                      </Button>
+                      {canSaveToFolder && (
+                        <Button size="sm" variant="ghost" onClick={() => void handleSaveToFolder(item)}>
+                          Save to folder
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        disabled={item.status === 'Active' || item.status === 'Used in timeline'}
+                        title={
+                          item.status === 'Active'
+                            ? 'Active takes are pinned and protected while recording.'
+                            : item.status === 'Used in timeline'
+                              ? 'Used in timeline — remove the clip from the timeline before deleting this take.'
+                              : 'Permanently delete this raw take'
+                        }
+                        onClick={() => void handleDeleteSingleTake(item)}
+                      >
+                        {item.status === 'Recoverable' ? 'Discard' : 'Delete'}
+                      </Button>
+                    </div>
+                  </details>
                 </div>
               </div>
             );

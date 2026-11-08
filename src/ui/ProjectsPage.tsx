@@ -160,25 +160,33 @@ export function ProjectsPage() {
     >
       {/* Quick-action Hero Row */}
       <Panel
-        title="01 · Projects & Media Studio"
-        subtitle="Record screen & camera, import local 4K media, organize storyboards, or restore a project backup — 100% locally in your browser."
+        title="Projects & Media Studio"
+        subtitle="Record screen & camera, import local 4K media, organize storyboards, or restore project settings & edits — 100% locally in your browser."
         actions={
           <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
             <Button variant="primary" onClick={() => setRoute('record')}>
               ● New Recording
             </Button>
-            <ImportMediaButton label="Import Video / Audio / Image" navigateToEdit />
+            <ImportMediaButton label="Import Media" navigateToEdit />
             <Button onClick={() => setCreateOpen(true)}>+ Blank Project</Button>
-            <Button
-              variant="ghost"
-              onClick={() => void loadSampleKubernetesLesson('edit')}
-              data-testid="load-sample-kubernetes-btn"
-            >
-              Load Sample Kubernetes Lesson
-            </Button>
-            <Button variant="ghost" onClick={() => backupInput.current?.click()}>
-              Restore backup JSON…
-            </Button>
+            <details className="rec-more-menu">
+              <summary className="btn btn-ghost btn-md" aria-label="Project menu">
+                Project menu ▾
+              </summary>
+              <div className="rec-more-popover">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => void loadSampleKubernetesLesson('edit')}
+                  data-testid="load-sample-kubernetes-btn"
+                >
+                  Load Sample Kubernetes Lesson
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => backupInput.current?.click()}>
+                  Restore settings &amp; edits (.json)…
+                </Button>
+              </div>
+            </details>
             <input
               ref={backupInput}
               type="file"

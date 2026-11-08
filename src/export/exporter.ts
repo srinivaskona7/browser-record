@@ -47,6 +47,7 @@ export interface ExportResult {
   buffer?: ArrayBuffer;
   width: number;
   height: number;
+  fps?: number;
   durationSeconds: number;
   videoCodec: string;
   audioCodec: string | null;
@@ -61,11 +62,12 @@ export interface ExportResult {
 export interface ExportRequest {
   project: Project;
   preset: ExportPreset;
-  /** Overrides when the user picked a custom target size or bitrate. */
+  /** Overrides when the user picked a custom target size, bitrate, or frame rate. */
   videoBitrate?: number;
   audioBitrate?: number;
   width?: number;
   height?: number;
+  fps?: number | { num: number; den: number };
   /** Where the file goes. Omit to get an ArrayBuffer back for a download. */
   destination?: { root: DirectoryHandleLike; path: string };
   getAssetFile: (assetPath: string) => Promise<File>;
@@ -94,9 +96,19 @@ export async function exportProject(request: ExportRequest): Promise<ExportResul
   const { project, preset } = request;
   const width = request.width ?? preset.width;
   const height = request.height ?? preset.height;
-  const fps = project.canvas.fps;
+  const fps =
+    typeof request.fps === 'number' && Number.isFinite(request.fps) && request.fps > 0
+      ? { num: Math.round(request.fps), den: 1 }
+      : typeof request.fps === 'object' && request.fps
+        ? request.fps
+        : preset.fps
+          ? { num: preset.fps, den: 1 }
+          : project.canvas.fps;
   const fpsNumber = fps.num / fps.den;
-  const totalFrames = frameCount(project);
+  const totalFrames =
+    fps.num === project.canvas.fps.num && fps.den === project.canvas.fps.den
+      ? frameCount(project)
+      : Math.ceil((project.durationTicks * fps.num) / (TICKS_PER_SECOND * fps.den));
   const durationSeconds = project.durationTicks / TICKS_PER_SECOND;
   const warnings: string[] = [];
   const assertNotCancelled = () => {
@@ -387,6 +399,7 @@ export async function exportProject(request: ExportRequest): Promise<ExportResul
     buffer: buffer ?? undefined,
     width,
     height,
+    fps: fpsNumber,
     durationSeconds,
     videoCodec: chosenVideo.codec.label,
     audioCodec: audioCodec?.label ?? null,
@@ -498,8 +511,9 @@ export function createAudioResolver(request: ExportRequest, project: Project): A
 }
 
 export function describeExport(result: ExportResult): string {
+  const fpsPart = result.fps ? ` · ${result.fps} fps` : '';
   const lines = [
-    `${result.width}×${result.height} · ${result.videoCodec}${result.audioCodec ? ` + ${result.audioCodec}` : ' · no audio'}`,
+    `${result.width}×${result.height}${fpsPart} · ${result.videoCodec}${result.audioCodec ? ` + ${result.audioCodec}` : ' · no audio'}`,
     `${result.durationSeconds.toFixed(1)}s · ${result.frames} frames · ${formatBytes(result.bytes)}`,
   ];
   return lines.join('\n');
@@ -510,7 +524,7 @@ export function estimateForDuration(project: Project, preset: ExportPreset, dura
     durationSeconds: durationTicks / TICKS_PER_SECOND,
     width: preset.width,
     height: preset.height,
-    fps: project.canvas.fps.num / project.canvas.fps.den,
+    fps: preset.fps ?? project.canvas.fps.num / project.canvas.fps.den,
     audioBitrate: preset.audioBitrate,
     videoBitrate: preset.videoBitrate,
   });
@@ -527,16 +541,33 @@ export async function verifyDecodedVideoBlob(
 ): Promise<{
   ok: boolean;
   verified: boolean;
+  reason?: string;
   bytes: number;
   durationSeconds: number;
   width: number;
   height: number;
 }> {
   if (!blob || blob.size === 0) {
-    return { ok: false, verified: false, bytes: 0, durationSeconds: 0, width: 0, height: 0 };
+    return {
+      ok: false,
+      verified: false,
+      reason: 'Exported video file is empty (0 bytes).',
+      bytes: 0,
+      durationSeconds: 0,
+      width: 0,
+      height: 0,
+    };
   }
   if (typeof document === 'undefined' || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
-    return { ok: true, verified: false, bytes: blob.size, durationSeconds: 0, width: 0, height: 0 };
+    return {
+      ok: true,
+      verified: false,
+      reason: 'Browser video decoder unavailable in this environment.',
+      bytes: blob.size,
+      durationSeconds: 0,
+      width: 0,
+      height: 0,
+    };
   }
   return new Promise((resolve) => {
     const url = URL.createObjectURL(blob);
@@ -545,16 +576,23 @@ export async function verifyDecodedVideoBlob(
     video.playsInline = true;
     video.preload = 'auto';
     let settled = false;
-    const finish = (ok: boolean, verified: boolean, durationSeconds: number, width: number, height: number) => {
+    const finish = (
+      ok: boolean,
+      verified: boolean,
+      durationSeconds: number,
+      width: number,
+      height: number,
+      reason?: string,
+    ) => {
       if (settled) return;
       settled = true;
       video.removeAttribute('src');
       URL.revokeObjectURL(url);
-      resolve({ ok, verified, bytes: blob.size, durationSeconds, width, height });
+      resolve({ ok, verified, reason, bytes: blob.size, durationSeconds, width, height });
     };
     const timer = setTimeout(() => {
       // Timeout leaves the saved export marked as unverified rather than failing the file write.
-      finish(true, false, 0, 0, 0);
+      finish(true, false, 0, 0, 0, 'Timed out waiting for a decoded video frame.');
     }, timeoutMs);
 
     const checkDecodedFrame = () => {
@@ -572,7 +610,14 @@ export async function verifyDecodedVideoBlob(
     video.onloadeddata = () => {
       if (!checkDecodedFrame()) {
         clearTimeout(timer);
-        finish(true, false, Number.isFinite(video.duration) ? video.duration : 0, video.videoWidth || 0, video.videoHeight || 0);
+        finish(
+          true,
+          false,
+          Number.isFinite(video.duration) ? video.duration : 0,
+          video.videoWidth || 0,
+          video.videoHeight || 0,
+          'Video loaded without valid decoded frame dimensions or duration.',
+        );
       }
     };
     video.onloadedmetadata = () => {
@@ -588,7 +633,7 @@ export async function verifyDecodedVideoBlob(
     };
     video.onerror = () => {
       clearTimeout(timer);
-      finish(false, false, 0, 0, 0);
+      finish(false, false, 0, 0, 0, 'Browser video player reported a decode error.');
     };
     video.src = url;
   });

@@ -3,7 +3,7 @@ import { useEditor } from '../project/store';
 import { useSession } from '../app/session';
 import * as ops from '../project/ops';
 import { formatTimecode, parseTimecode, TICKS_PER_SECOND } from '../core/time';
-import { Badge, Button, Dialog, Panel, Select, Toggle } from './components';
+import { Badge, Button, Dialog, Select, Toggle } from './components';
 import { Preview, snapshotFrame, snapshotThumbnail } from './Preview';
 import { Timeline } from './Timeline';
 import { MediaBin } from './MediaBin';
@@ -56,6 +56,7 @@ export function EditPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [toolSearch, setToolSearch] = useState('');
   const [inspectorVisible, setInspectorVisible] = useState(true);
+  const [activeSidePanel, setActiveSidePanel] = useState<'tools' | 'inspector'>('inspector');
   const [focusMode, setFocusMode] = useState(false);
   const [advancedPreview, setAdvancedPreview] = useState(false);
   const [timecodeFocused, setTimecodeFocused] = useState(false);
@@ -132,6 +133,7 @@ export function EditPage() {
     if (state.selectedClipIds !== previous.selectedClipIds && state.selectedClipIds.length > 0) {
       setPanel('effects');
       setInspectorVisible(true);
+      setActiveSidePanel('inspector');
     }
   }), [setPanel]);
 
@@ -140,8 +142,24 @@ export function EditPage() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      if (event.key === 'Escape' && focusMode) {
-        if (!target || !/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) {
+      if (event.key === 'Escape') {
+        if (
+          transcribeOpen ||
+          voiceoverOpen ||
+          shortcutsOpen ||
+          (typeof document !== 'undefined' && Boolean(document.querySelector('.dialog-backdrop')))
+        ) {
+          return;
+        }
+        if (typeof document !== 'undefined') {
+          const openPopover = document.querySelector('details.rec-more-menu[open]');
+          if (openPopover) {
+            openPopover.removeAttribute('open');
+            event.preventDefault();
+            return;
+          }
+        }
+        if (focusMode && (!target || !/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) {
           event.preventDefault();
           setFocusMode(false);
           return;
@@ -340,18 +358,32 @@ export function EditPage() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [frameTicks, setPlayhead, setPlaying, focusMode]);
+  }, [frameTicks, setPlayhead, setPlaying, focusMode, transcribeOpen, voiceoverOpen, shortcutsOpen]);
 
   if (!project) {
     return <EditStart />;
   }
 
   const timecode = formatTimecode(playhead, project.canvas.fps);
+  const sideModeClass =
+    drawerOpen && activeSidePanel === 'tools' ? ' active-side-tools' : ' active-side-inspector';
+
+  const syncWorkspaceForTool = (nextTool: EditorTool) => {
+    if (nextTool === 'presenter') setWorkspaceView('06-presenter');
+    else if (nextTool === 'adjust') setWorkspaceView('07-color');
+    else if (nextTool === 'effects' || nextTool === 'transitions' || nextTool === 'filters')
+      setWorkspaceView('08-effects');
+    else if (nextTool === 'text' || nextTool === 'captions') setWorkspaceView('09-text');
+    else if (nextTool === 'audio' || nextTool === 'sfx' || nextTool === 'voiceover') setWorkspaceView('10-audio');
+    else if (nextTool === 'planning') setWorkspaceView('11-planning');
+    else setWorkspaceView('05-timeline');
+  };
 
   return (
     <div
-      className={`editor edits-workspace${focusMode ? ' focus-mode' : inspectorVisible ? ' show-inspector' : ' inspector-collapsed'}`}
+      className={`editor edits-workspace${focusMode ? ' focus-mode' : inspectorVisible ? ' show-inspector' : ' inspector-collapsed'}${!focusMode && !drawerOpen ? ' drawer-collapsed' : ''}${sideModeClass}`}
       data-focus-mode={focusMode ? 'true' : undefined}
+      data-side-panel={activeSidePanel}
     >
       <header className="edit-project-bar">
         <div className="stack" style={{ gap: 6 }}>
@@ -372,13 +404,13 @@ export function EditPage() {
             <div className="row edit-workspace-row" role="tablist" aria-label="Specialist workspace views" style={{ gap: 4, flexWrap: 'wrap' }}>
               {(
                 [
-                  { id: '05-timeline', num: '05', label: 'Timeline', tool: 'media' as EditorTool },
-                  { id: '06-presenter', num: '06', label: 'Presenter', tool: 'presenter' as EditorTool },
-                  { id: '07-color', num: '07', label: 'Color', tool: 'adjust' as EditorTool },
-                  { id: '08-effects', num: '08', label: 'Effects & Privacy', tool: 'effects' as EditorTool },
-                  { id: '09-text', num: '09', label: 'Text & Captions', tool: 'text' as EditorTool },
-                  { id: '10-audio', num: '10', label: 'Audio', tool: 'audio' as EditorTool },
-                  { id: '11-planning', num: '11', label: 'Planning & Share', tool: 'planning' as EditorTool },
+                  { id: '05-timeline', label: 'Timeline', tool: 'media' as EditorTool },
+                  { id: '06-presenter', label: 'Presenter', tool: 'presenter' as EditorTool },
+                  { id: '07-color', label: 'Color', tool: 'adjust' as EditorTool },
+                  { id: '08-effects', label: 'Effects & Privacy', tool: 'effects' as EditorTool },
+                  { id: '09-text', label: 'Text & Captions', tool: 'text' as EditorTool },
+                  { id: '10-audio', label: 'Audio', tool: 'audio' as EditorTool },
+                  { id: '11-planning', label: 'Planning & Share', tool: 'planning' as EditorTool },
                 ] as const
               ).map((v) => (
                 <button
@@ -390,12 +422,18 @@ export function EditPage() {
                     setFocusMode(false);
                     setWorkspaceView(v.id);
                     setTool(v.tool);
-                    setDrawerOpen(true);
-                    setInspectorVisible(true);
+                    if (v.id === '05-timeline') {
+                      setDrawerOpen(false);
+                      setInspectorVisible(true);
+                      setActiveSidePanel('inspector');
+                    } else {
+                      setDrawerOpen(true);
+                      setActiveSidePanel('tools');
+                    }
                     setPanel('effects');
                   }}
                 >
-                  <span className="workspace-view-num">{v.num}</span> {v.label}
+                  {v.label}
                 </button>
               ))}
             </div>
@@ -417,7 +455,40 @@ export function EditPage() {
             {focusMode ? 'Exit focus' : 'Focus'}
           </Button>
           {!focusMode && (
-            <Button size="sm" aria-pressed={inspectorVisible} onClick={() => { setInspectorVisible(!inspectorVisible); setPanel('effects'); }}>Inspector</Button>
+            <div className="row" role="group" aria-label="Side panel switch" style={{ gap: 4 }}>
+              <Button
+                size="sm"
+                variant={drawerOpen && activeSidePanel === 'tools' ? 'primary' : 'ghost'}
+                aria-pressed={drawerOpen && activeSidePanel === 'tools'}
+                onClick={() => {
+                  if (drawerOpen && activeSidePanel === 'tools') {
+                    setDrawerOpen(false);
+                    setActiveSidePanel('inspector');
+                  } else {
+                    setDrawerOpen(true);
+                    setActiveSidePanel('tools');
+                  }
+                }}
+              >
+                Tools
+              </Button>
+              <Button
+                size="sm"
+                variant={inspectorVisible && activeSidePanel === 'inspector' ? 'primary' : 'ghost'}
+                aria-pressed={inspectorVisible && activeSidePanel === 'inspector'}
+                onClick={() => {
+                  if (inspectorVisible && activeSidePanel === 'inspector') {
+                    setInspectorVisible(false);
+                  } else {
+                    setInspectorVisible(true);
+                    setActiveSidePanel('inspector');
+                    setPanel('effects');
+                  }
+                }}
+              >
+                Inspector
+              </Button>
+            </div>
           )}
           <Button variant="primary" onClick={() => { setPlaying(false); useSession.getState().setRoute('export'); }}>Export ↗</Button>
         </div>
@@ -428,18 +499,22 @@ export function EditPage() {
           {EDITOR_TOOLS.filter((item) => item.label.toLowerCase().includes(toolSearch.toLowerCase())).map((item) => (
             <button
               key={item.id}
-              aria-pressed={drawerOpen && tool === item.id}
+              aria-pressed={drawerOpen && tool === item.id && activeSidePanel === 'tools'}
               onClick={() => {
                 if (item.id === 'voiceover') {
                   setVoiceoverOpen(true);
                   return;
                 }
-                if (tool === item.id) {
-                  setDrawerOpen((prev) => !prev);
+                const nextTool = item.id as EditorTool;
+                if (tool === nextTool && drawerOpen && activeSidePanel === 'tools') {
+                  setDrawerOpen(false);
+                  setActiveSidePanel('inspector');
                   return;
                 }
-                setTool(item.id as EditorTool);
+                setTool(nextTool);
+                syncWorkspaceForTool(nextTool);
                 setDrawerOpen(true);
+                setActiveSidePanel('tools');
                 if (item.id === 'captions') setPanel('captions');
                 else if (item.id === 'adjust') setPanel('effects');
               }}
@@ -599,49 +674,37 @@ export function EditPage() {
         </div>
       </div>
 
-      {!focusMode && (
+      {!focusMode && inspectorVisible && (
       <aside className="editor-side editor-right scroll-thin">
-        <div className="nav-tabs" style={{ alignSelf: 'flex-start' }}>
-          <button type="button" className="nav-tab" aria-current={panel === 'media' ? 'page' : undefined} onClick={() => setPanel('media')}>
-            Settings
-          </button>
-          <button type="button" className="nav-tab" aria-current={panel === 'captions' ? 'page' : undefined} onClick={() => setPanel('captions')}>
-            Captions
-          </button>
-          <button
-            type="button"
-            className="nav-tab"
-            aria-current={panel === 'effects' ? 'page' : undefined}
-            onClick={() => setPanel('effects')}
-          >
-            Clip
-          </button>
-        </div>
         {panel === 'captions' && tool !== 'captions' ? (
           <CaptionsPanel project={project} onOpenTranscribe={() => setTranscribeOpen(true)} />
-        ) : panel === 'effects' || tool === 'captions' ? (
-          selectedClip ? <Inspector clip={selectedClip.clip} trackKind={selectedClip.track.kind} /> : <NoSelection project={project} />
         ) : (
-          <Panel title="Project">
-            <ProjectSettingsPanel project={project} />
-          </Panel>
+          selectedClip ? <Inspector clip={selectedClip.clip} trackKind={selectedClip.track.kind} /> : <NoSelection project={project} />
         )}
-        <Panel title="History">
-          <div className="stack" style={{ gap: 4 }}>
-            <div className="row" style={{ justifyContent: 'space-between' }}>
-              <span className="field-hint">{lastAction ?? 'No edits yet'}</span>
-              <div className="row" style={{ gap: 4 }}>
-                <Button size="sm" variant="ghost" onClick={() => useEditor.getState().undo()} disabled={historyLength === 0}>
-                  Undo
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => useEditor.getState().redo()} disabled={futureLength === 0}>
-                  Redo
-                </Button>
-              </div>
-            </div>
+        <details className="record-details">
+          <summary>
+            History<span>{historyLength} step{historyLength === 1 ? '' : 's'} · {lastAction ?? 'No edits yet'}</span>
+          </summary>
+          <div className="row" style={{ justifyContent: 'space-between', marginTop: 8 }}>
             <Badge>{historyLength} steps</Badge>
+            <div className="row" style={{ gap: 4 }}>
+              <Button size="sm" variant="ghost" onClick={() => useEditor.getState().undo()} disabled={historyLength === 0}>
+                Undo
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => useEditor.getState().redo()} disabled={futureLength === 0}>
+                Redo
+              </Button>
+            </div>
           </div>
-        </Panel>
+        </details>
+        <details className="record-details">
+          <summary>
+            Project settings<span>Canvas, background &amp; project actions</span>
+          </summary>
+          <div style={{ marginTop: 8 }}>
+            <ProjectSettingsPanel project={project} />
+          </div>
+        </details>
       </aside>
       )}
 

@@ -453,6 +453,20 @@ describe('Browser 4K Studio — Release Gate Suite', () => {
     expect(timeoutRes.ok).toBe(true);
     expect(timeoutRes.verified).toBe(false);
   });
+
+  it('defines distinct YouTube 1080p30 (30 fps) and 1080p60 (60 fps) export presets', async () => {
+    const { presetById } = await import('../src/export/presets');
+    const p30 = presetById('youtube-1080p30')!;
+    const p60 = presetById('youtube-1080p60')!;
+    expect(p30.width).toBe(1920);
+    expect(p30.height).toBe(1080);
+    expect(p30.fps).toBe(30);
+    expect(p60.width).toBe(1920);
+    expect(p60.height).toBe(1080);
+    expect(p60.fps).toBe(60);
+    expect(p60.videoBitrate).toBeGreaterThan(p30.videoBitrate);
+  });
 });
+
 
 

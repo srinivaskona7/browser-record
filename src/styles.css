@@ -1479,13 +1479,16 @@ select:disabled {
 .record-details > .panel { border: 0; box-shadow: none; }
 .recorder-page .start-dock .btn { border-radius: 30px; padding: 12px 28px; }
 @media (max-width: 1200px) {
-  .edits-workspace { grid-template-columns: 68px 220px minmax(200px, 1fr); }
-  .edits-workspace .editor-right { display: flex; grid-column: 2; grid-row: 2; }
+  .edits-workspace { grid-template-columns: 68px 240px minmax(200px, 1fr); }
+  .edits-workspace .editor-right { grid-column: 2; grid-row: 2; }
   .edits-workspace > .editor-side:not(.editor-right) { grid-column: 2; grid-row: 2; }
   .edits-workspace .editor-center { grid-column: 3; grid-row: 2; }
-  .edits-workspace .editor-right { display: none; }
-  .edits-workspace.show-inspector > .editor-side:not(.editor-right) { display: none; }
-  .edits-workspace.show-inspector .editor-right { display: flex; }
+  .edits-workspace.active-side-tools > .editor-side:not(.editor-right) { display: flex; }
+  .edits-workspace.active-side-tools .editor-right { display: none; }
+  .edits-workspace.active-side-inspector > .editor-side:not(.editor-right) { display: none; }
+  .edits-workspace.active-side-inspector .editor-right { display: flex; }
+  .edits-workspace.drawer-collapsed.inspector-collapsed { grid-template-columns: 68px minmax(200px, 1fr); }
+  .edits-workspace.drawer-collapsed.inspector-collapsed .editor-center { grid-column: 2; }
 }
 @media (max-width: 760px) {
   .edits-workspace { display: flex; flex-direction: column; height: auto; min-height: 100%; gap: 1px; }
@@ -1504,8 +1507,10 @@ select:disabled {
   .record-storage > summary span { float: none; display: block; margin-top: 5px; }
 }
 @media (min-width: 1201px) {
+  .edits-workspace.drawer-collapsed { grid-template-columns: 76px minmax(220px, 1fr) 292px; }
   .edits-workspace.inspector-collapsed { grid-template-columns: 76px 250px minmax(220px, 1fr); }
   .edits-workspace.inspector-collapsed .editor-right { display: none; }
+  .edits-workspace.drawer-collapsed.inspector-collapsed { grid-template-columns: 76px minmax(220px, 1fr); }
 }
 
 /* Compact recording launcher with direct access to the full editor. */

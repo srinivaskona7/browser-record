@@ -4,10 +4,8 @@ import { useEditor } from '../project/store';
 import { useSession } from '../app/session';
 import * as ops from '../project/ops';
 import type { Project } from '../project/types';
-import { downloadBlob, ensureAssetFile, serializeProject } from '../app/actions';
-import { toSrt, toVtt } from '../captions/subtitles';
-import { encodeWav, mixdownTimeline } from '../audio/mixdown';
-import { decodeAudioForExport } from '../audio/prepare';
+import { downloadBlob } from '../app/actions';
+import { toSrt } from '../captions/subtitles';
 import { snapshotThumbnail } from './Preview';
 import { Badge, Button, Field, Panel, Slider } from './components';
 
@@ -32,7 +30,6 @@ export function PlanningPanel({ project }: { project: Project }) {
   const [shotTitle, setShotTitle] = useState('');
   const [shotDuration, setShotDuration] = useState('3');
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
-  const [wavBusy, setWavBusy] = useState(false);
 
   const coverTicks = project.coverTimeTicks ?? playheadTicks;
   const shareSupported = canBrowserSectionsShare();
@@ -85,40 +82,6 @@ export function PlanningPanel({ project }: { project: Project }) {
     pushToast('Downloaded PNG cover frame.', 'success');
   };
 
-  const handleDownloadSubtitles = (format: 'srt' | 'vtt') => {
-    const text = format === 'srt' ? toSrt(project.captions) : toVtt(project.captions);
-    const mime = format === 'srt' ? 'application/x-subrip' : 'text/vtt';
-    downloadBlob(new Blob([text], { type: mime }), `${baseSlug}.${format}`);
-    pushToast(`Downloaded .${format.toUpperCase()} subtitle sidecar.`, 'success');
-  };
-
-  const handleDownloadWav = async () => {
-    setWavBusy(true);
-    try {
-      const decoded = await decodeAudioForExport(project, (path) => ensureAssetFile(path));
-      const mix = await mixdownTimeline({
-        project,
-        decoded,
-        sampleRate: project.settings.sampleRate || 48_000,
-      });
-      const wavBytes = encodeWav(mix.channels, mix.sampleRate);
-      const copy = new Uint8Array(wavBytes.byteLength);
-      copy.set(wavBytes);
-      downloadBlob(new Blob([copy.buffer], { type: 'audio/wav' }), `${baseSlug}-mixdown.wav`);
-      pushToast('Downloaded WAV audio mixdown.', 'success');
-    } catch (err) {
-      pushToast(`WAV export failed: ${(err as Error).message}`, 'error');
-    } finally {
-      setWavBusy(false);
-    }
-  };
-
-  const handleDownloadBundle = () => {
-    const json = serializeProject(project);
-    downloadBlob(new Blob([json], { type: 'application/json' }), `${baseSlug}-project-bundle.json`);
-    pushToast('Downloaded restorable project bundle JSON.', 'success');
-  };
-
   const handleNativeShare = async () => {
     const blob = await snapshotThumbnail(project, null, coverTicks, true);
     const files: File[] = [];
@@ -148,8 +111,8 @@ export function PlanningPanel({ project }: { project: Project }) {
   return (
     <div className="stack" style={{ gap: 12 }} data-testid="planning-share-panel">
       <Panel
-        title="11 · Planning & Share Handoff"
-        subtitle="Shot list, session notes, social caption, selected cover frame, and local handoff downloads."
+        title="Planning & Share"
+        subtitle="Shot list, session notes, social caption, and cover frame selection."
         actions={
           <Badge tone={doneCount === shots.length && shots.length > 0 ? 'ok' : 'default'}>
             {doneCount}/{shots.length} shots complete
@@ -301,27 +264,13 @@ export function PlanningPanel({ project }: { project: Project }) {
             )}
           </Field>
 
-          <Field label="Handoff asset downloads">
+          {shareSupported && (
             <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-              <Button size="sm" onClick={() => handleDownloadSubtitles('srt')}>
-                Download .SRT
+              <Button size="sm" variant="primary" onClick={() => void handleNativeShare()}>
+                Share files…
               </Button>
-              <Button size="sm" onClick={() => handleDownloadSubtitles('vtt')}>
-                Download .VTT
-              </Button>
-              <Button size="sm" disabled={wavBusy} onClick={() => void handleDownloadWav()}>
-                {wavBusy ? 'Mixing WAV…' : 'Download WAV audio'}
-              </Button>
-              <Button size="sm" variant="ghost" onClick={handleDownloadBundle}>
-                Download project JSON
-              </Button>
-              {shareSupported && (
-                <Button size="sm" variant="primary" onClick={() => void handleNativeShare()}>
-                  Share files…
-                </Button>
-              )}
             </div>
-          </Field>
+          )}
         </div>
       </Panel>
     </div>

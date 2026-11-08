@@ -6,6 +6,8 @@ export type PresetId =
   | '4k-quality'
   | '4k60-master'
   | '1080p-share'
+  | 'youtube-1080p30'
+  | 'youtube-1080p60'
   | 'shorts-vertical'
   | 'insta-square-1080'
   | 'insta-portrait-4x5'
@@ -25,6 +27,8 @@ export interface ExportPreset {
   description: string;
   width: number;
   height: number;
+  /** Explicit output frame rate when specified by the preset (e.g. 30 vs 60 fps). */
+  fps?: number;
   /** Video bitrate in bits per second. These are engineering starting points. */
   videoBitrate: number;
   audioBitrate: number;
@@ -125,10 +129,11 @@ export const PRESETS: ExportPreset[] = [
   },
   {
     id: '4k60-master',
-    label: '4K Studio Master (18 Mbps)',
-    description: 'High-bitrate 3840×2160 archival master for fast terminal motion and YouTube 4K60 uploads.',
+    label: '4K Studio Master (60 fps · 18 Mbps)',
+    description: 'High-bitrate 3840×2160 60 fps archival master for fast terminal motion and YouTube 4K60 uploads.',
     width: 3840,
     height: 2160,
+    fps: 60,
     videoBitrate: 18_000_000,
     audioBitrate: 192_000,
     container: 'mp4',
@@ -137,14 +142,41 @@ export const PRESETS: ExportPreset[] = [
   },
   {
     id: 'youtube-4k-longform',
-    label: 'YouTube 4K Long-Form (16:9)',
+    label: 'YouTube 4K Long-Form (16:9 · 30 fps)',
     description: '3840×2160 16:9 MP4 tuned for YouTube 4K tutorials, coding walkthroughs, and deep-dives.',
     width: 3840,
     height: 2160,
+    fps: 30,
     videoBitrate: 14_000_000,
     audioBitrate: 192_000,
     container: 'mp4',
     codecPreference: ['h264', 'vp9', 'av1'],
+    platform: 'youtube',
+  },
+  {
+    id: 'youtube-1080p30',
+    label: 'YouTube 1080p30 (16:9 · 30 fps)',
+    description: '1920×1080 30 fps MP4 with crisp 8 Mbps video and 192 kbps stereo audio for technical lessons.',
+    width: 1920,
+    height: 1080,
+    fps: 30,
+    videoBitrate: 8_000_000,
+    audioBitrate: 192_000,
+    container: 'mp4',
+    codecPreference: ['h264', 'vp9'],
+    platform: 'youtube',
+  },
+  {
+    id: 'youtube-1080p60',
+    label: 'YouTube 1080p60 (16:9 · 60 fps)',
+    description: '1920×1080 60 fps MP4 with 12 Mbps video for smooth terminal scrolling, cursor motion, and UI demos.',
+    width: 1920,
+    height: 1080,
+    fps: 60,
+    videoBitrate: 12_000_000,
+    audioBitrate: 192_000,
+    container: 'mp4',
+    codecPreference: ['h264', 'vp9'],
     platform: 'youtube',
   },
   {
@@ -153,6 +185,7 @@ export const PRESETS: ExportPreset[] = [
     description: '1920×1080 16:9 MP4 with crisp 8 Mbps video and 192 kbps stereo audio for standard YouTube uploads.',
     width: 1920,
     height: 1080,
+    fps: 30,
     videoBitrate: 8_000_000,
     audioBitrate: 192_000,
     container: 'mp4',

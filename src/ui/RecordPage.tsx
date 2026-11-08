@@ -1508,14 +1508,12 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
           {(stage === 'recording' || stage === 'paused') &&
             (controlsHidden ? (
               <div className="rec-dock-actions">
-                <Button
-                  size="sm"
-                  variant="danger"
-                  onClick={() => void stopTake()}
-                  title="Shortcut: S"
-                >
-                  <span aria-hidden>■</span> {openEditorAfterStop && capMode !== 'instant' ? 'Stop & edit' : 'Stop & review'}
-                </Button>
+                <RecordingActions
+                  paused={stage === 'paused'}
+                  openEditor={openEditorAfterStop && capMode !== 'instant'}
+                  onPause={togglePause}
+                  onStop={() => void stopTake()}
+                />
                 <Button
                   size="sm"
                   variant="ghost"

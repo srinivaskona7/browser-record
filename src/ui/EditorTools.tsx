@@ -249,7 +249,7 @@ export function EditorToolLibrary({ tool, project, clip }: { tool: EditorTool; p
       {tool === 'presenter' ? (
         <div className="stack" style={{ gap: 10 }} data-testid="presenter-reframe-panel">
           <p className="field-hint">
-            06 · Presenter &amp; Reframe: choose camera bubble shape, layout, corner anchor, safe-area guides, or drag the
+            Presenter &amp; Reframe: choose camera bubble shape, layout, corner anchor, safe-area guides, or drag the
             bubble directly on the preview canvas.
           </p>
           <div className="stack" style={{ gap: 6 }}>
@@ -399,47 +399,139 @@ export function EditorToolLibrary({ tool, project, clip }: { tool: EditorTool; p
           {fontErr && <div className="warn-card">{fontErr}</div>}
         </div>
       )}
-      {tool === 'effects' && clip && (
-        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-          <Button
-            size="sm"
-            onClick={() =>
-              apply('Add blur mask', (p) =>
-                ops.addMask(p, clip.id, { x: 0.35, y: 0.35, width: 0.3, height: 0.15, mode: 'blur', strength: 16, feather: 0 }),
-              )
-            }
-          >
-            + Blur mask
-          </Button>
-          <Button
-            size="sm"
-            onClick={() =>
-              apply('Add pixelate mask', (p) =>
-                ops.addMask(p, clip.id, { x: 0.35, y: 0.35, width: 0.3, height: 0.15, mode: 'pixelate', strength: 16, feather: 0 }),
-              )
-            }
-          >
-            + Pixelate mask
-          </Button>
-          <Button
-            size="sm"
-            onClick={() =>
-              apply('Add solid mask', (p) =>
-                ops.addMask(p, clip.id, {
-                  x: 0.35,
-                  y: 0.35,
-                  width: 0.3,
-                  height: 0.15,
-                  mode: 'solid',
-                  strength: 20,
-                  color: '#000000',
-                  feather: 0,
-                }),
-              )
-            }
-          >
-            + Solid cover
-          </Button>
+      {tool === 'effects' && (
+        <div className="stack" style={{ gap: 8 }}>
+          <span className="field-label">1 · Terminal Zoom / Pan</span>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+            <Button
+              size="sm"
+              disabled={!clip}
+              onClick={() =>
+                clip &&
+                apply('Zoom 1.5x at playhead', (p) =>
+                  ops.updateClipDeep(ops.addZoomHighlight(p, clip.id, playhead, 3 * TICKS_PER_SECOND, 1.5), clip.id, {
+                    transform: { scale: 1.5 },
+                  }),
+                )
+              }
+            >
+              + Zoom 1.5×
+            </Button>
+            <Button
+              size="sm"
+              disabled={!clip}
+              onClick={() =>
+                clip &&
+                apply('Zoom 2.0x at playhead', (p) =>
+                  ops.updateClipDeep(ops.addZoomHighlight(p, clip.id, playhead, 3 * TICKS_PER_SECOND, 2.0), clip.id, {
+                    transform: { scale: 2.0 },
+                  }),
+                )
+              }
+            >
+              + Zoom 2.0×
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={!clip}
+              onClick={() =>
+                clip &&
+                apply('Reset zoom', (p) =>
+                  ops.updateClip(p, clip.id, {
+                    transform: { ...clip.transform, scale: 1, x: 0.5, y: 0.5 },
+                    keyframes: clip.keyframes.filter((k) => k.target !== 'zoom'),
+                  }),
+                )
+              }
+            >
+              Reset 1.0×
+            </Button>
+          </div>
+          <span className="field-label">2 · Privacy Mask (secrets &amp; tokens)</span>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+            <Button
+              size="sm"
+              disabled={!clip}
+              onClick={() =>
+                clip &&
+                apply('Add blur mask', (p) =>
+                  ops.addMask(p, clip.id, { x: 0.35, y: 0.35, width: 0.3, height: 0.15, mode: 'blur', strength: 16, feather: 0 }),
+                )
+              }
+            >
+              + Blur mask
+            </Button>
+            <Button
+              size="sm"
+              disabled={!clip}
+              onClick={() =>
+                clip &&
+                apply('Add pixelate mask', (p) =>
+                  ops.addMask(p, clip.id, { x: 0.35, y: 0.35, width: 0.3, height: 0.15, mode: 'pixelate', strength: 16, feather: 0 }),
+                )
+              }
+            >
+              + Pixelate mask
+            </Button>
+            <Button
+              size="sm"
+              disabled={!clip}
+              onClick={() =>
+                clip &&
+                apply('Add solid mask', (p) =>
+                  ops.addMask(p, clip.id, {
+                    x: 0.35,
+                    y: 0.35,
+                    width: 0.3,
+                    height: 0.15,
+                    mode: 'solid',
+                    strength: 20,
+                    color: '#000000',
+                    feather: 0,
+                  }),
+                )
+              }
+            >
+              + Solid cover
+            </Button>
+          </div>
+          <span className="field-label">3 · Callout &amp; Arrow</span>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+            <Button
+              size="sm"
+              onClick={() => {
+                let id = '';
+                apply('Add callout', (p) => {
+                  const existing = p.tracks.find((t) => t.name === 'Overlays' && !t.locked && !t.hidden);
+                  const track = existing ?? createTrack('video', 'Overlays');
+                  const res = ops.addTitleClip(existing ? p : ops.addTrack(p, track), track.id, playhead, 'Key step', 'callout');
+                  id = res.clipId;
+                  return res.project;
+                });
+                if (id) useEditor.getState().selectClips([id]);
+              }}
+            >
+              + Callout box
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                let id = '';
+                apply('Add arrow', (p) => {
+                  const existing = p.tracks.find((t) => t.name === 'Overlays' && !t.locked && !t.hidden);
+                  const track = existing ?? createTrack('video', 'Overlays');
+                  const res = ops.addArrowClip(existing ? p : ops.addTrack(p, track), track.id, playhead);
+                  id = res.clipId;
+                  return res.project;
+                });
+                if (id) useEditor.getState().selectClips([id]);
+              }}
+            >
+              + Arrow
+            </Button>
+          </div>
+          <span className="field-label" style={{ marginTop: 4 }}>Video effects catalog</span>
         </div>
       )}
       {tool === 'audio' ? (
