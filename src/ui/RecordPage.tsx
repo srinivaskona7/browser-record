@@ -91,6 +91,21 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
   const preparedSpecsRef = useRef<CaptureAssetSpec[] | null>(null);
   const [preparedSummary, setPreparedSummary] = useState<PreparedSourceSummary | null>(null);
   const floatingCameraRef = useRef<FloatingCameraSession | null>(null);
+  const pipHandlersRef = useRef<{
+    start: () => void;
+    togglePause: () => void;
+    stopTake: () => void;
+    restart: () => void;
+    discard: () => void;
+    toggleMicMute: () => void;
+  }>({
+    start: () => undefined,
+    togglePause: () => undefined,
+    stopTake: () => undefined,
+    restart: () => undefined,
+    discard: () => undefined,
+    toggleMicMute: () => undefined,
+  });
   const [floatingCameraOpen, setFloatingCameraOpen] = useState(false);
   const floatingSupport = useMemo(() => detectFloatingCameraSupport(), []);
   const [micOn, setMicOn] = useState(true);
@@ -415,15 +430,11 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       setFloatingCameraOpen(false);
       return;
     }
-    if (!cameraOn) {
-      setError('Turn Camera on first to open the floating camera bubble.');
-      return;
-    }
     try {
-      const existingStream = cameraStream.current ?? cameraPreviewStream.current;
+      const existingStream = cameraOn ? (cameraStream.current ?? cameraPreviewStream.current) : null;
       // CRITICAL: Call openFloatingCamera synchronously on the click gesture BEFORE awaiting
       // getUserMedia so Chrome's transient user activation is still active for requestWindow().
-      const streamPromise = existingStream ? undefined : startCameraPreview();
+      const streamPromise = cameraOn && !existingStream ? startCameraPreview() : undefined;
       const pipSession = await openFloatingCamera({
         stream: existingStream,
         streamPromise,
@@ -432,10 +443,16 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         initialControlState: {
           stage,
           elapsedText: formatElapsed(((stats?.elapsedMs ?? 0) / 1000)),
-          previewHidden: hideFloatingPreview,
+          previewHidden: hideFloatingPreview || !cameraOn,
+          micMuted,
+          hasCamera: cameraOn,
         },
-        onTogglePause: () => togglePause(),
-        onStop: () => void stopTake(),
+        onStartRecord: () => pipHandlersRef.current.start(),
+        onTogglePause: () => pipHandlersRef.current.togglePause(),
+        onStop: () => pipHandlersRef.current.stopTake(),
+        onRestart: () => pipHandlersRef.current.restart(),
+        onDiscard: () => pipHandlersRef.current.discard(),
+        onToggleMic: () => pipHandlersRef.current.toggleMicMute(),
         onToggleHidePreview: () => setHideFloatingPreview((prev) => !prev),
         onUpdatePresenter: (patch) => setPresenter((prev) => ({ ...prev, ...patch })),
         onClose: () => {
@@ -1045,6 +1062,16 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
 
   /** Restart = confirmed discard, then a fresh countdown once the discard has returned the stage to idle. */
   const [restartOpen, setRestartOpen] = useState(false);
+  useEffect(() => {
+    pipHandlersRef.current = {
+      start: () => void start(),
+      togglePause: () => togglePause(),
+      stopTake: () => void stopTake(),
+      restart: () => setRestartOpen(true),
+      discard: () => setDiscardOpen(true),
+      toggleMicMute: () => toggleMicMute(),
+    };
+  });
   const restartPending = useRef(false);
   useEffect(() => {
     if (restartPending.current && stage === 'idle') {
@@ -1262,7 +1289,9 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     floatingCameraRef.current?.updateRecordingState({
       stage,
       elapsedText: stage === 'countdown' ? `${countdown}s` : formatElapsed(elapsedSeconds),
-      previewHidden: hideFloatingPreview,
+      previewHidden: hideFloatingPreview || !cameraOn,
+      micMuted,
+      hasCamera: cameraOn,
     });
     if (typeof document !== 'undefined') {
       if (stage === 'recording') {
@@ -1273,7 +1302,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         document.title = 'Browser 4K Studio';
       }
     }
-  }, [stage, countdown, elapsedSeconds, hideFloatingPreview]);
+  }, [stage, countdown, elapsedSeconds, hideFloatingPreview, micMuted, cameraOn]);
 
   if (!project) {
     if (hidden) return null;
@@ -1445,10 +1474,20 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
           at the bottom of the form: a user who has just picked devices should
           not have to scroll 700 px to start. */}
       {stage === 'idle' && (
-        <div className="start-dock">
+        <div className="start-dock" role="toolbar" aria-label="Cap stealth recording launcher">
           <Button variant="primary" onClick={start}>
             <span aria-hidden>●</span> Start recording
           </Button>
+          {floatingSupport.supported && (
+            <Button
+              variant={floatingCameraOpen ? 'primary' : 'ghost'}
+              aria-pressed={floatingCameraOpen}
+              onClick={() => void toggleFloatingCamera()}
+              title="Pop out always-on-top Cap Stealth Controller (Record, Pause, Stop, Restart, Discard & Camera Bubble)"
+            >
+              {floatingCameraOpen ? '✕ Close Stealth Controller' : '⧉ Cap Stealth Controller'}
+            </Button>
+          )}
           <span className="field-hint">{openEditorAfterStop ? 'Stop → Edit' : 'Stop → Review take'} · {countdownSeconds ? `${countdownSeconds}s countdown` : 'No countdown'}</span>
         </div>
       )}
@@ -1632,13 +1671,42 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
             ) : (
               <div className="rec-dock-actions">
                 <RecordingActions paused={stage === 'paused'} openEditor={openEditorAfterStop && capMode !== 'instant'} onPause={togglePause} onStop={() => void stopTake()} />
-                {cameraOn && floatingSupport.supported && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="rec-restart"
+                  onClick={() => setRestartOpen(true)}
+                  aria-label="Restart take"
+                  title="Restart: discards this take, then counts down again"
+                >
+                  ↻ Restart
+                </Button>
+                {micOn && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={toggleMicMute}
+                    aria-label={micMuted ? 'Unmute the microphone' : 'Mute the microphone'}
+                    title={micMuted ? 'Microphone is muted in the recording' : 'Mute the microphone'}
+                  >
+                    {micMuted ? 'Unmute' : 'Mute'}
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setDiscardOpen(true)}
+                  title="Abandon this take without keeping it"
+                >
+                  Discard
+                </Button>
+                {floatingSupport.supported && (
                   <Button
                     size="sm"
                     variant={floatingCameraOpen ? 'primary' : 'ghost'}
                     aria-pressed={floatingCameraOpen}
                     onClick={() => void toggleFloatingCamera()}
-                    title="Pop out floating Picture-in-Picture camera & controls across browser tabs"
+                    title="Pop out floating Cap Stealth Controller & camera across browser tabs"
                   >
                     {floatingCameraOpen ? '✕ Close PiP' : '⧉ Float PiP'}
                   </Button>
@@ -1677,45 +1745,16 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                         {hideFloatingPreview ? 'Show floating preview' : 'Hide floating preview'}
                       </Button>
                     )}
-                    {cameraOn && floatingClosedDuringTake && !floatingCameraOpen && (
+                    {floatingClosedDuringTake && !floatingCameraOpen && (
                       <Button
                         size="sm"
                         variant="ghost"
                         onClick={() => void toggleFloatingCamera()}
-                        title="Reopen the floating Document PiP camera & controls window"
+                        title="Reopen the floating Cap Stealth Controller window"
                       >
                         Reopen floating controls
                       </Button>
                     )}
-                    {micOn && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={toggleMicMute}
-                        aria-label={micMuted ? 'Unmute the microphone' : 'Mute the microphone'}
-                        title={micMuted ? 'Microphone is muted in the recording' : 'Mute the microphone'}
-                      >
-                        {micMuted ? 'Unmute' : 'Mute'}
-                      </Button>
-                    )}
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="rec-restart"
-                      onClick={() => setRestartOpen(true)}
-                      aria-label="Restart take"
-                      title="Restart: discards this take, then counts down again"
-                    >
-                      ↻ Restart
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => setDiscardOpen(true)}
-                      title="Abandon this take without keeping it"
-                    >
-                      Discard
-                    </Button>
                   </div>
                 </details>
                 <Button
@@ -1769,7 +1808,6 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
               {([
                 { id: 'screen', iconName: 'screen' as IconName, label: 'Display' },
                 { id: 'window', iconName: 'window' as IconName, label: 'Window' },
-                { id: 'tab', iconName: 'tab' as IconName, label: 'Browser tab' },
                 { id: 'camera', iconName: 'camera' as IconName, label: 'Camera only' },
                 { id: 'audio', iconName: 'mic' as IconName, label: 'Audio only' },
               ] as const).map((mode) => (
@@ -1808,9 +1846,9 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                 {preparedSummary
                   ? `Selected: ${preparedSummary.sourceName} (${preparedSummary.dimensions})`
                   : screenOn
-                    ? 'No display/window selected yet. Click Choose source or Start recording to open the browser picker.'
+                    ? 'Cap Stealth Capture: Display or Window with independent camera & mic tracks (no Meet tab-sharing banner).'
                     : cameraOn
-                      ? 'Camera-only mode — records your camera without screen sharing.'
+                      ? 'Camera-only mode — records your camera without screen capture.'
                       : 'Audio-only mode — records narration from your microphone.'}
               </p>
               {stage === 'idle' && (
@@ -1826,22 +1864,20 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
             </div>
 
             <details className="record-details">
-              <summary>Capture guidance<span>Across tabs, windows &amp; displays</span></summary>
+              <summary>Cap Stealth Controller<span>Stealth controls, display &amp; window rules</span></summary>
             <div className="hint-card stack" style={{ gap: 8, marginTop: 8 }} role="region" aria-label="Across tabs and display capture">
               <div className="row" style={{ justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-                <strong style={{ fontSize: 12.5 }}>What makes capture work across tabs &amp; apps</strong>
+                <strong style={{ fontSize: 12.5 }}>Cap Stealth Controller &amp; capture rules</strong>
                 <Badge tone={actualReturnedSurface.surface ? 'ok' : 'neutral'}>
-                  {actualReturnedSurface.surface ? `Chrome returned: ${actualReturnedSurface.label}` : 'Source: waiting for Chrome picker'}
+                  {actualReturnedSurface.surface ? `Captured: ${actualReturnedSurface.label}` : 'Cap Stealth Ready'}
                 </Badge>
               </div>
               <div className="field-hint" style={{ lineHeight: 1.5 }}>
-                • <strong>Entire screen (Display)</strong> is the right mode for DevOps lessons when moving between Chrome tabs, your terminal, and diagrams on the same display.
+                • <strong>Display</strong> captures your full workspace across terminals, browsers, and desktop apps without a Meet-style tab-switching banner.
                 <br />
-                • <strong>Window</strong> follows the selected application window.
+                • <strong>Window</strong> captures a single application window with a separate movable camera layer in the Studio editor.
                 <br />
-                • <strong>Browser tab</strong> captures the selected tab — use Chrome&apos;s <strong>&ldquo;Share this tab instead&rdquo;</strong> bar when switching tabs.
-                <br />
-                • <strong>Floating PiP &amp; controls</strong>: Open the floating camera via Document PiP from an explicit click. Closing the floating window leaves the take running. Chrome lets you move the PiP window, while the editor controls the separate presenter layer in the export.
+                • <strong>Cap Stealth Controller</strong>: Control <strong>Record, Pause/Resume, Stop &amp; Process, Restart, Discard, Mute, and Bubble Shape</strong> from the floating Cap Stealth Controller pill or Document PiP window.
               </div>
               <div className="row" style={{ gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
                 <Select

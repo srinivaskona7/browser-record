@@ -141,6 +141,8 @@ export interface FloatingRecordingControlState {
   stage: 'idle' | 'selecting' | 'ready' | 'countdown' | 'recording' | 'paused' | 'finishing' | 'postRecord';
   elapsedText: string;
   previewHidden?: boolean;
+  micMuted?: boolean;
+  hasCamera?: boolean;
 }
 
 export interface FloatingCameraSession {
@@ -203,7 +205,7 @@ const PIP_SHAPE_ORDER: Array<PresenterProps['shape']> = [
 ];
 
 /**
- * Opens an always-on-top floating camera & controls window from an explicit user click,
+ * Opens an always-on-top Cap Stealth Controller & Camera window from an explicit user click,
  * requesting the PiP window synchronously on the user gesture before awaiting any
  * pending camera stream so Chrome never drops transient user activation.
  */
@@ -214,8 +216,12 @@ export async function openFloatingCamera(options: {
   presenter: PresenterProps;
   initialControlState?: FloatingRecordingControlState;
   preferInitialWindowPlacement?: boolean;
+  onStartRecord?: () => void;
   onTogglePause?: () => void;
   onStop?: () => void;
+  onRestart?: () => void;
+  onDiscard?: () => void;
+  onToggleMic?: () => void;
   onToggleHidePreview?: () => void;
   onUpdatePresenter?: (patch: Partial<PresenterProps>) => void;
   onClose?: () => void;
@@ -236,7 +242,7 @@ export async function openFloatingCamera(options: {
     if (typeof document !== 'undefined') {
       copyStylesToPipDocument(document, doc);
     }
-    doc.title = 'Browser 4K Studio — Floating Camera';
+    doc.title = 'Cap Stealth Controller — Browser 4K Studio';
     doc.body.style.margin = '0';
     doc.body.style.width = '100vw';
     doc.body.style.height = '100vh';
@@ -307,17 +313,17 @@ export async function openFloatingCamera(options: {
     stageWrap.appendChild(badge);
     stageWrap.appendChild(hiddenNotice);
 
-    // Floating control bar inside Document PiP (timer + Pause/Resume + Stop + Shape + Hide preview)
+    // Cap Stealth Controller bar inside Document PiP (Record / Pause / Stop / Restart / Discard / Mic / Shape / Stealth)
     const bar = doc.createElement('div');
     bar.setAttribute('role', 'toolbar');
-    bar.setAttribute('aria-label', 'Floating recording controls');
+    bar.setAttribute('aria-label', 'Cap stealth recording controls');
     bar.style.display = 'flex';
     bar.style.alignItems = 'center';
     bar.style.justifyContent = 'space-between';
     bar.style.flexWrap = 'wrap';
     bar.style.gap = '6px';
     bar.style.padding = '6px 8px';
-    bar.style.borderRadius = '10px';
+    bar.style.borderRadius = '12px';
     bar.style.background = '#16141e';
     bar.style.border = '1px solid #322d41';
     bar.style.fontSize = '11.5px';
@@ -332,37 +338,66 @@ export async function openFloatingCamera(options: {
     btnWrap.style.flexWrap = 'wrap';
     btnWrap.style.gap = '4px';
 
-    const styleBtn = (btn: HTMLButtonElement, danger = false) => {
+    const styleBtn = (btn: HTMLButtonElement, tone: 'default' | 'danger' | 'primary' = 'default') => {
       btn.type = 'button';
       btn.style.minHeight = '26px';
       btn.style.padding = '3px 7px';
-      btn.style.borderRadius = '6px';
-      btn.style.border = '1px solid ' + (danger ? '#ff5c7c' : '#322d41');
-      btn.style.background = danger ? '#da3633' : '#1c1927';
+      btn.style.borderRadius = '7px';
+      btn.style.border =
+        '1px solid ' + (tone === 'danger' ? '#ff5c7c' : tone === 'primary' ? '#c3adff' : '#322d41');
+      btn.style.background =
+        tone === 'danger' ? '#da3633' : tone === 'primary' ? '#2c2247' : '#1c1927';
       btn.style.color = '#f5f2ff';
       btn.style.fontSize = '11px';
       btn.style.fontWeight = '600';
       btn.style.cursor = 'pointer';
     };
 
+    const recordBtn = doc.createElement('button');
+    styleBtn(recordBtn, 'danger');
+    recordBtn.textContent = '● Record';
+    recordBtn.title = 'Start recording from Cap Stealth Controller';
+    recordBtn.addEventListener('click', () => options.onStartRecord?.());
+
     const pauseBtn = doc.createElement('button');
-    styleBtn(pauseBtn, false);
+    styleBtn(pauseBtn, 'default');
     pauseBtn.addEventListener('click', () => options.onTogglePause?.());
 
     const stopBtn = doc.createElement('button');
-    styleBtn(stopBtn, true);
+    styleBtn(stopBtn, 'danger');
     stopBtn.textContent = 'Stop';
+    stopBtn.title = 'Stop recording and process take into Studio';
     stopBtn.addEventListener('click', () => options.onStop?.());
+
+    const restartBtn = doc.createElement('button');
+    styleBtn(restartBtn, 'default');
+    restartBtn.textContent = '↻ Restart';
+    restartBtn.title = 'Restart take from 00:00';
+    restartBtn.addEventListener('click', () => options.onRestart?.());
+
+    const discardBtn = doc.createElement('button');
+    styleBtn(discardBtn, 'default');
+    discardBtn.textContent = 'Discard';
+    discardBtn.title = 'Cancel and discard this take';
+    discardBtn.addEventListener('click', () => options.onDiscard?.());
+
+    const micBtn = doc.createElement('button');
+    styleBtn(micBtn, 'default');
+    micBtn.textContent = 'Mute';
+    micBtn.title = 'Mute or unmute microphone';
+    micBtn.addEventListener('click', () => options.onToggleMic?.());
 
     let currentPresenter = options.presenter;
     let currentState: FloatingRecordingControlState = options.initialControlState ?? {
       stage: 'idle',
       elapsedText: '00:00:00',
       previewHidden: false,
+      micMuted: false,
+      hasCamera: true,
     };
 
     const shapeBtn = doc.createElement('button');
-    styleBtn(shapeBtn, false);
+    styleBtn(shapeBtn, 'default');
     shapeBtn.textContent = `Shape: ${currentPresenter.shape}`;
     shapeBtn.title = 'Cycle presenter bubble shape across tabs';
     shapeBtn.addEventListener('click', () => {
@@ -376,13 +411,17 @@ export async function openFloatingCamera(options: {
     });
 
     const hidePreviewBtn = doc.createElement('button');
-    styleBtn(hidePreviewBtn, false);
+    styleBtn(hidePreviewBtn, 'default');
     hidePreviewBtn.textContent = 'Hide preview';
-    hidePreviewBtn.title = 'Hide floating camera preview while continuing to record the camera separately for the editor';
+    hidePreviewBtn.title = 'Switch to stealth controller bar (hide camera preview while keeping camera track recording)';
     hidePreviewBtn.addEventListener('click', () => options.onToggleHidePreview?.());
 
+    btnWrap.appendChild(recordBtn);
     btnWrap.appendChild(pauseBtn);
     btnWrap.appendChild(stopBtn);
+    btnWrap.appendChild(restartBtn);
+    btnWrap.appendChild(discardBtn);
+    btnWrap.appendChild(micBtn);
     btnWrap.appendChild(shapeBtn);
     btnWrap.appendChild(hidePreviewBtn);
     bar.appendChild(statusSpan);
@@ -406,7 +445,7 @@ export async function openFloatingCamera(options: {
     const applyLayout = () => {
       const w = pipWin.innerWidth || initialDims.width;
       const h = pipWin.innerHeight || initialDims.height;
-      const hasCam = !currentState.previewHidden;
+      const hasCam = !currentState.previewHidden && currentState.hasCamera !== false;
       activeLayout = resolvePipLayout(w, h, hasCam, prefs.layoutMode);
       doc.body.setAttribute('data-pip-layout', activeLayout);
 
@@ -435,16 +474,21 @@ export async function openFloatingCamera(options: {
     const renderControlState = (state: FloatingRecordingControlState) => {
       currentState = state;
       const active = state.stage === 'recording' || state.stage === 'paused';
-      const prefix = state.stage === 'paused' ? 'PAUSED' : state.stage === 'recording' ? 'REC' : 'LIVE';
+      const canStart = state.stage === 'idle' || state.stage === 'ready';
+      const prefix = state.stage === 'paused' ? 'PAUSED' : state.stage === 'recording' ? 'REC' : 'CAP READY';
       const labelText = `${prefix} ${state.elapsedText}`;
       statusSpan.textContent = labelText;
       badge.textContent = `● ${labelText}`;
       badge.style.display = prefs.showTimer ? 'block' : 'none';
+      recordBtn.style.display = canStart && options.onStartRecord ? 'inline-block' : 'none';
       pauseBtn.textContent = state.stage === 'paused' ? 'Resume' : 'Pause';
       pauseBtn.disabled = !active;
       stopBtn.disabled = !active && state.stage !== 'countdown';
+      restartBtn.disabled = !active;
+      discardBtn.disabled = !active && state.stage !== 'countdown';
+      micBtn.textContent = state.micMuted ? 'Unmute' : 'Mute';
       hidePreviewBtn.textContent = state.previewHidden ? 'Show preview' : 'Hide preview';
-      frame.style.display = state.previewHidden ? 'none' : 'block';
+      frame.style.display = state.previewHidden || state.hasCamera === false ? 'none' : 'block';
       hiddenNotice.style.display = state.previewHidden ? 'block' : 'none';
       applyPresenterStyleToDocPip(frame, video, currentPresenter, state.stage);
       applyLayout();

@@ -151,24 +151,29 @@ it('separates choosing a source from starting the take via the Ready confirmatio
   expect(capture.stop).toHaveBeenCalledTimes(1);
 });
 
-it('shows visible cross-tab & display capture controls, hides live screen monitor during Entire screen capture, and saves one take when Chrome stops sharing', async () => {
+it('uses Cap Stealth Controller constraints (surfaceSwitching: exclude), hides live screen monitor during Display capture, and saves one take when stopped', async () => {
   const { displayConstraints, describeReturnedSurface } = await import('../src/capabilities/detect');
   const constraints = displayConstraints({
     width: 1920,
     height: 1080,
     frameRate: 30,
     systemAudio: true,
-    surface: 'tab',
-  }) as DisplayMediaStreamOptions & { surfaceSwitching?: string; selfBrowserSurface?: string };
-  expect(constraints.surfaceSwitching).toBe('include');
+    surface: 'screen',
+  }) as DisplayMediaStreamOptions & {
+    surfaceSwitching?: string;
+    selfBrowserSurface?: string;
+    monitorTypeSurfaces?: string;
+  };
+  expect(constraints.surfaceSwitching).toBe('exclude');
   expect(constraints.selfBrowserSurface).toBe('exclude');
+  expect(constraints.monitorTypeSurfaces).toBe('include');
 
-  const tabSummary = describeReturnedSurface({
-    label: 'Tab: Kubernetes Dashboard',
-    getSettings: () => ({ displaySurface: 'browser', width: 1920, height: 1080, frameRate: 30 }),
+  const displaySummary = describeReturnedSurface({
+    label: 'Built-in Retina Display',
+    getSettings: () => ({ displaySurface: 'monitor', width: 3840, height: 2160, frameRate: 60 }),
   } as unknown as MediaStreamTrack);
-  expect(tabSummary.surface).toBe('tab');
-  expect(tabSummary.summary).toContain('Share this tab instead');
+  expect(displaySummary.surface).toBe('screen');
+  expect(displaySummary.summary).toContain('Cap Stealth Controller');
 
   let endedListener: (() => void) | undefined;
   track.addEventListener.mockImplementation((event: string, cb: () => void) => {
@@ -176,13 +181,13 @@ it('shows visible cross-tab & display capture controls, hides live screen monito
   });
 
   await startRecording();
-  // Cross-tab & display capture guidance and Chrome returned source badge are visibly rendered
+  // Cap Stealth Controller guidance and captured surface badge are visibly rendered
   expect(host.querySelector('[aria-label="Across tabs and display capture"]')).not.toBeNull();
-  expect(host.textContent).toContain('Chrome returned: Entire screen (monitor)');
+  expect(host.textContent).toContain('Captured: Display');
   // Live screen monitor is hidden during Entire screen capture to prevent hall-of-mirrors effect
   expect(host.textContent).toContain('Live screen monitor hidden during display capture');
 
-  // Stopping sharing from Chrome's native sharing bar triggers track 'ended' and saves one playable take
+  // Stopping sharing triggers track 'ended' and saves one playable take
   expect(endedListener).toBeTypeOf('function');
   await act(async () => endedListener!());
   expect(capture.stop).toHaveBeenCalledTimes(1);

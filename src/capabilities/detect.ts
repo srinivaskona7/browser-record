@@ -103,18 +103,31 @@ function offscreenCanvasSupport(): boolean {
   return typeof OffscreenCanvas !== 'undefined';
 }
 
-/** Display capture constraints. `systemAudio` is requested only when asked. */
+/**
+ * Creates a W3C CaptureController configured for Cap-style stealth capture
+ * (`no-focus-change`) so starting a recording never hijacks window focus like Google Meet.
+ */
+export function createStealthCaptureController(): unknown | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const Ctor = (window as unknown as { CaptureController?: new () => { setFocusBehavior?: (b: string) => void } })
+    .CaptureController;
+  if (!Ctor) return undefined;
+  try {
+    const controller = new Ctor();
+    controller.setFocusBehavior?.('no-focus-change');
+    return controller;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Display capture constraints configured for Cap Stealth mode (no Google Meet tab-switching banner). */
 export function displayConstraints(options: {
   width: number;
   height: number;
   frameRate: number;
   systemAudio: boolean;
   preferCurrentTab?: boolean;
-  /**
-   * Meeting-style surface choice. Chrome treats this as a preference for the
-   * picker, not a guarantee: the user still chooses, and the applied surface is
-   * read back from track settings.
-   */
   surface?: 'screen' | 'window' | 'tab';
 }): DisplayMediaStreamOptions {
   const video: MediaTrackConstraints = {
@@ -126,26 +139,28 @@ export function displayConstraints(options: {
     const displaySurface = options.surface === 'screen' ? 'monitor' : options.surface === 'window' ? 'window' : 'browser';
     (video as MediaTrackConstraints & { displaySurface?: string }).displaySurface = displaySurface;
   }
+  const controller = createStealthCaptureController();
   const constraints: DisplayMediaStreamOptions & {
     preferCurrentTab?: boolean;
     selfBrowserSurface?: string;
     surfaceSwitching?: string;
+    monitorTypeSurfaces?: string;
     systemAudio?: string;
+    controller?: unknown;
   } = {
     video,
     audio: options.systemAudio
       ? ({
-          // Chrome supports tab/system audio on some surfaces; the loopback flag
-          // is ignored where unsupported.
-          ...(options.preferCurrentTab ? {} : {}),
           echoCancellation: false,
           noiseSuppression: false,
           autoGainControl: false,
         } as MediaTrackConstraints)
       : false,
-    preferCurrentTab: options.preferCurrentTab ?? false,
+    preferCurrentTab: false,
     selfBrowserSurface: 'exclude',
-    surfaceSwitching: 'include',
+    surfaceSwitching: 'exclude',
+    monitorTypeSurfaces: 'include',
+    ...(controller ? { controller } : {}),
     ...(options.systemAudio ? { systemAudio: 'include' } : {}),
   };
   return constraints;
@@ -160,7 +175,7 @@ export function reportedSurface(settings: MediaTrackSettings): 'screen' | 'windo
   return null;
 }
 
-/** Human-readable description of the surface Chrome actually returned. */
+/** Human-readable description of the surface captured under the Cap Stealth Controller model. */
 export function describeReturnedSurface(track: MediaStreamTrack | null | undefined): {
   surface: 'screen' | 'window' | 'tab' | null;
   rawDisplaySurface: string;
@@ -171,8 +186,8 @@ export function describeReturnedSurface(track: MediaStreamTrack | null | undefin
     return {
       surface: null,
       rawDisplaySurface: 'none',
-      label: 'No source selected yet',
-      summary: 'Chrome has not returned a display, window, or tab stream yet.',
+      label: 'Cap Stealth Controller ready',
+      summary: 'Select Display or Window when starting. Control Pause, Resume, Restart, and Stop & Process from the Cap Stealth Controller.',
     };
   }
   const settings = (track.getSettings?.() ?? {}) as MediaTrackSettings & { displaySurface?: string };
@@ -182,36 +197,36 @@ export function describeReturnedSurface(track: MediaStreamTrack | null | undefin
   const h = settings.height ?? 0;
   const fps = settings.frameRate ? Math.round(settings.frameRate) : 30;
   const dims = w && h ? `${w}×${h} @ ${fps} fps` : `${fps} fps`;
-  const trackLabel = track.label || 'Shared surface';
+  const trackLabel = track.label || 'Captured surface';
   if (surface === 'screen') {
     return {
       surface,
       rawDisplaySurface,
-      label: `Entire screen (monitor) — ${trackLabel}`,
-      summary: `Chrome returned Entire screen (${dims}). Captures across Chrome tabs, terminal, and desktop apps on this display.`,
+      label: `Display (${dims}) — ${trackLabel}`,
+      summary: `Capturing Display (${dims}) via Cap Stealth Controller across apps and workspaces.`,
     };
   }
   if (surface === 'window') {
     return {
       surface,
       rawDisplaySurface,
-      label: `Window (window) — ${trackLabel}`,
-      summary: `Chrome returned Application window (${dims}). Follows this selected window only.`,
+      label: `Window (${dims}) — ${trackLabel}`,
+      summary: `Capturing Application Window (${dims}) via Cap Stealth Controller with independent camera layer.`,
     };
   }
   if (surface === 'tab') {
     return {
       surface,
       rawDisplaySurface,
-      label: `Browser tab (browser) — ${trackLabel}`,
-      summary: `Chrome returned Browser tab (${dims}). Use Chrome's "Share this tab instead" bar to switch which tab is captured.`,
+      label: `Surface (${dims}) — ${trackLabel}`,
+      summary: `Capturing ${trackLabel} (${dims}) via Cap Stealth Controller. Use Pause, Restart, or Stop & Process from the Cap controller.`,
     };
   }
   return {
     surface: null,
     rawDisplaySurface,
     label: trackLabel,
-    summary: `Chrome returned ${trackLabel} (${dims}).`,
+    summary: `Capturing ${trackLabel} (${dims}) via Cap Stealth Controller.`,
   };
 }
 
