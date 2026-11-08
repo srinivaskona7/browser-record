@@ -140,6 +140,13 @@ export function EditPage() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
+      if (event.key === 'Escape' && focusMode) {
+        if (!target || !/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) {
+          event.preventDefault();
+          setFocusMode(false);
+          return;
+        }
+      }
       if (target && /^(INPUT|TEXTAREA|SELECT|BUTTON|A)$/.test(target.tagName)) return;
       if (target?.isContentEditable) return;
       const project = useEditor.getState().project;

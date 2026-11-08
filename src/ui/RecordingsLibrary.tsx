@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSession } from '../app/session';
 import { useEditor } from '../project/store';
 import { downloadBlob, formatBytes } from '../app/actions';
-import { openExistingProject } from '../app/bootstrap';
+import { ensureDraftProject, openExistingProject } from '../app/bootstrap';
 import { buildAssetsFromManifest, recoverInterruptedTake } from '../capture/recorder';
 import { createTrack } from '../project/factory';
 import * as ops from '../project/ops';
@@ -11,6 +11,7 @@ import { takeIdsOf } from '../workspace/takeRefs';
 import type { TakeSummary } from '../workspace/types';
 import {
   committedBytes,
+  copyFile,
   deleteTake,
   executeClearUnusedPlan,
   listProjectFolders,
@@ -20,6 +21,7 @@ import {
   projectPath,
   readFile,
   renameTake,
+  writeTakeManifest,
   type ClearUnusedPlan,
   type ExecuteClearUnusedResult,
 } from '../workspace/workspace';
@@ -249,14 +251,45 @@ export function RecordingsLibrary({
 
   const handleAppendToTimeline = async (item: EnrichedTakeItem) => {
     if (!workspace) return;
-    if (currentProjectFolder !== item.projectFolder) {
-      await openExistingProject(item.projectFolder);
+    let targetFolder = currentProjectFolder;
+    if (!targetFolder || !useEditor.getState().project) {
+      const ensured = await ensureDraftProject();
+      targetFolder = ensured.folder;
     }
     const report =
       item.status === 'Recoverable'
         ? await recoverInterruptedTake(workspace.root, item.projectFolder, item.take.takeId)
         : null;
-    const builtAssets = report ? report.assets : buildAssetsFromManifest(item.take.manifest);
+    const manifest = report ? report.manifest : item.take.manifest;
+    const builtAssets = report ? report.assets : buildAssetsFromManifest(manifest);
+
+    // If appending a take from another project, copy its files into the current project folder
+    // so the current project stays active and owns the media paths referenced by its timeline.
+    if (targetFolder && targetFolder !== item.projectFolder) {
+      await writeTakeManifest(workspace.root, targetFolder, {
+        ...manifest,
+        projectId: useEditor.getState().project?.id ?? manifest.projectId,
+      });
+      for (const rec of manifest.assets) {
+        await copyFile(
+          workspace.root,
+          projectPath(item.projectFolder, rec.path),
+          workspace.root,
+          projectPath(targetFolder, rec.path),
+        ).catch(() => undefined);
+        for (const seg of rec.segments) {
+          if (seg.path !== rec.path) {
+            await copyFile(
+              workspace.root,
+              projectPath(item.projectFolder, seg.path),
+              workspace.root,
+              projectPath(targetFolder, seg.path),
+            ).catch(() => undefined);
+          }
+        }
+      }
+    }
+
     let insertedAt = 0;
     let firstClipId: string | undefined;
     apply(`Add take ${item.label} to timeline`, (p) => {
