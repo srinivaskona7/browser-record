@@ -1,38 +1,47 @@
-/* Shared Design Tokens for Browser Record (Cap Recorder + Instagram Edits Editor) */
+/* Shared Design Tokens for Browser 4K Studio (Cap Recorder + Instagram Edits Editor) */
 :root {
-  /* Surfaces & Backgrounds (Dark Default) */
-  --token-bg-app: #090c10;
-  --token-bg-elevated: rgba(19, 24, 32, 0.88);
-  --token-bg-card: #121721;
-  --token-bg-card-hover: #19202e;
-  --token-bg-pill: #1c2433;
-  --token-bg-glass: rgba(18, 23, 33, 0.78);
+  /* Surfaces & Backgrounds (Browser 4K Studio Dark Default) */
+  --token-bg-app: #111018;
+  --token-bg-nav: #16141e;
+  --token-bg-elevated: rgba(22, 20, 30, 0.92);
+  --token-bg-card: #1c1927;
+  --token-bg-card-hover: #231f30;
+  --token-bg-control: #231f30;
+  --token-bg-floating: rgba(22, 20, 30, 0.96);
 
   /* Borders & Dividers */
-  --token-border-subtle: rgba(255, 255, 255, 0.08);
-  --token-border-strong: rgba(255, 255, 255, 0.16);
-  --token-border-focus: #3b82f6;
+  --token-border-subtle: rgba(50, 45, 65, 0.65);
+  --token-border-default: #322d41;
+  --token-border-strong: #463f5b;
+  --token-border-focus: #c3adff;
 
   /* Text Hierarchy */
-  --token-text-primary: #f3f6fc;
-  --token-text-secondary: #9ba6b8;
-  --token-text-muted: #687385;
+  --token-text-primary: #f5f3fa;
+  --token-text-secondary: #bab3cc;
+  --token-text-muted: #827b96;
 
-  /* Brand & Semantic Accents */
-  --token-accent-primary: #3b82f6;
-  --token-accent-hover: #2563eb;
-  --token-danger: #ef4444;
-  --token-danger-bg: rgba(239, 68, 68, 0.14);
-  --token-success: #22c55e;
-  --token-warning: #f59e0b;
+  /* Accents & Status */
+  --token-accent-brand: #c3adff;
+  --token-accent-brand-hover: #d4c4ff;
+  --token-accent-primary-action: #dafa9c;
+  --token-accent-primary-action-hover: #e5fcb5;
+  --token-accent-primary-ink: #111018;
+  --token-accent-record: #ef4444;
+  --token-accent-record-glow: rgba(239, 68, 68, 0.28);
+  --token-accent-success: #34d399;
+  --token-accent-warn: #f59e0b;
 
   /* Radii */
   --token-radius-xs: 6px;
   --token-radius-sm: 8px;
   --token-radius-md: 12px;
   --token-radius-lg: 16px;
-  --token-radius-xl: 22px;
+  --token-radius-xl: 20px;
   --token-radius-pill: 999px;
+
+  /* Elevation / Shadows */
+  --token-shadow-card: 0 16px 40px rgba(7, 6, 12, 0.48), 0 1px 0 rgba(255, 255, 255, 0.05) inset;
+  --token-shadow-pill: 0 12px 32px rgba(7, 6, 12, 0.62), 0 0 0 1px rgba(195, 173, 255, 0.14);
 
   /* Spacing Scale */
   --token-space-1: 4px;
@@ -43,35 +52,34 @@
   --token-space-6: 24px;
 
   /* Typography */
-  --token-font-xs: 11px;
-  --token-font-sm: 12.5px;
-  --token-font-md: 13.5px;
-  --token-font-lg: 16px;
-  --token-font-xl: 20px;
-
-  /* Layout Dimensions */
-  --token-cap-panel-width: 410px;
-  --token-edits-rail-width: 76px;
-  --token-edits-library-width: 260px;
-  --token-edits-inspector-width: 300px;
-
-  /* Shadows */
-  --token-shadow-card: 0 18px 42px rgba(0, 0, 0, 0.45), 0 1px 0 rgba(255, 255, 255, 0.06) inset;
-  --token-shadow-pill: 0 12px 32px rgba(0, 0, 0, 0.55);
+  --token-font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --token-font-mono: 'JetBrains Mono', 'SFMono-Regular', ui-monospace, Menlo, monospace;
 }
 
-:root[data-theme='light'] {
-  --token-bg-app: #f4f6fa;
+[data-theme='light'] {
+  --token-bg-app: #f6f7f9;
+  --token-bg-nav: #ffffff;
   --token-bg-elevated: rgba(255, 255, 255, 0.92);
   --token-bg-card: #ffffff;
   --token-bg-card-hover: #f1f5f9;
-  --token-bg-pill: #e2e8f0;
-  --token-bg-glass: rgba(255, 255, 255, 0.85);
-  --token-border-subtle: rgba(15, 23, 42, 0.09);
-  --token-border-strong: rgba(15, 23, 42, 0.18);
+  --token-bg-control: #eef2f6;
+  --token-bg-floating: rgba(255, 255, 255, 0.96);
+
+  --token-border-subtle: rgba(15, 23, 42, 0.08);
+  --token-border-default: rgba(15, 23, 42, 0.14);
+  --token-border-strong: rgba(15, 23, 42, 0.24);
+  --token-border-focus: #6d28d9;
+
   --token-text-primary: #0f172a;
   --token-text-secondary: #475569;
   --token-text-muted: #64748b;
+
+  --token-accent-brand: #6d28d9;
+  --token-accent-brand-hover: #5b21b6;
+  --token-accent-primary-action: #16a34a;
+  --token-accent-primary-action-hover: #15803d;
+  --token-accent-primary-ink: #ffffff;
+
   --token-shadow-card: 0 14px 34px rgba(15, 23, 42, 0.08), 0 1px 0 rgba(255, 255, 255, 0.8) inset;
   --token-shadow-pill: 0 10px 26px rgba(15, 23, 42, 0.14);
 }

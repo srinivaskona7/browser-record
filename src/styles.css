@@ -4,46 +4,50 @@
 @theme {
   --font-sans: 'Inter var', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
-  --color-ink-950: #080a0c;
-  --color-ink-900: #0c1013;
-  --color-ink-850: #11161a;
-  --color-ink-800: #161c21;
-  --color-ink-700: #1f272e;
-  --color-ink-600: #2c363f;
-  --color-ink-500: #47535e;
-  --color-ink-400: #6b7783;
-  --color-ink-300: #98a3ae;
-  --color-ink-200: #c4ccd4;
-  --color-ink-100: #e6eaee;
-  --color-accent-500: #ffb020;
-  --color-accent-400: #ffc44d;
-  --color-accent-300: #ffd47a;
-  --color-cyan-500: #3ac8d4;
-  --color-danger-500: #ef5b5b;
-  --color-ok-500: #4ec9a6;
+  --color-ink-950: #111018;
+  --color-ink-900: #16141e;
+  --color-ink-850: #1c1927;
+  --color-ink-800: #231f30;
+  --color-ink-700: #2b263b;
+  --color-ink-600: #322d41;
+  --color-ink-500: #463f5b;
+  --color-ink-400: #827b96;
+  --color-ink-300: #bab3cc;
+  --color-ink-200: #dcd6eb;
+  --color-ink-100: #f5f3fa;
+  --color-accent-500: #dafa9c;
+  --color-accent-400: #e5fcb5;
+  --color-accent-300: #c3adff;
+  --color-cyan-500: #c3adff;
+  --color-danger-500: #ef4444;
+  --color-ok-500: #34d399;
 }
 
 :root {
   color-scheme: dark;
-  --surface-0: #0a0d10;
-  --surface-1: #10151a;
-  --surface-2: #161d23;
-  --surface-3: #1d262d;
-  --line: #263039;
-  --text-1: #eef2f5;
-  --text-2: #a7b2bb;
-  --text-3: #7c8792;
-  --accent: #ffb020;
-  --accent-ink: #1a1206;
-  --cyan: #3ac8d4;
-  --danger: #ef5b5b;
-  --ok: #4ec9a6;
-  --shadow: 0 18px 40px -22px rgba(0, 0, 0, 0.85);
+  --surface-0: #111018;
+  --surface-nav: #16141e;
+  --surface-1: #1c1927;
+  --surface-2: #231f30;
+  --surface-3: #2b263b;
+  --line: #322d41;
+  --text-1: #f5f3fa;
+  --text-2: #bab3cc;
+  --text-3: #827b96;
+  --lavender: #c3adff;
+  --lime: #dafa9c;
+  --accent: #dafa9c;
+  --accent-ink: #111018;
+  --cyan: #c3adff;
+  --danger: #ef4444;
+  --ok: #34d399;
+  --shadow: 0 18px 40px -22px rgba(7, 6, 12, 0.85);
 }
 
 :root[data-theme='light'] {
   color-scheme: light;
   --surface-0: #f4f6f8;
+  --surface-nav: #ffffff;
   --surface-1: #ffffff;
   --surface-2: #eef1f4;
   --surface-3: #e3e8ed;
@@ -51,9 +55,11 @@
   --text-1: #10161b;
   --text-2: #48545f;
   --text-3: #77838e;
-  --accent: #b46f00;
-  --accent-ink: #fffaf0;
-  --cyan: #0a7d88;
+  --lavender: #6d28d9;
+  --lime: #16a34a;
+  --accent: #16a34a;
+  --accent-ink: #ffffff;
+  --cyan: #6d28d9;
   --danger: #c33131;
   --ok: #17795f;
   --shadow: 0 16px 34px -24px rgba(13, 24, 33, 0.45);
@@ -110,8 +116,9 @@ textarea {
   gap: 14px;
   padding: 10px 16px;
   border-bottom: 1px solid var(--line);
-  background: linear-gradient(180deg, var(--surface-1), var(--surface-0));
+  background: var(--surface-nav);
   flex: 0 0 auto;
+  overflow-x: auto;
 }
 
 .brand {
@@ -126,7 +133,7 @@ textarea {
   width: 26px;
   height: 26px;
   border-radius: 8px;
-  background: radial-gradient(circle at 30% 25%, #ffd47a, #ffb020 45%, #b46f00 100%);
+  background: radial-gradient(circle at 30% 25%, #dafa9c, #c3adff 55%, #463f5b 100%);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
   position: relative;
 }
@@ -1433,7 +1440,7 @@ select:disabled {
 .edit-tool-rail button:hover { background: var(--surface-2); }
 .edits-workspace .editor-side { padding: 12px; }
 .edits-workspace .editor-center { background: var(--surface-0); padding: 12px; gap: 8px; }
-.edits-workspace .preview-shell { border: 0; border-radius: 3px; background: var(--surface-0); }
+.edits-workspace .preview-shell { border: 0; border-radius: 3px; background: var(--surface-0); overflow: visible; }
 .edits-workspace .transport { gap: 5px; padding: 6px; border: 0; background: transparent; }
 .edits-workspace .transport .badge { display: none; }
 .preview-options[hidden] { display: none; }
@@ -1623,4 +1630,286 @@ select:disabled {
   border: 1px solid var(--line);
 }
 
+
+
+/* ------------------------------------------------------------------ */
+/* Colour grading controls (wheels, HSL bands, tone curves)            */
+/* ------------------------------------------------------------------ */
+
+.color-wheel-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.color-wheel {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  align-items: center;
+  padding: 8px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--token-radius-sm);
+  background: var(--surface-2);
+}
+
+.color-wheel-disc {
+  position: relative;
+  border-radius: 50%;
+  cursor: crosshair;
+  touch-action: none;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0) 62%),
+    conic-gradient(
+      from 90deg,
+      #ff5a5a, #ffd95a, #7bff5a, #5affd9, #5aa8ff, #b25aff, #ff5ac8, #ff5a5a
+    );
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+.color-wheel-disc:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.color-wheel-knob {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  margin-top: -6px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  background: rgba(17, 16, 24, 0.55);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+.color-wheel-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.band-chip {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+}
+.band-chip[aria-pressed='true'] {
+  border-color: #fff;
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.tone-curve {
+  align-self: center;
+  border-radius: var(--token-radius-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  touch-action: none;
+}
+.tone-curve-bg {
+  fill: rgba(0, 0, 0, 0.22);
+}
+.tone-curve-guide line {
+  stroke: rgba(255, 255, 255, 0.09);
+  stroke-width: 1;
+}
+.tone-curve-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+.tone-curve-point {
+  fill: var(--accent-ink, #111018);
+  stroke: var(--accent);
+  stroke-width: 2;
+  cursor: grab;
+}
+.tone-curve-point:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Direct manipulation overlay on the preview canvas                   */
+/* ------------------------------------------------------------------ */
+
+.preview-stage {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+.manipulation-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.manipulation-box {
+  position: absolute;
+  border: 1.5px solid var(--accent);
+  border-radius: 4px;
+  cursor: move;
+  pointer-events: auto;
+  touch-action: none;
+}
+.manipulation-box:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+.manipulation-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--accent);
+  border: 1.5px solid #111018;
+  pointer-events: auto;
+  touch-action: none;
+}
+.manipulation-handle.nw { left: -7px; top: -7px; cursor: nwse-resize; }
+.manipulation-handle.ne { right: -7px; top: -7px; cursor: nesw-resize; }
+.manipulation-handle.sw { left: -7px; bottom: -7px; cursor: nesw-resize; }
+.manipulation-handle.se { right: -7px; bottom: -7px; cursor: nwse-resize; }
+.manipulation-rotate {
+  position: absolute;
+  left: 50%;
+  top: -26px;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  border-radius: 50%;
+  background: var(--accent-2, var(--accent));
+  border: 1.5px solid #111018;
+  cursor: grab;
+  pointer-events: auto;
+  touch-action: none;
+}
+.manipulation-badge {
+  position: absolute;
+  left: 0;
+  top: -20px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: #111018;
+  font-size: 10.5px;
+  font-weight: 600;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ */
+/* Browser 4K Studio Specialist Workspace Views & Storyboard           */
+/* ------------------------------------------------------------------ */
+
+.workspace-view-strip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  background: var(--surface-nav);
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.workspace-view-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.workspace-view-pill:hover {
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+
+.workspace-view-pill[aria-pressed='true'],
+.workspace-view-pill.active {
+  background: color-mix(in oklab, var(--lavender) 18%, var(--surface-2));
+  border-color: color-mix(in oklab, var(--lavender) 55%, var(--line));
+  color: var(--text-1);
+}
+
+.workspace-view-num {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--lavender);
+  opacity: 0.9;
+}
+
+.storyboard-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.storyboard-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  font-size: 12.5px;
+}
+
+.storyboard-item.done {
+  opacity: 0.72;
+}
+
+.storyboard-item.done .storyboard-text {
+  text-decoration: line-through;
+  color: var(--text-3);
+}
+
+.compare-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 4;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(17, 16, 24, 0.85);
+  border: 1px solid var(--lavender);
+  color: var(--lavender);
+  font-size: 11px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.safe-guide-overlay {
+  position: absolute;
+  inset: 8%;
+  border: 1px dashed rgba(195, 173, 255, 0.45);
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+@media (max-width: 1024px) {
+  .topbar {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .page {
+    padding: 16px 12px 40px;
+  }
+}
 

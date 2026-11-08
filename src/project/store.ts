@@ -40,6 +40,10 @@ export interface EditorState {
   showSafeAreas: boolean;
   showProxy: boolean;
   previewScale: number;
+  /** Bypass color grading in preview to compare Original vs Graded. */
+  compareOriginal: boolean;
+  /** Active specialist workspace view inside EditPage (05..11). */
+  workspaceView: '05-timeline' | '06-presenter' | '07-color' | '08-effects' | '09-text' | '10-audio' | '11-planning';
   panel: 'media' | 'captions' | 'effects';
   /** Incremented on every semantic change; the workspace autosaves on change. */
   revision: number;
@@ -48,10 +52,17 @@ export interface EditorState {
   future: HistoryEntry[];
   lastAction: string | null;
   toast: { message: string; tone: 'info' | 'error' | 'success' } | null;
+  /** Snapshot captured at the start of a pointer gesture (one undo entry). */
+  gesture: { label: string; before: Project; revision: number } | null;
 
   loadProject: (project: Project) => void;
   closeProject: () => void;
   apply: (label: string, fn: (project: Project) => Project) => void;
+  /** Start a multi-step gesture; every `updateGesture` is one undo entry together. */
+  beginGesture: (label: string) => void;
+  updateGesture: (fn: (project: Project) => Project) => void;
+  endGesture: () => void;
+  cancelGesture: () => void;
   undo: () => void;
   redo: () => void;
   setPlayhead: (ticks: Tick) => void;
@@ -70,6 +81,8 @@ export interface EditorState {
   setShowSafeAreas: (on: boolean) => void;
   setShowProxy: (on: boolean) => void;
   setPreviewScale: (scale: number) => void;
+  setCompareOriginal: (on: boolean) => void;
+  setWorkspaceView: (view: EditorState['workspaceView']) => void;
   setPanel: (panel: EditorState['panel']) => void;
   setToast: (toast: EditorState['toast']) => void;
   /**
@@ -114,6 +127,8 @@ export const useEditor = create<EditorState>((set, get) => ({
   showSafeAreas: false,
   showProxy: true,
   previewScale: 0.5,
+  compareOriginal: false,
+  workspaceView: '05-timeline',
   panel: 'media',
   revision: 0,
   dirty: false,
@@ -121,11 +136,13 @@ export const useEditor = create<EditorState>((set, get) => ({
   future: [],
   lastAction: null,
   toast: null,
+  gesture: null,
 
   loadProject: (project) =>
     set({
       project,
       selection: NONE_SELECTION,
+      gesture: null,
       history: [],
       future: [],
       selectedClipIds: [],
@@ -170,6 +187,61 @@ export const useEditor = create<EditorState>((set, get) => ({
       revision: state.revision + 1,
       dirty: true,
       lastAction: label,
+    });
+  },
+
+  beginGesture: (label) => {
+    const state = get();
+    if (!state.project) return;
+    set({ gesture: { label, before: cloneProject(state.project), revision: state.revision } });
+  },
+
+  updateGesture: (fn) => {
+    const state = get();
+    if (!state.project) return;
+    let next: Project;
+    try {
+      next = fn(state.project);
+    } catch (error) {
+      set({ toast: { message: `Edit failed: ${(error as Error).message}`, tone: 'error' } });
+      return;
+    }
+    if (next === state.project) return;
+    set({
+      project: { ...next, updatedAt: new Date().toISOString() },
+      revision: state.revision + 1,
+      dirty: true,
+    });
+  },
+
+  endGesture: () => {
+    const state = get();
+    const gesture = state.gesture;
+    if (!gesture || !state.project) {
+      set({ gesture: null });
+      return;
+    }
+    // Nothing actually changed (a click without a drag): never push an entry.
+    if (gesture.revision === state.revision) {
+      set({ gesture: null });
+      return;
+    }
+    set({
+      gesture: null,
+      history: [...state.history, { label: gesture.label, project: gesture.before, at: Date.now() }].slice(-HISTORY_LIMIT),
+      future: [],
+      lastAction: gesture.label,
+    });
+  },
+
+  cancelGesture: () => {
+    const state = get();
+    const gesture = state.gesture;
+    if (!gesture) return;
+    set({
+      gesture: null,
+      project: gesture.before,
+      revision: state.revision + 1,
     });
   },
 
@@ -269,6 +341,8 @@ export const useEditor = create<EditorState>((set, get) => ({
   setShowSafeAreas: (on) => set({ showSafeAreas: on }),
   setShowProxy: (on) => set({ showProxy: on }),
   setPreviewScale: (scale) => set({ previewScale: Math.min(Math.max(scale, 0.1), 1) }),
+  setCompareOriginal: (on) => set({ compareOriginal: on }),
+  setWorkspaceView: (view) => set({ workspaceView: view }),
   setPanel: (panel) => set({ panel }),
   setToast: (toast) => set({ toast }),
 

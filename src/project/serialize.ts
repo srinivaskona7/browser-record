@@ -1,5 +1,6 @@
 import { PROJECT_SCHEMA_VERSION, type Project } from './types';
 import { defaultCaptionStyle, defaultGlossary, defaultPresenter, defaultTransform, defaultAudio, defaultEffects, defaultText } from './factory';
+import { registerCustomLut } from '../effects/catalog';
 
 export class ProjectParseError extends Error {
   constructor(message: string, readonly detail?: unknown) {
@@ -119,6 +120,15 @@ export function migrateV2toV3(raw: RawRecord): RawRecord {
 
 function normalizeProject(raw: RawRecord): Project {
   const project = raw as unknown as Project;
+  const tracks = Array.isArray(project.tracks) ? project.tracks : [];
+  for (const track of tracks) {
+    if (!Array.isArray(track.clips)) continue;
+    for (const clip of track.clips) {
+      if (clip?.effects?.customLutData) {
+        registerCustomLut(clip.effects.customLutData);
+      }
+    }
+  }
   return {
     ...project,
     schemaVersion: PROJECT_SCHEMA_VERSION,
@@ -136,7 +146,7 @@ function normalizeProject(raw: RawRecord): Project {
       autoTranscribeOnImport: project.settings?.autoTranscribeOnImport ?? false,
       glossary: { ...defaultGlossary(), ...(project.settings?.glossary ?? {}) },
     },
-    tracks: Array.isArray(project.tracks) ? project.tracks : [],
+    tracks,
   };
 }
 

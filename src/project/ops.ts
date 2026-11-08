@@ -11,13 +11,21 @@ import type {
   CaptionStyle,
   Clip,
   ColorLookPreset,
+  ColorWheelValue,
+  CustomFontDescriptor,
+  CustomLutData,
   EmphasisStyle,
+  HslBandAdjustment,
+  HslColorBand,
+  MaskKeyframe,
   PipPreset,
   Project,
   ShadowGlowPreset,
   SocialPlatform,
   StickerKind,
+  StoryboardItem,
   TextProps,
+  ToneCurvePoint,
   Track,
   TransitionProps,
   VoicePreset,
@@ -1741,16 +1749,17 @@ export function applyShadowGlowPreset(project: Project, clipId: string, preset: 
   return updateClipDeep(project, clipId, { transform: map[preset] });
 }
 
-/** 4a. Solo a track (mutes all other tracks of the same kind, or unmutes all if already soloed). */
+/** 4a. Solo a track (mutes all other tracks, or unmutes all if already soloed). */
 export function soloTrack(project: Project, trackId: string): Project {
   const target = project.tracks.find((t) => t.id === trackId);
   if (!target) return project;
   const others = project.tracks.filter((t) => t.id !== trackId);
-  const alreadySolo = !target.muted && others.every((t) => t.muted);
+  const alreadySolo = Boolean(target.solo) || (!target.muted && others.length > 0 && others.every((t) => t.muted));
   return {
     ...project,
     tracks: project.tracks.map((t) => ({
       ...t,
+      solo: alreadySolo ? false : t.id === trackId,
       muted: alreadySolo ? false : t.id !== trackId,
     })),
   };
@@ -1760,7 +1769,7 @@ export function soloTrack(project: Project, trackId: string): Project {
 export function unmuteAllTracks(project: Project): Project {
   return {
     ...project,
-    tracks: project.tracks.map((t) => ({ ...t, muted: false, hidden: false, volume: 1 })),
+    tracks: project.tracks.map((t) => ({ ...t, muted: false, solo: false, hidden: false, volume: 1 })),
   };
 }
 
@@ -2848,7 +2857,11 @@ export function applyLUT(project: Project, tableOrClipId: string, maybeTable?: s
         ...track,
         clips: track.clips.map((clip) =>
           targetIds.has(clip.id)
-            ? { ...clip, effects: { ...clip.effects, lut: 'none' } }
+            ? (() => {
+                const effects = { ...clip.effects, lut: 'none' };
+                delete effects.customLutData;
+                return { ...clip, effects };
+              })()
             : clip,
         ),
       };
@@ -2863,16 +2876,19 @@ export function applyLUT(project: Project, tableOrClipId: string, maybeTable?: s
       ...track,
       clips: track.clips.map((clip) => {
         if (!targetIds.has(clip.id)) return clip;
-        return {
-          ...clip,
-          effects: {
-            ...clip.effects,
-            lut: lutId,
-            contrast: spec ? spec.contrast : clip.effects.contrast,
-            saturation: spec ? spec.saturation : clip.effects.saturation,
-            temperature: spec ? spec.temperature : clip.effects.temperature,
-          },
+        const effects: Clip['effects'] = {
+          ...clip.effects,
+          lut: lutId,
+          contrast: spec ? spec.contrast : clip.effects.contrast,
+          saturation: spec ? spec.saturation : clip.effects.saturation,
+          temperature: spec ? spec.temperature : clip.effects.temperature,
         };
+        // Choosing a catalog/built-in LUT replaces any imported lattice, so the
+        // dropdown and the rendered result cannot disagree.
+        if (!clip.effects.customLutData || clip.effects.customLutData.id !== lutId) {
+          delete effects.customLutData;
+        }
+        return { ...clip, effects };
       }),
     };
   });
@@ -3412,12 +3428,234 @@ export function applyCubeLutText(
   fileName = 'Custom.cube',
   clipId?: string,
 ): { project: Project; lutId: string } {
-  const spec = parseCubeLut(cubeContent, fileName);
-  if (clipId && findClip(project, clipId)) {
-    return { project: applyLUT(project, clipId, spec.id), lutId: spec.id };
+  // Guard against pathological uploads before parsing 100+ MB of text.
+  if (cubeContent.length > 8 * 1024 * 1024) {
+    throw new Error('LUT file is larger than the 8 MB limit. Resize or export a smaller .cube file.');
   }
-  const adj = addAdjustmentLayer(project, 0, undefined, spec.id);
-  return { project: adj.project, lutId: spec.id };
+  const spec = parseCubeLut(cubeContent, fileName);
+  const lutId = spec.id;
+  if (clipId && findClip(project, clipId)) {
+    // Persist the actual lattice on the clip so the LUT survives reload, a
+    // backup round-trip and a machine/browser restart (the registry is
+    // process-local and cannot be relied on after a refresh).
+    const data: CustomLutData = {
+      id: lutId,
+      name: spec.name,
+      size: spec.latticeSize ?? 33,
+      domainMin: spec.domainMin ?? [0, 0, 0],
+      domainMax: spec.domainMax ?? [1, 1, 1],
+      lattice: spec.lattice ?? [],
+    };
+    const next = mapTracks(project, (track) => {
+      if (track.locked) return track;
+      return {
+        ...track,
+        clips: track.clips.map((clip) =>
+          clip.id === clipId
+            ? { ...clip, effects: { ...clip.effects, lut: lutId, customLutData: data } }
+            : clip,
+        ),
+      };
+    });
+    return { project: next, lutId };
+  }
+  const adj = addAdjustmentLayer(project, 0, undefined, lutId);
+  if (adj.clipId) {
+    const data: CustomLutData = {
+      id: lutId,
+      name: spec.name,
+      size: spec.latticeSize ?? 33,
+      domainMin: spec.domainMin ?? [0, 0, 0],
+      domainMax: spec.domainMax ?? [1, 1, 1],
+      lattice: spec.lattice ?? [],
+    };
+    const patched = mapTracks(adj.project, (track) => {
+      if (track.locked) return track;
+      return {
+        ...track,
+        clips: track.clips.map((clip) =>
+          clip.id === adj.clipId ? { ...clip, effects: { ...clip.effects, customLutData: data } } : clip,
+        ),
+      };
+    });
+    return { project: patched, lutId };
+  }
+  return { project: adj.project, lutId };
+}
+
+/** Colour grading scopes exposed by the 4-way wheel panel. */
+export type ColorWheelScope = 'global' | 'shadows' | 'midtones' | 'highlights';
+
+const NEUTRAL_WHEEL: ColorWheelValue = { hueDeg: 0, sat: 0, luma: 0 };
+
+function mapTargetClipEffects(
+  project: Project,
+  clipIds: readonly string[] | undefined,
+  patch: (effects: Clip['effects'], clip: Clip) => Clip['effects'],
+): Project {
+  const targetIds = new Set(
+    clipIds && clipIds.length > 0 ? clipIds : findTargetVideoClipIds(project),
+  );
+  if (targetIds.size === 0) return project;
+  return mapTracks(project, (track) => {
+    if (track.locked) return track;
+    return {
+      ...track,
+      clips: track.clips.map((clip) =>
+        targetIds.has(clip.id) ? { ...clip, effects: patch(clip.effects, clip) } : clip,
+      ),
+    };
+  });
+}
+
+/** Set one colour wheel (Global / Shadows / Midtones / Highlights) on the target clips. */
+export function setColorWheel(
+  project: Project,
+  clipIds: readonly string[] | undefined,
+  scope: ColorWheelScope,
+  value: Partial<ColorWheelValue>,
+): Project {
+  return mapTargetClipEffects(project, clipIds, (effects) => {
+    const wheels = effects.colorWheels ?? {};
+    const current = wheels[scope] ?? NEUTRAL_WHEEL;
+    return {
+      ...effects,
+      colorWheels: {
+        ...wheels,
+        [scope]: {
+          hueDeg: normalizeRotationDeg(value.hueDeg ?? current.hueDeg),
+          sat: clamp01(value.sat ?? current.sat),
+          luma: Math.max(-1, Math.min(1, value.luma ?? current.luma)),
+        },
+      },
+    };
+  });
+}
+
+/** Reset one colour wheel back to neutral, removing the wheel when it becomes empty. */
+export function resetColorWheel(
+  project: Project,
+  clipIds: readonly string[] | undefined,
+  scope: ColorWheelScope,
+): Project {
+  return mapTargetClipEffects(project, clipIds, (effects) => {
+    if (!effects.colorWheels) return effects;
+    const wheels = { ...effects.colorWheels };
+    delete wheels[scope];
+    return { ...effects, colorWheels: Object.keys(wheels).length > 0 ? wheels : undefined };
+  });
+}
+
+/** Reset every colour wheel at once. */
+export function resetColorWheels(project: Project, clipIds: readonly string[] | undefined): Project {
+  return mapTargetClipEffects(project, clipIds, (effects) => {
+    const next = { ...effects };
+    delete next.colorWheels;
+    return next;
+  });
+}
+
+/** Set one 8-band HSL adjustment (Red…Magenta) on the target clips. */
+export function setHslBandAdjustment(
+  project: Project,
+  clipIds: readonly string[] | undefined,
+  band: HslColorBand,
+  value: Partial<HslBandAdjustment>,
+): Project {
+  return mapTargetClipEffects(project, clipIds, (effects) => {
+    const bands = effects.hslBands ?? {};
+    const current = bands[band] ?? { hue: 0, sat: 0, luma: 0 };
+    return {
+      ...effects,
+      hslBands: {
+        ...bands,
+        [band]: {
+          hue: Math.max(-180, Math.min(180, value.hue ?? current.hue)),
+          sat: Math.max(-1, Math.min(1, value.sat ?? current.sat)),
+          luma: Math.max(-1, Math.min(1, value.luma ?? current.luma)),
+        },
+      },
+    };
+  });
+}
+
+/** Remove all eight HSL band adjustments from the target clips. */
+export function clearHslBands(project: Project, clipIds: readonly string[] | undefined): Project {
+  return mapTargetClipEffects(project, clipIds, (effects) => {
+    const next = { ...effects };
+    delete next.hslBands;
+    return next;
+  });
+}
+
+/** Set (or clear) a tone curve channel. Empty points remove the curve. */
+export function setToneCurve(
+  project: Project,
+  clipIds: readonly string[] | undefined,
+  channel: 'rgb' | 'red' | 'green' | 'blue',
+  points: readonly ToneCurvePoint[],
+): Project {
+  return mapTargetClipEffects(project, clipIds, (effects) => {
+    const curves = { ...(effects.toneCurves ?? {}) };
+    if (points.length === 0) delete curves[channel];
+    else {
+      curves[channel] = [...points]
+        .map((point) => ({
+          x: clamp01(point.x),
+          y: clamp01(point.y),
+        }))
+        .sort((a, b) => a.x - b.x);
+    }
+    return { ...effects, toneCurves: Object.keys(curves).length > 0 ? curves : undefined };
+  });
+}
+
+/** Remove every tone curve from the target clips. */
+export function clearToneCurves(project: Project, clipIds: readonly string[] | undefined): Project {
+  return mapTargetClipEffects(project, clipIds, (effects) => {
+    const next = { ...effects };
+    delete next.toneCurves;
+    return next;
+  });
+}
+
+/** Blend an imported/built-in LUT with the original pixels (0 = off, 1 = full). */
+export function setLutStrength(
+  project: Project,
+  clipIds: readonly string[] | undefined,
+  strength: number,
+): Project {
+  return mapTargetClipEffects(project, clipIds, (effects) => ({
+    ...effects,
+    lutStrength: Math.max(0, Math.min(1, strength)),
+  }));
+}
+
+/** Remove the persisted lattice when the user switches back to a built-in LUT or None. */
+export function clearCustomLut(
+  project: Project,
+  clipIds: readonly string[] | undefined,
+): Project {
+  return mapTargetClipEffects(project, clipIds, (effects) => {
+    const next = { ...effects };
+    delete next.customLutData;
+    return next;
+  });
+}
+
+/** Reset every colour-grading control on the target clips to neutral. */
+export function resetColorGrading(
+  project: Project,
+  clipIds: readonly string[] | undefined,
+): Project {
+  return mapTargetClipEffects(project, clipIds, (effects) => {
+    const next = { ...effects, lut: 'none' as const, lutStrength: 1 };
+    delete next.customLutData;
+    delete next.colorWheels;
+    delete next.hslBands;
+    delete next.toneCurves;
+    return next;
+  });
 }
 
 /** Nudge a caption cue's start and end timestamps by `deltaTicks`, preserving duration. */
@@ -3450,6 +3688,129 @@ export function jumpToAdjacentKeyframe(
   const next = allTicks.filter((t) => t > currentLocalTicks);
   return next.length > 0 ? next[0]! : allTicks[allTicks.length - 1]!;
 }
+
+/** Upsert a spatial keyframe on a specific privacy mask on a clip. */
+export function upsertMaskKeyframe(
+  project: Project,
+  clipId: string,
+  maskIndex: number,
+  input: {
+    atTicks: Tick;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    easing?: import('./types').Easing;
+  },
+): Project {
+  return mapTracks(project, (track) => {
+    const index = track.clips.findIndex((c) => c.id === clipId);
+    if (index === -1) return track;
+    const clip = track.clips[index]!;
+    const mask = clip.masks[maskIndex];
+    if (!mask) return track;
+    const list = [...(mask.keyframes ?? [])];
+    const existingIdx = list.findIndex((kf) => Math.abs(kf.atTicks - input.atTicks) < 1000);
+    const entry: MaskKeyframe = {
+      id: existingIdx >= 0 ? list[existingIdx]!.id : newId('mkf'),
+      atTicks: Math.max(0, Math.round(input.atTicks)),
+      x: clamp01(input.x),
+      y: clamp01(input.y),
+      width: Math.max(0.01, clamp01(input.width)),
+      height: Math.max(0.01, clamp01(input.height)),
+      easing: input.easing ?? 'linear',
+    };
+    if (existingIdx >= 0) list[existingIdx] = entry;
+    else list.push(entry);
+    list.sort((a, b) => a.atTicks - b.atTicks);
+    const masks = clip.masks.map((m, i) => (i === maskIndex ? { ...m, keyframes: list } : m));
+    const clips = [...track.clips];
+    clips[index] = { ...clip, masks };
+    return { ...track, clips };
+  });
+}
+
+export function clearMaskKeyframes(project: Project, clipId: string, maskIndex: number): Project {
+  return mapTracks(project, (track) => {
+    const index = track.clips.findIndex((c) => c.id === clipId);
+    if (index === -1) return track;
+    const clip = track.clips[index]!;
+    if (!clip.masks[maskIndex]) return track;
+    const masks = clip.masks.map((m, i) => {
+      if (i !== maskIndex) return m;
+      const next = { ...m };
+      delete next.keyframes;
+      return next;
+    });
+    const clips = [...track.clips];
+    clips[index] = { ...clip, masks };
+    return { ...track, clips };
+  });
+}
+
+/** Add or replace an uploaded custom font descriptor on the project. */
+export function addCustomFontToProject(project: Project, font: CustomFontDescriptor): Project {
+  const existing = (project.customFonts ?? []).filter(
+    (item) => item.id !== font.id && item.family.toLowerCase() !== font.family.toLowerCase(),
+  );
+  return {
+    ...project,
+    customFonts: [...existing, font],
+  };
+}
+
+export function removeCustomFontFromProject(project: Project, fontId: string): Project {
+  const next = (project.customFonts ?? []).filter((item) => item.id !== fontId);
+  return {
+    ...project,
+    ...(next.length > 0 ? { customFonts: next } : { customFonts: [] }),
+  };
+}
+
+/** Storyboard / shot-list checklist operations. */
+export function addStoryboardItem(
+  project: Project,
+  input: { title: string; notes?: string; durationSeconds?: number },
+): Project {
+  const title = input.title.trim();
+  if (!title) return project;
+  const item: StoryboardItem = {
+    id: newId('shot'),
+    title,
+    ...(input.notes ? { notes: input.notes } : {}),
+    ...(input.durationSeconds ? { durationSeconds: input.durationSeconds } : {}),
+    done: false,
+  };
+  return {
+    ...project,
+    storyboard: [...(project.storyboard ?? []), item],
+  };
+}
+
+export function toggleStoryboardItem(project: Project, itemId: string): Project {
+  return {
+    ...project,
+    storyboard: (project.storyboard ?? []).map((item) =>
+      item.id === itemId ? { ...item, done: !item.done } : item,
+    ),
+  };
+}
+
+export function removeStoryboardItem(project: Project, itemId: string): Project {
+  return {
+    ...project,
+    storyboard: (project.storyboard ?? []).filter((item) => item.id !== itemId),
+  };
+}
+
+export function setSocialCaption(project: Project, socialCaption: string): Project {
+  return { ...project, socialCaption };
+}
+
+export function setCoverTimeTicks(project: Project, coverTimeTicks: Tick): Project {
+  return { ...project, coverTimeTicks: Math.max(0, Math.round(coverTimeTicks)) };
+}
+
 
 
 

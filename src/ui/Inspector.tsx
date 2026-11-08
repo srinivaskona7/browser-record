@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useState } from 'react';
+import { createContext, useContext, useMemo, useRef, useState } from 'react';
 import { TICKS_PER_SECOND, formatClock } from '../core/time';
 import { formatSelectionScopeChip } from '../editor/selection';
 import { useEditor } from '../project/store';
@@ -22,11 +22,17 @@ import {
 } from '../effects/catalog';
 import { Badge, Button, Field, Panel, Select, Slider, Toggle } from './components';
 import { DeleteProjectDialog } from './DeleteProjectDialog';
+import { ColorWheelsPanel, HslBandsPanel, ToneCurvePanel } from './ColorGrading';
 
 const InspectorFocus = createContext<{ section: string; query: string }>({ section: 'All', query: '' });
 
 export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }) {
   const apply = useEditor((state) => state.apply);
+  const beginGesture = useEditor((state) => state.beginGesture);
+  const updateGesture = useEditor((state) => state.updateGesture);
+  const endGesture = useEditor((state) => state.endGesture);
+  const cancelGesture = useEditor((state) => state.cancelGesture);
+  const gestureOpen = useRef(false);
   const playhead = useEditor((state) => state.playheadTicks);
   const project = useEditor((state) => state.project);
   const selection = useEditor((state) => state.selection);
@@ -37,6 +43,17 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
   const patch = (label: string, deep: Parameters<typeof ops.updateClipDeep>[2]) =>
     apply(label, (p) => ops.updateClipDeep(p, clip.id, deep));
   const setClip = (label: string, value: Partial<Clip>) => apply(label, (p) => ops.updateClip(p, clip.id, value));
+  /** One undo entry per pointer gesture, not one per pixel moved. */
+  const beginOnce = (label: string) => {
+    if (gestureOpen.current) return;
+    beginGesture(label);
+    gestureOpen.current = true;
+  };
+  const commitGesture = () => {
+    if (!gestureOpen.current) return;
+    gestureOpen.current = false;
+    endGesture();
+  };
 
   const hasVideo = trackKind === 'video';
   const isPresenter = Boolean(clip.presenter);
@@ -574,16 +591,83 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
             ]}
           />
         </Field>
-        <Field label="3D LUT (16 cinematic tables)">
+        <Field label="Look preset (16 stylized cinematic looks)">
           <Select
             value={clip.effects.lut ?? 'none'}
-            onChange={(value) => apply(`3D LUT: ${value}`, (p) => ops.applyLUT(p, clip.id, value))}
+            onChange={(value) => apply(`Look preset: ${value}`, (p) => ops.applyLUT(p, clip.id, value))}
             options={[
               { value: 'none', label: 'None' },
-              ...CINEMATIC_LUTS.map((item) => ({ value: item.id, label: item.name })),
+              ...(clip.effects.customLutData
+                ? [{ value: clip.effects.customLutData.id, label: `${clip.effects.customLutData.name} (imported .cube)` }]
+                : []),
+              ...CINEMATIC_LUTS.map((item) => ({ value: item.id, label: `${item.name} (stylized)` })),
             ]}
           />
         </Field>
+        <p className="hint">
+          The 16 built-in looks are stylized presets. Import a .cube file to grade the actual pixels with a real
+          {clip.effects.customLutData ? ` ${clip.effects.customLutData.size}³` : ' 3D'} lattice.
+        </p>
+        {clip.effects.customLutData && (
+          <>
+            <Slider
+              label="Imported LUT strength"
+              min={0}
+              max={1}
+              step={0.01}
+              value={clip.effects.lutStrength ?? 1}
+              format={(value) => `${Math.round(value * 100)}%`}
+              onChange={(value) => apply('LUT strength', (p) => ops.setLutStrength(p, [clip.id], value))}
+            />
+            <p className="hint">
+              {clip.effects.customLutData.name}: {clip.effects.customLutData.size}³ lattice saved with this project
+              ({clip.effects.customLutData.lattice.length / 3} samples), so it survives a refresh and a backup restore.
+            </p>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => apply('Remove imported LUT', (p) => ops.clearCustomLut(p, [clip.id]))}
+            >
+              Remove imported LUT
+            </Button>
+          </>
+        )}
+        <ColorWheelsPanel
+          wheels={clip.effects.colorWheels ?? {}}
+          onChange={(scope, value) => {
+            beginOnce('Colour wheel');
+            updateGesture((p) => ops.setColorWheel(p, [clip.id], scope, value));
+          }}
+          onCommit={commitGesture}
+          onCancel={() => {
+            gestureOpen.current = false;
+            cancelGesture();
+          }}
+          onReset={() => apply('Reset colour wheels', (p) => ops.resetColorWheels(p, [clip.id]))}
+        />
+        <HslBandsPanel
+          bands={clip.effects.hslBands ?? {}}
+          onChange={(band, value) => {
+            beginOnce('HSL adjustment');
+            updateGesture((p) => ops.setHslBandAdjustment(p, [clip.id], band, value));
+          }}
+          onCommit={commitGesture}
+          onReset={() => apply('Reset HSL', (p) => ops.clearHslBands(p, [clip.id]))}
+        />
+        <ToneCurvePanel
+          curves={clip.effects.toneCurves ?? {}}
+          onChange={(channel, points) => {
+            beginOnce('Tone curve');
+            updateGesture((p) => ops.setToneCurve(p, [clip.id], channel, points));
+          }}
+          onCommit={commitGesture}
+          onReset={() => apply('Reset tone curves', (p) => ops.clearToneCurves(p, [clip.id]))}
+        />
+        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+          <Button size="sm" variant="ghost" onClick={() => apply('Reset colour grading', (p) => ops.resetColorGrading(p, [clip.id]))}>
+            Reset all grading
+          </Button>
+        </div>
         <Field label="Look preset">
           <div className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
             {(['neutral', 'cinema-teal', 'warm-creator', 'high-contrast-terminal', 'crisp-daylight', 'vibrant-reel', 'noir-mono'] as const).map((look) => (

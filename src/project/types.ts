@@ -261,13 +261,16 @@ export interface ArrowProps {
 
 export interface PresenterProps {
   /** How the camera clip is presented when composited onto the screen. */
-  layout: 'bubble' | 'side-by-side' | 'full';
+  layout: 'bubble' | 'side-by-side' | 'full' | 'screen-only';
   corner: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
   /** Diameter as a fraction of canvas height when layout is 'bubble'. */
   size: number;
   margin: number;
-  /** 'portrait' is a 3:4 rounded card; the others are square. */
-  shape: 'circle' | 'rounded' | 'square' | 'portrait';
+  /** 'portrait' is a 3:4 rounded card; 'pill' is a 4:3 stadium pill; 'hexagon' is a 6-sided polygon; others are 1:1. */
+  shape: 'circle' | 'rounded' | 'square' | 'portrait' | 'pill' | 'hexagon';
+  /** Optional custom center position in normalized canvas coordinates (0..1) set by canvas drag. */
+  x?: number;
+  y?: number;
   mirror: boolean;
   chromaKey: boolean;
   shadow: number;
@@ -278,13 +281,34 @@ export interface PresenterProps {
   visible?: boolean;
 }
 
+export interface MaskKeyframe {
+  id: string;
+  /** Offset from the clip start, in ticks. */
+  atTicks: Tick;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  easing?: Easing;
+}
+
 export interface MaskProps {
   x: number;
   y: number;
   width: number;
   height: number;
-  mode: 'blur' | 'pixelate' | 'spotlight';
+  mode: 'blur' | 'pixelate' | 'solid' | 'spotlight';
   strength: number;
+  /** Soft-edge feathering radius in normalized units (0..0.5). */
+  feather?: number;
+  /** Redaction fill color when mode === 'solid' (default '#000000'). */
+  color?: string;
+  /** Optional clip-local start tick (inclusive). */
+  startTicks?: Tick;
+  /** Optional clip-local end tick (inclusive). */
+  endTicks?: Tick;
+  /** Optional spatial keyframes for tracking moving secrets across a clip. */
+  keyframes?: MaskKeyframe[];
 }
 
 export interface ProgressBarProps {
@@ -309,6 +333,65 @@ export interface CountdownProps {
   color: string;
 }
 
+export interface ColorWheelValue {
+  /** Hue angle in degrees (0..360). */
+  hueDeg: number;
+  /** Saturation / chroma shift (0..1). */
+  sat: number;
+  /** Luminance lift/gamma/gain offset (-1..1). */
+  luma: number;
+}
+
+export interface ColorWheelsProps {
+  global?: ColorWheelValue;
+  shadows?: ColorWheelValue;
+  midtones?: ColorWheelValue;
+  highlights?: ColorWheelValue;
+}
+
+export type HslColorBand =
+  | 'red'
+  | 'orange'
+  | 'yellow'
+  | 'green'
+  | 'aqua'
+  | 'blue'
+  | 'purple'
+  | 'magenta';
+
+export interface HslBandAdjustment {
+  /** Hue shift in degrees (-180..180). */
+  hue: number;
+  /** Saturation delta (-1..1). */
+  sat: number;
+  /** Luminance delta (-1..1). */
+  luma: number;
+}
+
+export interface ToneCurvePoint {
+  /** Normalized input level (0..1). */
+  x: number;
+  /** Normalized output level (0..1). */
+  y: number;
+}
+
+export interface ToneCurvesProps {
+  rgb?: ToneCurvePoint[];
+  red?: ToneCurvePoint[];
+  green?: ToneCurvePoint[];
+  blue?: ToneCurvePoint[];
+}
+
+export interface CustomLutData {
+  id: string;
+  name: string;
+  size: number;
+  domainMin: [number, number, number];
+  domainMax: [number, number, number];
+  /** Flattened RGB triplets of length size^3 * 3. */
+  lattice: number[];
+}
+
 export interface ClipEffects {
   brightness: number;
   contrast: number;
@@ -316,6 +399,10 @@ export interface ClipEffects {
   saturation: number;
   temperature: number;
   vibrance: number;
+  highlights?: number;
+  shadows?: number;
+  tint?: number;
+  sharpen?: number;
   zoom: number;
   panX: number;
   panY: number;
@@ -331,8 +418,18 @@ export interface ClipEffects {
   videoEffect?: string;
   /** Active color grading filter ID (77 presets, neutral: 'normal'). */
   colorFilter?: string;
-  /** Active 3D Look-Up Table ID (16 cinematic LUTs, neutral: 'none'). */
+  /** Active 3D Look-Up Table ID (16 cinematic LUTs or imported .cube LUT, neutral: 'none'). */
   lut?: string;
+  /** Blend of the active LUT with the original pixels (0 = off, 1 = full). */
+  lutStrength?: number;
+  /** Persisted 3D .cube LUT lattice so imported custom LUTs survive project reload. */
+  customLutData?: CustomLutData;
+  /** 4-way Color Wheels (Global, Shadows, Midtones, Highlights). */
+  colorWheels?: ColorWheelsProps;
+  /** 8-band per-color HSL adjustments (Red, Orange, Yellow, Green, Aqua, Blue, Purple, Magenta). */
+  hslBands?: Partial<Record<HslColorBand, HslBandAdjustment>>;
+  /** RGB and per-channel Tone Curves. */
+  toneCurves?: ToneCurvesProps;
 }
 
 export type TransitionType =
@@ -421,11 +518,34 @@ export interface Track {
   name: string;
   clips: Clip[];
   muted: boolean;
+  /** When any track of the same kind has solo === true, non-soloed tracks of that kind are silenced. */
+  solo?: boolean;
   hidden: boolean;
   locked: boolean;
   /** 0..1 */
   volume: number;
   height: number;
+}
+
+export type CustomFontFormat = 'woff2' | 'woff' | 'ttf' | 'otf';
+
+export interface CustomFontDescriptor {
+  id: string;
+  family: string;
+  fileName: string;
+  format: CustomFontFormat;
+  /** Base64-encoded font binary persisted with the project and backups. */
+  dataBase64: string;
+  byteLength: number;
+  uploadedAt: string;
+}
+
+export interface StoryboardItem {
+  id: string;
+  title: string;
+  notes?: string;
+  durationSeconds?: number;
+  done: boolean;
 }
 
 export interface Marker {
@@ -509,6 +629,14 @@ export interface Project {
   settings: ProjectSettings;
   /** Optional; absent on projects saved before the brand kit existed. */
   brand?: BrandKit;
+  /** Uploaded local fonts (WOFF2, WOFF, TTF, OTF) persisted with the project and backups. */
+  customFonts?: CustomFontDescriptor[];
+  /** Shot list / storyboard checklist for planning and share handoff. */
+  storyboard?: StoryboardItem[];
+  /** Editable social post caption for manual publish handoff. */
+  socialCaption?: string;
+  /** Selected cover frame timestamp in ticks. */
+  coverTimeTicks?: Tick;
   /** Duration of the last known timeline, kept for quick listing without recompute. */
   durationTicks: Tick;
   notes: string;

@@ -34,6 +34,9 @@ export function EditPage() {
   const previewScale = useEditor((state) => state.previewScale);
   const showSafeAreas = useEditor((state) => state.showSafeAreas);
   const panel = useEditor((state) => state.panel);
+  const historyLength = useEditor((state) => state.history.length);
+  const futureLength = useEditor((state) => state.future.length);
+  const lastAction = useEditor((state) => state.lastAction);
   const setPanel = useEditor((state) => state.setPanel);
   const setPlayhead = useEditor((state) => state.setPlayhead);
   const setPlaying = useEditor((state) => state.setPlaying);
@@ -348,8 +351,8 @@ export function EditPage() {
         <div className="row">
           <ImportMediaButton />
           <Button size="sm" onClick={() => { setPlaying(false); useSession.getState().setRoute('record'); }}>● Record</Button>
-          <Button size="sm" onClick={() => useEditor.getState().undo()} disabled={useEditor.getState().history.length === 0}>↶ Undo</Button>
-          <Button size="sm" onClick={() => useEditor.getState().redo()} disabled={useEditor.getState().future.length === 0}>↷ Redo</Button>
+          <Button size="sm" onClick={() => useEditor.getState().undo()} disabled={historyLength === 0}>↶ Undo</Button>
+          <Button size="sm" onClick={() => useEditor.getState().redo()} disabled={futureLength === 0}>↷ Redo</Button>
           <Select label="Canvas aspect ratio" value={`${project.canvas.width}:${project.canvas.height}`} onChange={(value) => useEditor.getState().apply('Change canvas', (p) => value === '1080:1920' ? ops.reframe9x16(p) : value === '1080:1080' ? ops.reframe1x1(p) : value === '1080:1350' ? ops.reframe4x5(p) : ops.reframe16x9(p))} options={[{value: `${project.canvas.width}:${project.canvas.height}`, label: `${project.canvas.width} × ${project.canvas.height}`}, ...[{value: '1080:1920', label: '9:16 · Reel'}, {value: '1920:1080', label: '16:9 · Landscape'}, {value: '1080:1080', label: '1:1 · Square'}, {value: '1080:1350', label: '4:5 · Portrait'}].filter((o) => o.value !== `${project.canvas.width}:${project.canvas.height}`)]} />
           <Button size="sm" aria-pressed={inspectorVisible} onClick={() => { setInspectorVisible(!inspectorVisible); setPanel('effects'); }}>Inspector</Button>
           <Button variant="primary" onClick={() => { setPlaying(false); useSession.getState().setRoute('export'); }}>Export ↗</Button>
@@ -398,6 +401,7 @@ export function EditPage() {
           showEndScreenGuide={showEndScreenGuide}
           captionsEnabled={captionsEnabled}
           revision={playerRevision}
+          editable
         />
         <ClipQuickActions project={project} />
         <div className="transport">
@@ -543,17 +547,17 @@ export function EditPage() {
         <Panel title="History">
           <div className="stack" style={{ gap: 4 }}>
             <div className="row" style={{ justifyContent: 'space-between' }}>
-              <span className="field-hint">{useEditor.getState().lastAction ?? 'No edits yet'}</span>
+              <span className="field-hint">{lastAction ?? 'No edits yet'}</span>
               <div className="row" style={{ gap: 4 }}>
-                <Button size="sm" variant="ghost" onClick={() => useEditor.getState().undo()} disabled={useEditor.getState().history.length === 0}>
+                <Button size="sm" variant="ghost" onClick={() => useEditor.getState().undo()} disabled={historyLength === 0}>
                   Undo
                 </Button>
-                <Button size="sm" variant="ghost" onClick={() => useEditor.getState().redo()} disabled={useEditor.getState().future.length === 0}>
+                <Button size="sm" variant="ghost" onClick={() => useEditor.getState().redo()} disabled={futureLength === 0}>
                   Redo
                 </Button>
               </div>
             </div>
-            <Badge>{useEditor.getState().history.length} steps</Badge>
+            <Badge>{historyLength} steps</Badge>
           </div>
         </Panel>
       </aside>

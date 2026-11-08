@@ -84,13 +84,26 @@ export function computePlacement(params: {
 export function presenterBubble(params: { canvas: Size; presenter: PresenterProps }): Rect & { radius: number } {
   const { canvas, presenter } = params;
   const height = canvas.height * clamp(presenter.size, 0.08, 1);
-  // 'portrait' is a meeting-style 3:4 card; every other shape is square.
-  const width = presenter.shape === 'portrait' ? height * 0.75 : height;
+  // 'portrait' is a 3:4 rounded card; 'pill' is a 4:3 stadium pill; every other shape is 1:1.
+  const width =
+    presenter.shape === 'portrait'
+      ? height * 0.75
+      : presenter.shape === 'pill'
+        ? height * 1.35
+        : height;
   const marginX = canvas.width * presenter.margin;
   const marginY = canvas.height * presenter.margin;
   let x = canvas.width - width - marginX;
   let y = canvas.height - height - marginY;
-  if (presenter.corner === 'top-left') {
+  if (
+    typeof presenter.x === 'number' &&
+    Number.isFinite(presenter.x) &&
+    typeof presenter.y === 'number' &&
+    Number.isFinite(presenter.y)
+  ) {
+    x = clamp(presenter.x * canvas.width - width / 2, 0, Math.max(0, canvas.width - width));
+    y = clamp(presenter.y * canvas.height - height / 2, 0, Math.max(0, canvas.height - height));
+  } else if (presenter.corner === 'top-left') {
     x = marginX;
     y = marginY;
   } else if (presenter.corner === 'top-right') {
@@ -99,9 +112,9 @@ export function presenterBubble(params: { canvas: Size; presenter: PresenterProp
     x = marginX;
   }
   const radius =
-    presenter.shape === 'circle'
+    presenter.shape === 'circle' || presenter.shape === 'pill'
       ? height / 2
-      : presenter.shape === 'square'
+      : presenter.shape === 'square' || presenter.shape === 'hexagon'
         ? 0
         : presenter.shape === 'portrait'
           ? Math.max(10, width * 0.18)

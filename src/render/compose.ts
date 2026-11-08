@@ -1,6 +1,9 @@
 import { TICKS_PER_SECOND, type Tick } from '../core/time';
 import type { AlphaMaskProps, CaptionCue, Clip, Project, StickerKind } from '../project/types';
 import {
+  applyPixelGradingToImageData,
+  hasAdvancedPixelGrading,
+  registerPersistedCustomLut,
   resolveBoundaryTransition,
   resolveCinematicLut,
   resolveColorFilter,
@@ -9,6 +12,7 @@ import {
   resolveVideoEffect,
 } from '../effects/catalog';
 import { activeClipAt, activeCues, clipOpacity, keyframeValue, localTicks, sourceTicks } from './compositorQuery';
+import { renderGradedSource } from './gradingPass';
 import {
   clamp,
   computePlacement,
@@ -32,8 +36,10 @@ export interface DrawableSource {
 /**
  * Resolve an asset to something drawable at a given source-time. Preview and
  * export supply different implementations; the scene renderer is identical.
+ * Passing `clipId` lets preview allocate an independent decoder/element when
+ * two overlapping clips reuse the same `assetId` at different source offsets.
  */
-export type SourceLookup = (assetId: string, atSourceTicks: Tick) => DrawableSource | null;
+export type SourceLookup = (assetId: string, atSourceTicks: Tick, clipId?: string) => DrawableSource | null;
 
 export interface RenderOptions {
   lookup: SourceLookup;
@@ -43,6 +49,8 @@ export interface RenderOptions {
   captionsEnabled?: boolean;
   /** Preview uses true so overlays remain visible while scrubbing. */
   showTrackBadges?: boolean;
+  /** When true, bypasses color grading so the user can compare Original vs Graded. */
+  compareOriginal?: boolean;
   timeTicks: Tick;
 }
 
@@ -55,6 +63,7 @@ function isPresenterClip(clip: Clip, trackName: string): boolean {
 export function renderFrame(ctx: Ctx2D, project: Project, options: RenderOptions): void {
   const { width, height } = project.canvas;
   const ticks = options.timeTicks;
+  const compareOriginal = Boolean(options.compareOriginal);
   const presenterClips: Array<{ clip: Clip; drawable: DrawableSource }> = [];
   const screenClips: Array<{ clip: Clip; drawable: DrawableSource }> = [];
   const overlayClips: Clip[] = [];
@@ -91,7 +100,7 @@ export function renderFrame(ctx: Ctx2D, project: Project, options: RenderOptions
       continue;
     }
     if (!clip.assetId) continue;
-    const drawable = options.lookup(clip.assetId, sourceTicks(clip, ticks));
+    const drawable = options.lookup(clip.assetId, sourceTicks(clip, ticks), clip.id);
     if (!drawable) continue;
     if (isPresenterClip(clip, track.name)) {
       if (clip.presenter?.visible !== false) presenterClips.push({ clip, drawable });
@@ -102,20 +111,24 @@ export function renderFrame(ctx: Ctx2D, project: Project, options: RenderOptions
   const layout = presenter?.clip.presenter?.layout ?? 'bubble';
 
   if (presenter && layout === 'full') {
-    drawMediaClip(ctx, presenter.clip, presenter.drawable, ticks, { width, height, x: 0, y: 0 });
+    drawMediaClip(ctx, presenter.clip, presenter.drawable, ticks, { width, height, x: 0, y: 0 }, compareOriginal);
   } else if (presenter && layout === 'side-by-side') {
     const regions = sideBySideRegions({ width, height });
     for (const entry of screenClips) {
-      drawMediaClip(ctx, entry.clip, entry.drawable, ticks, regions.screen);
+      drawMediaClip(ctx, entry.clip, entry.drawable, ticks, regions.screen, compareOriginal);
     }
-    drawMediaClip(ctx, presenter.clip, presenter.drawable, ticks, regions.camera);
+    drawMediaClip(ctx, presenter.clip, presenter.drawable, ticks, regions.camera, compareOriginal);
+  } else if (layout === 'screen-only') {
+    for (const entry of screenClips) {
+      drawMediaClip(ctx, entry.clip, entry.drawable, ticks, { width, height, x: 0, y: 0 }, compareOriginal);
+    }
   } else {
     for (const entry of screenClips) {
-      drawMediaClip(ctx, entry.clip, entry.drawable, ticks, { width, height, x: 0, y: 0 });
+      drawMediaClip(ctx, entry.clip, entry.drawable, ticks, { width, height, x: 0, y: 0 }, compareOriginal);
     }
     if (presenter) {
       if (!presenter.clip.presenter) {
-        drawMediaClip(ctx, presenter.clip, presenter.drawable, ticks, { width, height, x: 0, y: 0 });
+        drawMediaClip(ctx, presenter.clip, presenter.drawable, ticks, { width, height, x: 0, y: 0 }, compareOriginal);
       } else {
         drawPresenterBubble(ctx, project, presenter.clip, presenter.drawable, ticks);
       }
@@ -123,7 +136,9 @@ export function renderFrame(ctx: Ctx2D, project: Project, options: RenderOptions
   }
 
   for (const clip of overlayClips) {
-    if (clip.kind === 'adjustment') drawAdjustmentClip(ctx, project, clip, ticks);
+    if (clip.kind === 'adjustment') {
+      if (!compareOriginal) drawAdjustmentClip(ctx, project, clip, ticks);
+    }
     else if (clip.kind === 'title') drawTextClip(ctx, project, clip, ticks);
     else if (clip.kind === 'arrow') drawArrowClip(ctx, project, clip, ticks);
     else if (clip.kind === 'sticker') drawStickerClip(ctx, project, clip, ticks);
@@ -160,6 +175,7 @@ function drawMediaClip(
   drawable: DrawableSource,
   ticks: Tick,
   region: { x: number; y: number; width: number; height: number },
+  compareOriginal = false,
 ): void {
   const local = localTicks(clip, ticks);
   const localSec = local / TICKS_PER_SECOND;
@@ -254,42 +270,46 @@ function drawMediaClip(
   }
 
   ctx.translate(-placement.width / 2 + transState.offsetX, -placement.height / 2 + transState.offsetY);
-  ctx.filter = cssFilter(clip, localSec);
-  ctx.drawImage(drawable.image, crop.x, crop.y, crop.width, crop.height, 0, 0, placement.width, placement.height);
+  ctx.filter = compareOriginal ? 'none' : cssFilter(clip, localSec);
+  // Colour grading (LUT lattice, wheels, HSL, curves) runs on the source
+  // pixels on the GPU when WebGL2 is available, so 4K frames stay real-time
+  // and export does not accumulate a per-pixel JavaScript cost.
+  const graded =
+    !compareOriginal && typeof drawable.image === 'object'
+      ? renderGradedSource(
+          {
+            image: drawable.image,
+            crop: {
+              x: crop.x / Math.max(1, drawable.width),
+              y: crop.y / Math.max(1, drawable.height),
+              width: crop.width / Math.max(1, drawable.width),
+              height: crop.height / Math.max(1, drawable.height),
+            },
+            width: Math.max(1, Math.round(placement.width)),
+            height: Math.max(1, Math.round(placement.height)),
+          },
+          clip.effects,
+        )
+      : null;
+  const sourceImage = (graded ?? drawable.image) as CanvasImageSource;
+  ctx.drawImage(sourceImage, 0, 0, placement.width, placement.height);
+  const gradedOnGpu = Boolean(graded);
 
   // Chromatic aberration / RGB split shader pass
   const rgbShift = (effectSpec?.rgbSplit ?? 0) + transState.rgbJitter;
   if (rgbShift > 0) {
     const shiftPx = Math.max(2, placement.width * rgbShift);
     ctx.globalAlpha = opacity * 0.35;
-    ctx.drawImage(
-      drawable.image,
-      crop.x,
-      crop.y,
-      crop.width,
-      crop.height,
-      -shiftPx,
-      0,
-      placement.width,
-      placement.height,
-    );
-    ctx.drawImage(
-      drawable.image,
-      crop.x,
-      crop.y,
-      crop.width,
-      crop.height,
-      shiftPx,
-      0,
-      placement.width,
-      placement.height,
-    );
+    ctx.drawImage(sourceImage, 0, 0, placement.width, placement.height, -shiftPx, 0, placement.width, placement.height);
+    ctx.drawImage(sourceImage, 0, 0, placement.width, placement.height, shiftPx, 0, placement.width, placement.height);
     ctx.globalAlpha = opacity;
   }
   ctx.filter = 'none';
 
   // Color filter / 3D LUT split-tone & stylized overlays
-  drawGradingAndShaderOverlays(ctx, clip, placement.width, placement.height, localSec, opacity, transState.flashAlpha);
+  if (!compareOriginal) {
+    drawGradingAndShaderOverlays(ctx, clip, placement.width, placement.height, localSec, opacity, transState.flashAlpha, gradedOnGpu);
+  }
   ctx.restore();
 
   if (clip.transform.borderWidth > 0) {
@@ -425,6 +445,80 @@ function applyAlphaMaskClip(
   ctx.clip();
 }
 
+
+/**
+ * CPU grading fallback. Reads the device-pixel bounding box of the clip's local
+ * rect, grades it and blits the result back at identity transform so the active
+ * clip path still masks it. Only used when the GPU pass is unavailable.
+ */
+const scratchCanvases: Array<HTMLCanvasElement | OffscreenCanvas> = [];
+
+function getScratchCanvas(width: number, height: number): HTMLCanvasElement | OffscreenCanvas | null {
+  let canvas = scratchCanvases.find((item) => item.width >= width && item.height >= height);
+  if (!canvas) {
+    try {
+      canvas =
+        typeof OffscreenCanvas !== 'undefined'
+          ? new OffscreenCanvas(width, height)
+          : Object.assign(document.createElement('canvas'), { width, height });
+    } catch {
+      return null;
+    }
+    scratchCanvases.push(canvas);
+  }
+  return canvas;
+}
+
+function applyCpuGrading(ctx: Ctx2D, effects: Clip['effects'], width: number, height: number): boolean {
+  if (typeof ctx.getImageData !== 'function') return false;
+  try {
+    const canvasWidth = ctx.canvas?.width ?? Math.round(width);
+    const canvasHeight = ctx.canvas?.height ?? Math.round(height);
+    let x0 = 0;
+    let y0 = 0;
+    let x1 = width;
+    let y1 = height;
+    const matrix = typeof ctx.getTransform === 'function' ? ctx.getTransform() : null;
+    if (matrix) {
+      const corners = [
+        [0, 0],
+        [width, 0],
+        [0, height],
+        [width, height],
+      ].map(([px = 0, py = 0]) => ({
+        x: matrix.a * px + matrix.c * py + matrix.e,
+        y: matrix.b * px + matrix.d * py + matrix.f,
+      }));
+      x0 = Math.min(...corners.map((point) => point.x));
+      y0 = Math.min(...corners.map((point) => point.y));
+      x1 = Math.max(...corners.map((point) => point.x));
+      y1 = Math.max(...corners.map((point) => point.y));
+    }
+    const x = Math.max(0, Math.floor(x0));
+    const y = Math.max(0, Math.floor(y0));
+    const w = Math.max(1, Math.min(canvasWidth - x, Math.ceil(x1 - x0)));
+    const h = Math.max(1, Math.min(canvasHeight - y, Math.ceil(y1 - y0)));
+    const imageData = ctx.getImageData(x, y, w, h);
+    if (!imageData?.data || imageData.data.length < 4) return false;
+    applyPixelGradingToImageData(imageData.data, effects);
+    const scratch = getScratchCanvas(w, h);
+    if (!scratch) return false;
+    const scratchCtx = scratch.getContext('2d') as CanvasRenderingContext2D | null;
+    if (!scratchCtx) return false;
+    scratchCtx.putImageData(imageData, 0, 0);
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.drawImage(scratch as CanvasImageSource, 0, 0, w, h, x, y, w, h);
+    ctx.restore();
+    return true;
+  } catch {
+    // A tainted or mock canvas cannot be read; the CSS filter level remains active.
+    return false;
+  }
+}
+
 function drawGradingAndShaderOverlays(
   ctx: Ctx2D,
   clip: Clip,
@@ -433,14 +527,24 @@ function drawGradingAndShaderOverlays(
   localSec: number,
   opacity: number,
   transitionFlashAlpha: number,
+  gradedOnGpu = false,
 ): void {
   const filterSpec = resolveColorFilter(clip.effects.colorFilter);
   if (filterSpec && filterSpec.tintOpacity > 0) {
     ctx.fillStyle = hexToRgba(filterSpec.tintHex, filterSpec.tintOpacity * opacity);
     ctx.fillRect(0, 0, width, height);
   }
-  const lutSpec = resolveCinematicLut(clip.effects.lut);
-  if (lutSpec && lutSpec.tintStrength > 0) {
+  const lutSpec = clip.effects.customLutData
+    ? registerPersistedCustomLut(clip.effects.customLutData)
+    : resolveCinematicLut(clip.effects.lut);
+  let gradedPixels = gradedOnGpu;
+  if (!gradedOnGpu && hasAdvancedPixelGrading(clip.effects)) {
+    gradedPixels = applyCpuGrading(ctx, clip.effects, width, height);
+  }
+  // The split-tone gradient is the honest fallback for stylized look presets
+  // and for canvases whose pixels cannot be read, never an extra layer on top
+  // of a real trilinear LUT.
+  if (!gradedPixels && lutSpec && lutSpec.tintStrength > 0) {
     const grad = ctx.createLinearGradient(0, 0, width, height);
     grad.addColorStop(0, hexToRgba(lutSpec.shadowsHex, lutSpec.tintStrength * opacity));
     grad.addColorStop(1, hexToRgba(lutSpec.highlightsHex, lutSpec.tintStrength * opacity));
@@ -488,41 +592,265 @@ function drawAdjustmentClip(ctx: Ctx2D, project: Project, clip: Clip, ticks: Tic
   ctx.restore();
 }
 
+export function resolveMaskGeometry(
+  mask: Clip['masks'][number],
+  local: Tick = 0,
+): { x: number; y: number; width: number; height: number } {
+  const kfs = mask.keyframes;
+  if (!kfs || kfs.length === 0) {
+    return { x: mask.x, y: mask.y, width: mask.width, height: mask.height };
+  }
+  const sorted = [...kfs].sort((a, b) => a.atTicks - b.atTicks);
+  const first = sorted[0]!;
+  if (local <= first.atTicks) {
+    return { x: first.x, y: first.y, width: first.width, height: first.height };
+  }
+  const last = sorted[sorted.length - 1]!;
+  if (local >= last.atTicks) {
+    return { x: last.x, y: last.y, width: last.width, height: last.height };
+  }
+  for (let i = 0; i < sorted.length - 1; i += 1) {
+    const a = sorted[i]!;
+    const b = sorted[i + 1]!;
+    if (local >= a.atTicks && local <= b.atTicks) {
+      const span = Math.max(1, b.atTicks - a.atTicks);
+      const t = ease((local - a.atTicks) / span, b.easing ?? 'linear');
+      return {
+        x: a.x + (b.x - a.x) * t,
+        y: a.y + (b.y - a.y) * t,
+        width: a.width + (b.width - a.width) * t,
+        height: a.height + (b.height - a.height) * t,
+      };
+    }
+  }
+  return { x: mask.x, y: mask.y, width: mask.width, height: mask.height };
+}
+
+function parseHexRgb(hex: string | undefined): [number, number, number] {
+  const clean = (hex ?? '#000000').replace(/^#/, '').trim();
+  if (clean.length === 3) {
+    return [
+      parseInt(clean[0]! + clean[0]!, 16) || 0,
+      parseInt(clean[1]! + clean[1]!, 16) || 0,
+      parseInt(clean[2]! + clean[2]!, 16) || 0,
+    ];
+  }
+  if (clean.length >= 6) {
+    return [
+      parseInt(clean.slice(0, 2), 16) || 0,
+      parseInt(clean.slice(2, 4), 16) || 0,
+      parseInt(clean.slice(4, 6), 16) || 0,
+    ];
+  }
+  return [0, 0, 0];
+}
+
+function computeFeatherWeight(
+  px: number,
+  py: number,
+  w: number,
+  h: number,
+  featherNormalized: number,
+): number {
+  if (!featherNormalized || featherNormalized <= 0) return 1;
+  const featherPx = Math.max(1, Math.min(w, h) * clamp(featherNormalized, 0, 0.49));
+  const distLeft = px + 0.5;
+  const distRight = w - (px + 0.5);
+  const distTop = py + 0.5;
+  const distBottom = h - (py + 0.5);
+  const minDist = Math.min(distLeft, distRight, distTop, distBottom);
+  return clamp(minDist / featherPx, 0, 1);
+}
+
 function drawMask(
   ctx: Ctx2D,
   mask: Clip['masks'][number],
   region: { x: number; y: number; width: number; height: number },
   opacity: number,
+  local: Tick = 0,
 ): void {
+  if (typeof mask.startTicks === 'number' && local < mask.startTicks) return;
+  if (typeof mask.endTicks === 'number' && local > mask.endTicks) return;
+
+  const geom = resolveMaskGeometry(mask, local);
   const width = region.width;
   const height = region.height;
   const rect = {
-    x: region.x + mask.x * width,
-    y: region.y + mask.y * height,
-    width: mask.width * width,
-    height: mask.height * height,
+    x: region.x + geom.x * width,
+    y: region.y + geom.y * height,
+    width: geom.width * width,
+    height: geom.height * height,
   };
   if (rect.width <= 0 || rect.height <= 0) return;
+
+  // Map composition coordinates through the active canvas transform so preview
+  // scales (0.25, 0.5, 1.0) and export frames always sample the exact device
+  // pixels covered by the mask.
+  const t =
+    typeof (ctx as { getTransform?: () => DOMMatrix }).getTransform === 'function'
+      ? (ctx as unknown as { getTransform: () => DOMMatrix }).getTransform()
+      : { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+  const x0 = rect.x * t.a + rect.y * t.c + t.e;
+  const y0 = rect.x * t.b + rect.y * t.d + t.f;
+  const x1 = (rect.x + rect.width) * t.a + (rect.y + rect.height) * t.c + t.e;
+  const y1 = (rect.x + rect.width) * t.b + (rect.y + rect.height) * t.d + t.f;
+  const canvasW = ctx.canvas?.width ?? Math.ceil(Math.max(x0, x1));
+  const canvasH = ctx.canvas?.height ?? Math.ceil(Math.max(y0, y1));
+  const devX = Math.max(0, Math.floor(Math.min(x0, x1)));
+  const devY = Math.max(0, Math.floor(Math.min(y0, y1)));
+  const devW = Math.max(1, Math.min(canvasW - devX, Math.ceil(Math.max(x0, x1) - devX)));
+  const devH = Math.max(1, Math.min(canvasH - devY, Math.ceil(Math.max(y0, y1) - devY)));
+  const scaleFactor = Math.max(0.05, Math.hypot(t.a, t.b));
+  const feather = clamp(mask.feather ?? 0, 0, 0.49);
+
   ctx.save();
   ctx.globalAlpha = opacity;
   if (mask.mode === 'spotlight') {
     const dimAlpha = clamp(mask.strength / 100, 0.25, 0.88);
     ctx.fillStyle = `rgba(0, 0, 0, ${dimAlpha})`;
-    // Top band
     ctx.fillRect(region.x, region.y, width, Math.max(0, rect.y - region.y));
-    // Bottom band
     const bottomY = rect.y + rect.height;
     ctx.fillRect(region.x, bottomY, width, Math.max(0, region.y + height - bottomY));
-    // Left band
     ctx.fillRect(region.x, rect.y, Math.max(0, rect.x - region.x), rect.height);
-    // Right band
     const rightX = rect.x + rect.width;
     ctx.fillRect(rightX, rect.y, Math.max(0, region.x + width - rightX), rect.height);
 
     ctx.strokeStyle = '#ffd166';
     ctx.lineWidth = Math.max(2, width / 640);
     ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
-  } else if (mask.mode === 'pixelate') {
+    ctx.restore();
+    return;
+  }
+
+  if (mask.mode === 'solid') {
+    const fillHex = mask.color ?? '#000000';
+    if (feather > 0 && typeof ctx.getImageData === 'function' && typeof ctx.putImageData === 'function') {
+      try {
+        const img = ctx.getImageData(devX, devY, devW, devH);
+        const data = img.data;
+        const [sr, sg, sb] = parseHexRgb(fillHex);
+        for (let py = 0; py < devH; py += 1) {
+          for (let px = 0; px < devW; px += 1) {
+            const wgt = computeFeatherWeight(px, py, devW, devH, feather) * opacity;
+            const idx = (py * devW + px) * 4;
+            data[idx] = Math.round(data[idx]! * (1 - wgt) + sr * wgt);
+            data[idx + 1] = Math.round(data[idx + 1]! * (1 - wgt) + sg * wgt);
+            data[idx + 2] = Math.round(data[idx + 2]! * (1 - wgt) + sb * wgt);
+          }
+        }
+        ctx.putImageData(img, devX, devY);
+        ctx.restore();
+        return;
+      } catch {
+        // Fall through to fillRect when canvas is mocked
+      }
+    }
+    ctx.fillStyle = fillHex;
+    ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+    ctx.restore();
+    return;
+  }
+
+  // Try deterministic device-pixel ImageData redaction first so pixelate and
+  // blur are scale-accurate across 0.25x, 0.5x, 1.0x preview and export.
+  if (typeof ctx.getImageData === 'function' && typeof ctx.putImageData === 'function') {
+    try {
+      const img = ctx.getImageData(devX, devY, devW, devH);
+      const src = new Uint8ClampedArray(img.data);
+      const dst = img.data;
+      if (mask.mode === 'pixelate') {
+        const block = Math.max(2, Math.round(Math.max(4, mask.strength) * scaleFactor));
+        for (let by = 0; by < devH; by += block) {
+          for (let bx = 0; bx < devW; bx += block) {
+            const bw = Math.min(block, devW - bx);
+            const bh = Math.min(block, devH - by);
+            let rSum = 0;
+            let gSum = 0;
+            let bSum = 0;
+            const count = bw * bh;
+            for (let py = by; py < by + bh; py += 1) {
+              for (let px = bx; px < bx + bw; px += 1) {
+                const idx = (py * devW + px) * 4;
+                rSum += src[idx]!;
+                gSum += src[idx + 1]!;
+                bSum += src[idx + 2]!;
+              }
+            }
+            const rAvg = Math.round(rSum / count);
+            const gAvg = Math.round(gSum / count);
+            const bAvg = Math.round(bSum / count);
+            for (let py = by; py < by + bh; py += 1) {
+              for (let px = bx; px < bx + bw; px += 1) {
+                const wgt = computeFeatherWeight(px, py, devW, devH, feather) * opacity;
+                const idx = (py * devW + px) * 4;
+                dst[idx] = Math.round(src[idx]! * (1 - wgt) + rAvg * wgt);
+                dst[idx + 1] = Math.round(src[idx + 1]! * (1 - wgt) + gAvg * wgt);
+                dst[idx + 2] = Math.round(src[idx + 2]! * (1 - wgt) + bAvg * wgt);
+              }
+            }
+          }
+        }
+      } else {
+        // Two-pass separable box blur in device pixels
+        const radius = Math.max(2, Math.min(48, Math.round(Math.max(4, mask.strength) * scaleFactor * 0.6)));
+        const temp = new Uint8ClampedArray(src.length);
+        for (let py = 0; py < devH; py += 1) {
+          for (let px = 0; px < devW; px += 1) {
+            let rSum = 0;
+            let gSum = 0;
+            let bSum = 0;
+            let count = 0;
+            const xMin = Math.max(0, px - radius);
+            const xMax = Math.min(devW - 1, px + radius);
+            for (let kx = xMin; kx <= xMax; kx += 1) {
+              const idx = (py * devW + kx) * 4;
+              rSum += src[idx]!;
+              gSum += src[idx + 1]!;
+              bSum += src[idx + 2]!;
+              count += 1;
+            }
+            const outIdx = (py * devW + px) * 4;
+            temp[outIdx] = Math.round(rSum / count);
+            temp[outIdx + 1] = Math.round(gSum / count);
+            temp[outIdx + 2] = Math.round(bSum / count);
+            temp[outIdx + 3] = src[outIdx + 3]!;
+          }
+        }
+        for (let py = 0; py < devH; py += 1) {
+          const yMin = Math.max(0, py - radius);
+          const yMax = Math.min(devH - 1, py + radius);
+          for (let px = 0; px < devW; px += 1) {
+            let rSum = 0;
+            let gSum = 0;
+            let bSum = 0;
+            let count = 0;
+            for (let ky = yMin; ky <= yMax; ky += 1) {
+              const idx = (ky * devW + px) * 4;
+              rSum += temp[idx]!;
+              gSum += temp[idx + 1]!;
+              bSum += temp[idx + 2]!;
+              count += 1;
+            }
+            const rBlur = Math.round(rSum / count);
+            const gBlur = Math.round(gSum / count);
+            const bBlur = Math.round(bSum / count);
+            const wgt = computeFeatherWeight(px, py, devW, devH, feather) * opacity;
+            const outIdx = (py * devW + px) * 4;
+            dst[outIdx] = Math.round(src[outIdx]! * (1 - wgt) + rBlur * wgt);
+            dst[outIdx + 1] = Math.round(src[outIdx + 1]! * (1 - wgt) + gBlur * wgt);
+            dst[outIdx + 2] = Math.round(src[outIdx + 2]! * (1 - wgt) + bBlur * wgt);
+          }
+        }
+      }
+      ctx.putImageData(img, devX, devY);
+      ctx.restore();
+      return;
+    } catch {
+      // Fall back to offscreen drawImage path below if canvas pixel read is blocked
+    }
+  }
+
+  if (mask.mode === 'pixelate') {
     const scale = Math.max(4, mask.strength);
     const w = Math.max(1, Math.floor(rect.width / scale));
     const h = Math.max(1, Math.floor(rect.height / scale));
@@ -531,7 +859,7 @@ function drawMask(
       const octx = off.getContext('2d') as CanvasRenderingContext2D | null;
       if (octx) {
         octx.imageSmoothingEnabled = true;
-        octx.drawImage(ctx.canvas as CanvasImageSource, rect.x, rect.y, rect.width, rect.height, 0, 0, w, h);
+        octx.drawImage(ctx.canvas as CanvasImageSource, devX, devY, devW, devH, 0, 0, w, h);
         ctx.imageSmoothingEnabled = false;
         ctx.drawImage(off as unknown as CanvasImageSource, 0, 0, w, h, rect.x, rect.y, rect.width, rect.height);
         ctx.imageSmoothingEnabled = true;
@@ -543,12 +871,27 @@ function drawMask(
       const octx = off.getContext('2d') as CanvasRenderingContext2D | null;
       if (octx) {
         octx.filter = `blur(${mask.strength}px)`;
-        octx.drawImage(ctx.canvas as CanvasImageSource, rect.x, rect.y, rect.width, rect.height, 0, 0, octx.canvas.width, octx.canvas.height);
+        octx.drawImage(ctx.canvas as CanvasImageSource, devX, devY, devW, devH, 0, 0, octx.canvas.width, octx.canvas.height);
         ctx.drawImage(off as unknown as CanvasImageSource, rect.x, rect.y, rect.width, rect.height);
       }
     }
   }
   ctx.restore();
+}
+
+function hexagonPath(ctx: Ctx2D, x: number, y: number, width: number, height: number): void {
+  const cx = x + width / 2;
+  const cy = y + height / 2;
+  const rx = width / 2;
+  const ry = height / 2;
+  for (let i = 0; i < 6; i += 1) {
+    const angle = (Math.PI / 3) * i - Math.PI / 2;
+    const px = cx + rx * Math.cos(angle);
+    const py = cy + ry * Math.sin(angle);
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
 }
 
 function drawPresenterBubble(
@@ -563,7 +906,9 @@ function drawPresenterBubble(
   if (opacity <= 0) return;
   ctx.save();
   ctx.beginPath();
-  if (bubble.radius > 0) {
+  if (clip.presenter!.shape === 'hexagon') {
+    hexagonPath(ctx, bubble.x, bubble.y, bubble.width, bubble.height);
+  } else if (bubble.radius > 0) {
     roundRect(ctx, bubble.x, bubble.y, bubble.width, bubble.height, bubble.radius);
   } else {
     ctx.rect(bubble.x, bubble.y, bubble.width, bubble.height);
@@ -594,7 +939,7 @@ function drawPresenterBubble(
   }
   if (clip.presenter!.chromaKey) applyChromaKey(ctx, bubble);
   ctx.restore();
-  drawPresenterBorder(ctx, bubble, clip.presenter!.border, clip.presenter!.borderColor, opacity);
+  drawPresenterBorder(ctx, bubble, clip.presenter!.border, clip.presenter!.borderColor, opacity, clip.presenter!.shape);
 }
 
 /** Ring around the presenter card. Drawn after the clip so it is never cropped. */
@@ -604,6 +949,7 @@ function drawPresenterBorder(
   width: number,
   color: string,
   opacity: number,
+  shape: NonNullable<Clip['presenter']>['shape'] = 'circle',
 ): void {
   if (!Number.isFinite(width) || width <= 0) return;
   ctx.save();
@@ -613,7 +959,9 @@ function drawPresenterBorder(
   // Inset by half the stroke so the ring stays inside the card bounds.
   const inset = width / 2;
   ctx.beginPath();
-  if (bubble.radius > 0) {
+  if (shape === 'hexagon') {
+    hexagonPath(ctx, bubble.x + inset, bubble.y + inset, bubble.width - width, bubble.height - width);
+  } else if (bubble.radius > 0) {
     roundRect(ctx, bubble.x + inset, bubble.y + inset, bubble.width - width, bubble.height - width, Math.max(0, bubble.radius - inset));
   } else {
     ctx.rect(bubble.x + inset, bubble.y + inset, bubble.width - width, bubble.height - width);

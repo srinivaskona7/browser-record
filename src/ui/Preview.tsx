@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { renderFrame } from '../render/compose';
 import type { Project } from '../project/types';
 import type { PreviewPlayer } from './player';
+import { ManipulationOverlay } from './ManipulationOverlay';
 
 /** Renders one frame at full project resolution as a PNG, with the same compositor as export. */
 export async function snapshotFrame(
@@ -79,6 +80,7 @@ export function Preview({
   showEndScreenGuide = false,
   captionsEnabled,
   revision = 0,
+  editable = false,
 }: {
   project: Project;
   player: PreviewPlayer | null;
@@ -90,6 +92,8 @@ export function Preview({
   captionsEnabled: boolean;
   /** Bumped when the player has finished loading and a repaint would now find pixels. */
   revision?: number;
+  /** Draw direct-manipulation handles over the selected clip (editor only). */
+  editable?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -135,6 +139,7 @@ export function Preview({
         style={{ aspectRatio: `${project.canvas.width} / ${project.canvas.height}` }}
         aria-label="Timeline preview"
       />
+      {editable && <ManipulationOverlay project={project} />}
     </div>
   );
 }

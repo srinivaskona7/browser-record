@@ -193,6 +193,8 @@ describe('Full Suite of Video, Text, Motion & Color Editing Effects and Tools', 
       timeTicks: Math.round(0.5 * TICKS_PER_SECOND),
       lookup: (id) => (id === assetId ? { image: {} as CanvasImageSource, width: 1920, height: 1080 } : null),
     });
+    // Built-in cinematic looks stay on the stylized split-tone path; imported
+    // .cube lattices are the ones graded on real pixels (see colorGrading.test.ts).
     expect(ctx.createLinearGradient).toHaveBeenCalled();
   });
 
