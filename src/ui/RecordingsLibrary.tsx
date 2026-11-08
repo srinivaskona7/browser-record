@@ -247,6 +247,53 @@ export function RecordingsLibrary({
     onChanged?.();
   };
 
+  const handleAppendToTimeline = async (item: EnrichedTakeItem) => {
+    if (!workspace) return;
+    if (currentProjectFolder !== item.projectFolder) {
+      await openExistingProject(item.projectFolder);
+    }
+    const report =
+      item.status === 'Recoverable'
+        ? await recoverInterruptedTake(workspace.root, item.projectFolder, item.take.takeId)
+        : null;
+    const builtAssets = report ? report.assets : buildAssetsFromManifest(item.take.manifest);
+    let insertedAt = 0;
+    let firstClipId: string | undefined;
+    apply(`Add take ${item.label} to timeline`, (p) => {
+      const existingTakeIds = new Set(takeIdsOf(p));
+      if (existingTakeIds.has(item.take.takeId)) return p;
+      let next = p;
+      insertedAt = ops.nextFreeStart(p);
+      for (const asset of builtAssets) {
+        if (!next.assets.some((a) => a.id === asset.id || a.path === asset.path)) {
+          next = ops.upsertAsset(next, asset);
+        }
+        const trackName =
+          asset.kind === 'video'
+            ? /camera/i.test(asset.name)
+              ? 'Camera'
+              : 'Screen'
+            : /mic/i.test(asset.name)
+              ? 'Narration'
+              : 'System Audio';
+        let track = next.tracks.find((t) => t.name === trackName);
+        if (!track) {
+          track = createTrack(asset.kind === 'video' ? 'video' : 'audio', trackName);
+          next = ops.addTrack(next, track);
+        }
+        const placed = ops.addAssetClip(next, track.id, asset.id, insertedAt, { mode: 'overwrite' });
+        next = placed.project;
+        if (!firstClipId) firstClipId = placed.clipId;
+      }
+      return next;
+    });
+    useEditor.getState().setPlayhead(insertedAt);
+    if (firstClipId) useEditor.getState().selectClips([firstClipId]);
+    setRoute('edit');
+    await refresh();
+    onChanged?.();
+  };
+
   const handleDownloadRaw = async (item: EnrichedTakeItem) => {
     if (!workspace) return;
     let count = 0;
@@ -448,8 +495,21 @@ export function RecordingsLibrary({
                   >
                     Rename
                   </Button>
-                  <Button size="sm" variant="primary" onClick={() => void handleOpenInEditor(item)}>
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    title="Open a clean timeline containing only this recorded take (Undo preserves any previous edit)"
+                    onClick={() => void handleOpenInEditor(item)}
+                  >
                     Open in editor
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    title="Append this take after the existing clips on the current timeline"
+                    onClick={() => void handleAppendToTimeline(item)}
+                  >
+                    + Add to timeline
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => void handleDownloadRaw(item)}>
                     Download raw
