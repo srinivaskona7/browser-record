@@ -2493,12 +2493,14 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       </Dialog>
 
       {/* Shared Recordings Library with project filter and preview-first Clear unused recordings */}
-      <RecordingsLibrary
-        activeTakeId={activeTakeId}
-        defaultProjectFolder={session.projectFolder ?? 'all'}
-        compact
-        onChanged={() => void refreshTakes()}
-      />
+      {(quietMode === 'full' || (stage !== 'recording' && stage !== 'paused')) && (
+        <RecordingsLibrary
+          activeTakeId={activeTakeId}
+          defaultProjectFolder={session.projectFolder ?? 'all'}
+          compact
+          onChanged={() => void refreshTakes()}
+        />
+      )}
 
       <Dialog
         open={takeResult !== null}

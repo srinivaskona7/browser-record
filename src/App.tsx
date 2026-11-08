@@ -1,7 +1,14 @@
 import { useEffect, useState } from 'react';
 import { ROUTES, routeFromHash, sessionKindOf, storageDescription, useSession } from './app/session';
 import { useEditor } from './project/store';
-import { restoreLastProject, restoreLastWorkspace, saveNow, scheduleAutosave } from './app/actions';
+import {
+  APP_BUILD_ID,
+  performHardRefresh,
+  restoreLastProject,
+  restoreLastWorkspace,
+  saveNow,
+  scheduleAutosave,
+} from './app/actions';
 import { ProjectsPage } from './ui/ProjectsPage';
 import { RecordPage } from './ui/RecordPage';
 import { EditPage } from './ui/EditPage';
@@ -124,6 +131,16 @@ export function App() {
           />
           <Button size="sm" variant="ghost" onClick={() => void saveNow()} disabled={!project || !dirty}>
             Save
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => void performHardRefresh()}
+            aria-label="Hard refresh and clear cache"
+            title={`Clear cached assets and reload (${APP_BUILD_ID})`}
+            data-testid="hard-refresh-btn"
+          >
+            ↻ Refresh
           </Button>
           <Button size="sm" variant="ghost" onClick={() => setAboutOpen(true)} aria-label="About and walkthrough" title="Features and walkthrough">
             i

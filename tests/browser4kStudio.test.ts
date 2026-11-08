@@ -420,4 +420,24 @@ describe('Browser 4K Studio — Release Gate Suite', () => {
       'Controls only',
     ]);
   });
+
+  it('invalidates stale OPFS session pointers and updates build ID when a new deployment build is detected', async () => {
+    const { APP_BUILD_ID, syncBuildCacheVersion } = await import('../src/app/actions');
+    const { readLastSession, writeLastSession } = await import('../src/app/prefs');
+
+    localStorage.setItem('browser-record-build-id', 'old-build-000');
+    writeLastSession({ mode: 'opfs', projectFolder: 'stale-opfs-draft' });
+
+    const upgraded = await syncBuildCacheVersion();
+    expect(upgraded).toBe(true);
+    expect(localStorage.getItem('browser-record-build-id')).toBe(APP_BUILD_ID);
+    expect(readLastSession()).toBeNull();
+
+    // Subsequent boot on the same build ID is a no-op
+    writeLastSession({ mode: 'opfs', projectFolder: 'active-opfs-draft' });
+    const secondRun = await syncBuildCacheVersion();
+    expect(secondRun).toBe(false);
+    expect(readLastSession()?.projectFolder).toBe('active-opfs-draft');
+  });
 });
+

@@ -25,7 +25,7 @@ import { newId } from '../core/ids';
 import { parseProject, serializeProject } from '../project/serialize';
 import { relinkAssetInProject } from '../project/ops';
 import { WORKSPACE_LAYOUT } from '../workspace/types';
-import { readLastSession, writeLastSession } from './prefs';
+import { clearLastSession, readLastSession, writeLastSession } from './prefs';
 
 export async function connectDiskWorkspace(): Promise<void> {
   const session = useSession.getState();
@@ -493,4 +493,64 @@ export function ensureDefaultCaptionStyle(project: Project): Project {
 export { formatBytes } from '../export/presets';
 export const importFilesIntoProject = importMediaFiles;
 export { serializeProject };
+
+declare const __APP_BUILD_ID__: string | undefined;
+
+export const APP_BUILD_ID: string =
+  typeof __APP_BUILD_ID__ !== 'undefined' && __APP_BUILD_ID__ ? __APP_BUILD_ID__ : 'studio-latest';
+
+const BUILD_ID_KEY = 'browser-record-build-id';
+
+/**
+ * When a new deployment is detected, purge any stale Cache Storage / Service Workers
+ * and clear temporary OPFS auto-reopen pointers so fresh changes reflect immediately.
+ */
+export async function syncBuildCacheVersion(): Promise<boolean> {
+  if (typeof window === 'undefined' || typeof localStorage === 'undefined') return false;
+  try {
+    const previous = localStorage.getItem(BUILD_ID_KEY);
+    if (previous === APP_BUILD_ID) return false;
+    localStorage.setItem(BUILD_ID_KEY, APP_BUILD_ID);
+    const last = readLastSession();
+    if (last?.mode === 'opfs') {
+      clearLastSession();
+    }
+    if ('serviceWorker' in navigator && navigator.serviceWorker?.getRegistrations) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((reg) => reg.unregister().catch(() => false)));
+    }
+    if ('caches' in window && window.caches?.keys) {
+      const keys = await window.caches.keys();
+      await Promise.all(keys.map((key) => window.caches.delete(key).catch(() => false)));
+    }
+    return previous !== null;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Explicit hard refresh: clears Cache Storage, unregisters any Service Workers,
+ * resets temporary session pointers, and reloads with a cache-busting query param.
+ */
+export async function performHardRefresh(): Promise<void> {
+  if (typeof window === 'undefined') return;
+  try {
+    clearLastSession();
+    if ('serviceWorker' in navigator && navigator.serviceWorker?.getRegistrations) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((reg) => reg.unregister().catch(() => false)));
+    }
+    if ('caches' in window && window.caches?.keys) {
+      const keys = await window.caches.keys();
+      await Promise.all(keys.map((key) => window.caches.delete(key).catch(() => false)));
+    }
+  } catch {
+    /* proceed to reload even if cache APIs are restricted */
+  }
+  const url = new URL(window.location.href);
+  url.searchParams.set('v', `${APP_BUILD_ID}-${Date.now().toString(36)}`);
+  window.location.replace(url.toString());
+}
+
 

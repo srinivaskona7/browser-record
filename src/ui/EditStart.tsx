@@ -11,6 +11,7 @@ import {
 import { listProjects, listTakes } from '../workspace/workspace';
 import { formatClock } from '../core/time';
 import { formatBytes } from '../export/presets';
+import { loadSampleKubernetesLesson } from '../project/sampleLesson';
 import { Badge, Button, EmptyState, Panel } from './components';
 import type { Project } from '../project/types';
 
@@ -110,6 +111,14 @@ export function EditStart() {
             </Button>
             <Button onClick={() => void startRecording()} disabled={busy || importing}>
               Start a new recording
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => void loadSampleKubernetesLesson('edit')}
+              disabled={busy || importing}
+              data-testid="edit-start-sample-lesson-btn"
+            >
+              Load Sample Kubernetes Lesson
             </Button>
             <Button
               variant="ghost"

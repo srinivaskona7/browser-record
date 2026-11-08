@@ -1,26 +1,32 @@
-import { Dialog } from './components';
+import { APP_BUILD_ID, performHardRefresh } from '../app/actions';
+import { Badge, Button, Dialog } from './components';
 
 const FEATURES: Array<[string, string]> = [
-  ['Record', 'Screen, camera bubble and microphone, saved to this machine in segments. Pause, marker, restart and keyboard keys while recording.'],
-  ['Edit', 'Multitrack timeline with split, trim, ripple delete, markers and undo. Titles, lower thirds, callouts and arrows.'],
-  ['Media', 'Import videos, audio and images. Insert media at the playhead, and record a voiceover against the timeline.'],
-  ['Captions', 'Local transcription, SRT/VTT import and export, and burned-in or sidecar captions.'],
-  ['Export', 'H.264 MP4 and other codecs where the browser supports them. Progress shows speed and time left.'],
-  ['Privacy', 'No account, no upload, no analytics. Media stays in the folder or browser storage you chose.'],
+  ['Record', 'Screen, camera bubble (6 shapes + custom X/Y), and microphone saved in durable segments with Quiet Mode, Review Take trim/preview, and shared Recordings Library.'],
+  ['Edit & Grade', 'Multitrack timeline with direct on-canvas move/scale/rotate handles, 3-way colour wheels, 8-band HSL, RGB/Luma curves, .cube 3D LUT import, and Original vs. Graded preview.'],
+  ['Typography & Privacy', '406 font families plus custom font upload (WOFF2/WOFF/TTF/OTF), 77 text animations, and timed/feathered/keyframed privacy masks (blur, pixelate, solid).'],
+  ['Captions & Audio', 'Local Whisper transcription, SRT/VTT import/export, voiceover recording, procedural SFX, ducking, and speech mastering chain.'],
+  ['Planning & Export', 'Storyboard shot list, social caption handoff, H.264/HEVC/AV1 MP4 & VP9 WebM export, 16-bit PCM WAV audio mixdown, and PNG cover frames.'],
+  ['Privacy', '100% local in your browser — no account, no cloud upload, no telemetry.'],
 ];
 
 const STEPS: Array<[string, string]> = [
-  ['Start a project', 'Projects → New project, or Import a video. Pick a folder to keep files on disk.'],
-  ['Record (optional)', 'Record → Start recording. Choose the screen, add the camera bubble if you want it, then Stop & keep.'],
-  ['Edit', 'Edit → drag clips onto the timeline. Use Add for titles, arrows and inserts, and the Inspector for the selected clip.'],
-  ['Save a frame (optional)', 'Edit → Save frame to download the frame under the playhead as a PNG.'],
-  ['Export', 'Export → pick a preset, then Start export. Download the result when it finishes.'],
+  ['Start a project', 'Projects → Load Sample Kubernetes Lesson, New Recording, or Import Video/Audio/Image.'],
+  ['Record (optional)', 'Record → Choose source → Ready confirmation → Start recording → Stop & review or open in Editor.'],
+  ['Edit & Grade', 'Edit → Drag handles directly on the preview canvas, grade in Adjust, or plan shots in More → Planning & Share.'],
+  ['Export', 'Export → Choose MP4/WebM preset, WAV audio mixdown, PNG cover frame, or SRT/VTT subtitles.'],
 ];
 
 export function AboutDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
     <Dialog open={open} onClose={onClose} title="About Browser 4K Studio" wide>
       <div className="stack" style={{ gap: 16 }}>
+        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+          <Badge tone="ok">Build {APP_BUILD_ID}</Badge>
+          <Button size="sm" variant="ghost" onClick={() => void performHardRefresh()}>
+            ↻ Hard refresh & clear cache
+          </Button>
+        </div>
         <section className="stack" style={{ gap: 6 }}>
           <h3 style={{ margin: 0, fontSize: 14 }}>Features</h3>
           <table className="table">

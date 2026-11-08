@@ -1,7 +1,10 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { syncBuildCacheVersion } from './app/actions';
 import './styles.css';
+
+void syncBuildCacheVersion();
 
 const container = document.getElementById('root');
 if (!container) throw new Error('Missing #root element');
