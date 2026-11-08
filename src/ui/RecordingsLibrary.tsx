@@ -369,6 +369,7 @@ export function RecordingsLibrary({
             variant="ghost"
             disabled={clearBusy}
             onClick={() => void openClearUnusedPreview()}
+            data-testid="clear-unused-takes-btn"
           >
             Clear unused recordings…
           </Button>
@@ -535,6 +536,7 @@ export function RecordingsLibrary({
             </div>
             <div className="row" style={{ gap: 12, flexWrap: 'wrap' }}>
               <Badge tone="warn">{clearPlan.candidates.length} take(s) to delete</Badge>
+              <Badge tone="ok">{clearPlan.excluded.length} protected take(s)</Badge>
               <Badge>{formatBytes(clearPlan.totalReclaimBytes)} to reclaim</Badge>
               <Badge>{clearPlan.affectedProjects.length} affected project(s)</Badge>
             </div>

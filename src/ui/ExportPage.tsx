@@ -289,7 +289,6 @@ export function ExportPage() {
         includeCaptions,
         onProgress: setProgress,
       });
-      setResult(out);
       setPlaybackVerified(null);
       const activeProj = exportTargetProject ?? project;
       const slug = activeProj.name.replace(/[^\w\-. ]+/g, '').trim().replace(/\s+/g, '-').toLowerCase() || 'lesson';
@@ -309,18 +308,20 @@ export function ExportPage() {
         const check = await verifyDecodedVideoBlob(blob);
         setPlaybackVerified(check.verified);
       } else if (out.path && session.workspace) {
-        void readBlob(session.workspace.root, out.path)
-          .then(async (file) => {
-            const url = URL.createObjectURL(file);
-            setResultPreviewUrl((prev) => {
-              if (prev) URL.revokeObjectURL(prev);
-              return url;
-            });
-            const check = await verifyDecodedVideoBlob(file);
-            setPlaybackVerified(check.verified);
-          })
-          .catch(() => setPlaybackVerified(false));
+        try {
+          const file = await readBlob(session.workspace.root, out.path);
+          const url = URL.createObjectURL(file);
+          setResultPreviewUrl((prev) => {
+            if (prev) URL.revokeObjectURL(prev);
+            return url;
+          });
+          const check = await verifyDecodedVideoBlob(file);
+          setPlaybackVerified(check.verified);
+        } catch {
+          setPlaybackVerified(false);
+        }
       }
+      setResult(out);
       if (out.warnings.length > 0) {
         session.pushToast(
           `Export written to ${out.path ?? 'the project'} with ${out.warnings.length} warning(s). Check the result panel before publishing.`,

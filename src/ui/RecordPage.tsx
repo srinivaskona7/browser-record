@@ -1324,6 +1324,8 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       className={`page recorder-page cap-recorder${showMonitor ? ' monitor-expanded' : ''}`}
       data-route-hidden={hidden ? 'true' : undefined}
     >
+      {!hidden && (
+      <>
       <header className="page-head">
         <div>
           <span className="eyebrow">LOCAL CREATOR STUDIO</span>
@@ -1448,6 +1450,8 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       </div>
 
       </details>
+      </>
+      )}
       {/* The same camera stream the monitor shows, pinned to the viewport for
           the whole take: the monitor can scroll away, this cannot. Hidden when
           hideFloatingPreview is enabled so Entire screen capture never records a double bubble. */}
@@ -1620,6 +1624,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         </div>
       )}
 
+      {!hidden && (
       <div className="split-grid">
         <div className="stack" style={{ gap: 14 }}>
           <Panel
@@ -2329,6 +2334,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
           </details>
         </div>
       </div>
+      )}
 
       <Dialog
         open={restartOpen}
@@ -2373,7 +2379,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       </Dialog>
 
       {/* Shared Recordings Library with project filter and preview-first Clear unused recordings */}
-      {(quietMode === 'full' || (stage !== 'recording' && stage !== 'paused')) && (
+      {!hidden && (quietMode === 'full' || (stage !== 'recording' && stage !== 'paused')) && (
         <RecordingsLibrary
           activeTakeId={activeTakeId}
           defaultProjectFolder={session.projectFolder ?? 'all'}
