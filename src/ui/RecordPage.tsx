@@ -1118,7 +1118,16 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         // used to cut away the opening of the first one.
         const startTicks = nextFreeStart(p);
         insertedAt = startTicks;
-        let working = placeTake({ ...p, assets: [...p.assets, ...result.assets] }, result.assets, startTicks, presenter);
+        const effectivePresenter: PresenterProps = {
+          ...presenter,
+          visible: presenter.visible !== false && cameraLayerRule.compositeInExport,
+        };
+        let working = placeTake(
+          { ...p, assets: [...p.assets, ...result.assets] },
+          result.assets,
+          startTicks,
+          effectivePresenter,
+        );
         const assetIds = new Set(result.assets.map((asset) => asset.id));
         firstClipId = working.tracks.flatMap((track) => track.clips).find((clip) => clip.assetId && assetIds.has(clip.assetId) && clip.startTicks === startTicks)?.id;
         if (result.markers.length > 0) {
@@ -1238,6 +1247,15 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       elapsedText: stage === 'countdown' ? `${countdown}s` : formatElapsed(elapsedSeconds),
       previewHidden: hideFloatingPreview,
     });
+    if (typeof document !== 'undefined') {
+      if (stage === 'recording') {
+        document.title = `● ${formatElapsed(elapsedSeconds)} Recording`;
+      } else if (stage === 'paused') {
+        document.title = `⏸ ${formatElapsed(elapsedSeconds)} Paused`;
+      } else {
+        document.title = 'Browser 4K Studio';
+      }
+    }
   }, [stage, countdown, elapsedSeconds, hideFloatingPreview]);
 
   /** Take folders sitting under recordings/ that no clip points at. */

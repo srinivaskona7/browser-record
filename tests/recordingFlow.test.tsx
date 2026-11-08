@@ -188,8 +188,15 @@ it('shows visible cross-tab & display capture controls, hides live screen monito
 });
 
 it('opens Document Picture-in-Picture with camera + controls, toggles Hide preview to prevent double bubble, and leaves take running when closed', async () => {
-  const { openFloatingCamera } = await import('../src/capture/floatingCamera');
+  const { openFloatingCamera, resolvePipLayout } = await import('../src/capture/floatingCamera');
   const { defaultPresenter } = await import('../src/project/factory');
+
+  // Verify responsive PiP layout across the 4 reference sizes: 180x180, 240x320, 320x120, 400x400
+  expect(resolvePipLayout(180, 180, true, 'auto')).toBe('bubble');
+  expect(resolvePipLayout(240, 320, true, 'auto')).toBe('tall');
+  expect(resolvePipLayout(320, 120, true, 'auto')).toBe('bar');
+  expect(resolvePipLayout(400, 400, true, 'auto')).toBe('bubble');
+  expect(resolvePipLayout(240, 320, false, 'auto')).toBe('bar');
 
   const pipDoc = document.implementation.createHTMLDocument('pip');
   const listeners = new Map<string, () => void>();
