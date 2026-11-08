@@ -28,7 +28,9 @@ export function Timeline({ project }: { project: Project }) {
   const setPlayhead = useEditor((state) => state.setPlayhead);
   const playing = useEditor((state) => state.playing);
   const selected = useEditor((state) => state.selectedClipIds);
+  const selection = useEditor((state) => state.selection);
   const selectClips = useEditor((state) => state.selectClips);
+  const selectRange = useEditor((state) => state.selectRange);
   const apply = useEditor((state) => state.apply);
   const snapping = useEditor((state) => state.snapping);
   const editMode = useEditor((state) => state.editMode);
@@ -36,6 +38,7 @@ export function Timeline({ project }: { project: Project }) {
   const [drag, setDrag] = useState<DragState | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const [hoverTick, setHoverTick] = useState<Tick | null>(null);
+  const [rangeInTick, setRangeInTick] = useState<Tick | null>(null);
 
   const pxPerTick = zoom / TICKS_PER_SECOND;
   const timelineTicks = Math.max(project.durationTicks, playhead) + 10 * TICKS_PER_SECOND;
@@ -146,6 +149,29 @@ export function Timeline({ project }: { project: Project }) {
         <span className="badge" title="Overwrite trims; Insert pushes later clips right">
           {editMode === 'overwrite' ? 'Overwrite' : 'Insert'}
         </span>
+        <Button
+          size="sm"
+          variant="ghost"
+          title="Set range In at playhead (I)"
+          onClick={() => {
+            setRangeInTick(playhead);
+            const end = selection.kind === 'range' && selection.end > playhead ? selection.end : playhead + 2 * TICKS_PER_SECOND;
+            selectRange(playhead, end);
+          }}
+        >
+          In [I]
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          title="Set range Out at playhead (O)"
+          onClick={() => {
+            const start = rangeInTick !== null && rangeInTick < playhead ? rangeInTick : Math.max(0, playhead - 2 * TICKS_PER_SECOND);
+            selectRange(start, playhead);
+          }}
+        >
+          Out [O]
+        </Button>
         <div style={{ flex: 1 }} />
         <span className="timecode" style={{ fontSize: 12, color: 'var(--text-2)' }} title="Playhead timecode">
           {formatTimecode(playhead, project.canvas.fps)}
@@ -212,17 +238,42 @@ export function Timeline({ project }: { project: Project }) {
                   onDragStartSelect(clip, event.shiftKey);
                   startDrag(event, mode, clip);
                 }}
-                onDropAsset={(assetId, atTicks) => {
+                onDropAsset={(assetId, dropX) => {
                   const targetTrack = project.tracks.find((t) => t.id === track.id);
-                  if (!targetTrack) return;
+                  if (!targetTrack || targetTrack.locked) return;
                   apply('Insert media', (p) => {
-                    const result = ops.addAssetClip(p, targetTrack.id, assetId, atTicks, { mode: editMode });
+                    const result = ops.dropAssetOnTrack(
+                      p,
+                      targetTrack.id,
+                      assetId,
+                      dropX,
+                      pxPerTick,
+                      snapping,
+                      editMode,
+                    );
                     return result.project;
                   });
                 }}
               />
             ))}
           </div>
+          {selection.kind === 'range' && (
+            <div
+              className="timeline-range-band"
+              data-testid="timeline-range-band"
+              style={{
+                position: 'absolute',
+                left: 150 + selection.start * pxPerTick,
+                width: Math.max(2, (selection.end - selection.start) * pxPerTick),
+                top: 0,
+                bottom: 0,
+                background: 'rgba(59, 130, 246, 0.18)',
+                borderLeft: '2px solid #3b82f6',
+                borderRight: '2px solid #3b82f6',
+                pointerEvents: 'none',
+              }}
+            />
+          )}
           <div className="playhead" style={{ left: playhead * pxPerTick, height: '100%' }} />
         </div>
       </div>
@@ -299,14 +350,18 @@ function TrackRow({
       </div>
       <div
         className="track-lane"
-        style={{ height: track.height }}
-        onDragOver={(event) => event.preventDefault()}
+        style={{ height: track.height, cursor: track.locked ? 'not-allowed' : 'default' }}
+        onDragOver={(event) => {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = track.locked ? 'none' : 'copy';
+        }}
         onDrop={(event) => {
           event.preventDefault();
+          if (track.locked) return;
           const assetId = event.dataTransfer.getData('application/x-browser-record-asset');
           if (!assetId) return;
           const rect = event.currentTarget.getBoundingClientRect();
-          onDropAsset(assetId, Math.max(0, Math.round((event.clientX - rect.left) / pxPerTick)));
+          onDropAsset(assetId, Math.max(0, event.clientX - rect.left));
         }}
       >
         {track.clips.map((clip) => {
@@ -317,6 +372,7 @@ function TrackRow({
           const left = (clip.startTicks + offset + startOffset) * pxPerTick;
           const width = Math.max(2, (clip.durationTicks - startOffset + endOffset) * pxPerTick);
           const isSelected = selected.includes(clip.id);
+          const keyframes = clip.keyframes.flatMap((g) => g.keyframes);
           return (
             <div
               key={clip.id}
@@ -333,6 +389,23 @@ function TrackRow({
               }}
             >
               <div className="clip-label">{clip.label ?? clip.text?.text ?? clip.kind}</div>
+              {keyframes.map((kf) => (
+                <span
+                  key={kf.id}
+                  className="clip-keyframe-diamond"
+                  title={`Keyframe at ${formatClock(kf.atTicks)} (${kf.easing})`}
+                  style={{
+                    position: 'absolute',
+                    left: Math.max(4, Math.min(width - 8, kf.atTicks * pxPerTick)),
+                    bottom: 3,
+                    fontSize: 9,
+                    color: '#ffd166',
+                    pointerEvents: 'none',
+                  }}
+                >
+                  ◆
+                </span>
+              ))}
               {track.kind === 'audio' && <Waveform assetId={clip.assetId} color="rgba(255,255,255,0.65)" />}
               <div
                 className="clip-handle"

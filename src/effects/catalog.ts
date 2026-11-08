@@ -801,9 +801,70 @@ export const CINEMATIC_LUTS: readonly CinematicLutSpec[] = [
   },
 ]; // 16 cinematic 3D LUTs
 
+const CUSTOM_CUBE_LUTS = new Map<string, CinematicLutSpec>();
+
+export function registerCustomCubeLut(spec: CinematicLutSpec): CinematicLutSpec {
+  CUSTOM_CUBE_LUTS.set(spec.id, spec);
+  return spec;
+}
+
+export function getCustomCubeLuts(): CinematicLutSpec[] {
+  return Array.from(CUSTOM_CUBE_LUTS.values());
+}
+
+function rgbFloatToHex(r: number, g: number, b: number): string {
+  const toByte = (v: number) => Math.max(0, Math.min(255, Math.round(v * 255)));
+  return `#${[toByte(r), toByte(g), toByte(b)].map((bVal) => bVal.toString(16).padStart(2, '0')).join('')}`.toUpperCase();
+}
+
+/**
+ * Parse a standard Adobe / Resolve `.cube` 3D LUT file and register it as a
+ * `CinematicLutSpec` so both preview and export apply its color transform.
+ */
+export function parseCubeLut(content: string, fallbackName = 'Custom 3D LUT'): CinematicLutSpec {
+  let title = fallbackName.replace(/\.cube$/i, '').trim() || 'Custom 3D LUT';
+  const triplets: Array<[number, number, number]> = [];
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const titleMatch = /^TITLE\s+"?([^"]+)"?$/i.exec(line);
+    if (titleMatch) {
+      title = titleMatch[1]!.trim() || title;
+      continue;
+    }
+    if (/^(LUT_3D_SIZE|LUT_1D_SIZE|DOMAIN_MIN|DOMAIN_MAX)\b/i.test(line)) continue;
+    const parts = line.split(/\s+/).map(Number);
+    if (parts.length >= 3 && parts.slice(0, 3).every((n) => Number.isFinite(n))) {
+      triplets.push([clamp01(parts[0]!), clamp01(parts[1]!), clamp01(parts[2]!)]);
+    }
+  }
+  const first = triplets[0] ?? [0.04, 0.05, 0.08];
+  const last = triplets[triplets.length - 1] ?? [0.98, 0.96, 0.92];
+  const mid = triplets[Math.floor(triplets.length / 2)] ?? [0.5, 0.5, 0.5];
+  const lumaMid = 0.2126 * mid[0] + 0.7152 * mid[1] + 0.0722 * mid[2];
+  const lumaSpan = Math.max(0.1, (0.2126 * last[0] + 0.7152 * last[1] + 0.0722 * last[2]) - (0.2126 * first[0] + 0.7152 * first[1] + 0.0722 * first[2]));
+  const spec: CinematicLutSpec = {
+    id: `cube_${slugifyId(title) || 'custom'}`,
+    name: title,
+    description: `Imported .cube 3D LUT (${triplets.length} lattice points).`,
+    contrast: Number(Math.max(-0.4, Math.min(0.6, (lumaSpan - 0.85) * 0.8)).toFixed(2)),
+    saturation: Number(Math.max(-0.5, Math.min(0.5, (Math.max(...mid) - Math.min(...mid)) * 0.6)).toFixed(2)),
+    temperature: Number(Math.max(-0.5, Math.min(0.5, (last[0] - last[2]) * 0.5)).toFixed(2)),
+    gamma: Number(Math.max(0.75, Math.min(1.3, 0.5 + lumaMid)).toFixed(2)),
+    shadowsHex: rgbFloatToHex(first[0], first[1], first[2]),
+    highlightsHex: rgbFloatToHex(last[0], last[1], last[2]),
+    tintStrength: 0.16,
+  };
+  return registerCustomCubeLut(spec);
+}
+
 export function resolveCinematicLut(table: string | undefined): CinematicLutSpec | null {
   if (!table || table === 'none' || table === 'normal') return null;
+  if (CUSTOM_CUBE_LUTS.has(table)) return CUSTOM_CUBE_LUTS.get(table)!;
   const slug = slugifyId(table);
+  for (const custom of CUSTOM_CUBE_LUTS.values()) {
+    if (custom.id === slug || custom.name.toLowerCase() === table.toLowerCase()) return custom;
+  }
   return (
     CINEMATIC_LUTS.find(
       (item) => item.id === table || item.id === slug || item.name.toLowerCase() === table.toLowerCase(),
@@ -1016,9 +1077,62 @@ export const TEXT_STYLE_PRESETS: readonly TextStylePresetSpec[] = [
   { id: 'celestial_starlight_glow', name: 'Celestial Starlight Glow', fontFamily: 'Cinzel Decorative', fontWeight: 700, fontSize: 92, color: '#FFFFFF', gradientToColor: '#E0E7FF', background: '#090D16', backgroundOpacity: 0.35, strokeColor: '#A5B4FC', strokeWidth: 1, shadowColor: '#818CF8', shadowBlur: 30, glowColor: '#C7D2FE', glowBlur: 28, letterSpacing: 2.5 },
 ]; // 34 text style presets
 
+const USER_TEXT_STYLES_KEY = 'browser-record.user-text-styles.v1';
+
+export function getUserTextStylePresets(): TextStylePresetSpec[] {
+  try {
+    if (typeof localStorage === 'undefined') return [];
+    const raw = localStorage.getItem(USER_TEXT_STYLES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as TextStylePresetSpec[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveUserTextStylePreset(
+  name: string,
+  style: Partial<TextStylePresetSpec>,
+): TextStylePresetSpec {
+  const cleanName = name.trim() || 'My Style';
+  const preset: TextStylePresetSpec = {
+    id: `user_${slugifyId(cleanName)}_${Date.now().toString(36)}`,
+    name: `★ ${cleanName}`,
+    fontFamily: style.fontFamily ?? 'Inter',
+    fontWeight: style.fontWeight ?? 800,
+    fontSize: style.fontSize ?? 84,
+    color: normalizeHexColor(style.color ?? '#FFFFFF'),
+    gradientToColor: style.gradientToColor ? normalizeHexColor(style.gradientToColor) : undefined,
+    background: normalizeHexColor(style.background ?? '#000000'),
+    backgroundOpacity: style.backgroundOpacity ?? 0.5,
+    strokeColor: normalizeHexColor(style.strokeColor ?? '#000000'),
+    strokeWidth: style.strokeWidth ?? 2,
+    shadowColor: normalizeHexColor(style.shadowColor ?? '#000000'),
+    shadowBlur: style.shadowBlur ?? 16,
+    glowColor: style.glowColor,
+    glowBlur: style.glowBlur,
+    letterSpacing: style.letterSpacing ?? 0.5,
+  };
+  const existing = getUserTextStylePresets().filter((p) => p.name !== preset.name);
+  const next = [preset, ...existing].slice(0, 24);
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(USER_TEXT_STYLES_KEY, JSON.stringify(next));
+    }
+  } catch {
+    // Ignore storage quota errors
+  }
+  return preset;
+}
+
 export function resolveTextStylePreset(name: string | undefined): TextStylePresetSpec | null {
   if (!name || name === 'none' || name === 'normal') return null;
   const slug = slugifyId(name);
+  const userMatch = getUserTextStylePresets().find(
+    (item) => item.id === name || item.id === slug || item.name.toLowerCase() === name.toLowerCase(),
+  );
+  if (userMatch) return userMatch;
   return (
     TEXT_STYLE_PRESETS.find(
       (item) => item.id === name || item.id === slug || item.name.toLowerCase() === name.toLowerCase(),
@@ -1104,6 +1218,49 @@ function build406FontFamilies(): readonly string[] {
 }
 
 export const FONT_FAMILIES: readonly string[] = build406FontFamilies();
+
+const BUNDLED_OR_SYSTEM_FONTS = new Set([
+  'inter',
+  'roboto',
+  'open sans',
+  'montserrat',
+  'poppins',
+  'lato',
+  'jetbrains mono',
+  'fira code',
+  'ibm plex mono',
+  'menlo',
+  'consolas',
+  'monaco',
+  'courier prime',
+  'helvetica',
+  'arial',
+  'georgia',
+  'times new roman',
+]);
+
+export function checkFontAvailability(family: string | undefined): {
+  available: boolean;
+  badge: 'ready' | 'fallback';
+  resolvedStack: string;
+} {
+  const clean = (family ?? 'Inter').split(',')[0]!.replace(/['"]/g, '').trim() || 'Inter';
+  const isBundled = BUNDLED_OR_SYSTEM_FONTS.has(clean.toLowerCase());
+  let browserChecked = false;
+  if (typeof document !== 'undefined' && document.fonts && typeof document.fonts.check === 'function') {
+    try {
+      browserChecked = document.fonts.check(`16px "${clean}"`);
+    } catch {
+      browserChecked = false;
+    }
+  }
+  const available = isBundled || browserChecked;
+  return {
+    available,
+    badge: available ? 'ready' : 'fallback',
+    resolvedStack: available ? `"${clean}", Inter, system-ui, sans-serif` : 'Inter, system-ui, sans-serif',
+  };
+}
 
 export function resolveFontFamily(family: string | undefined): string {
   if (!family) return 'Inter';

@@ -150,9 +150,14 @@ export function oppositeCorner(corner: PresenterProps['corner']): PresenterProps
 }
 
 /** Easing for keyframe interpolation. */
-export function ease(value: number, easing: 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out'): number {
+export function ease(
+  value: number,
+  easing: 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out' | 'hold',
+): number {
   const t = clamp(value, 0, 1);
   switch (easing) {
+    case 'hold':
+      return t < 1 ? 0 : 1;
     case 'ease-in':
       return t * t;
     case 'ease-out':

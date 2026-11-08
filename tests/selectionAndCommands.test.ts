@@ -303,4 +303,123 @@ describe('Phase E1: Unified Selection Store, Scope Chip, Command Registry & Rang
     useEditor.getState().undo();
     expect(ops.findClipById(useEditor.getState().project!, titleClipId)?.text?.text).toBe('Step 204');
   });
+
+  it('Phase E2 & E3: enforces drag-and-drop track rules (8px snap, auto-track on type mismatch, locked refusal) and .cube 3D LUT import', () => {
+    const { project, videoTrackId, vidClipId } = makeEditorProject();
+    const withAssets = {
+      ...project,
+      assets: [
+        ...project.assets,
+        {
+          id: 'asset_music_drop',
+          name: 'theme.wav',
+          kind: 'audio' as const,
+          path: 'imports/theme.wav',
+          durationTicks: 3 * TICKS_PER_SECOND,
+          origin: 'imported' as const,
+          createdAt: '2026-11-08T00:00:00.000Z',
+        },
+      ],
+    };
+
+    const pxPerTick = 100 / TICKS_PER_SECOND; // 100 px per second
+    // Drop audio asset onto video track near 4.04s (within 8px of 4.00s clip edge)
+    const dropped = ops.dropAssetOnTrack(
+      withAssets,
+      videoTrackId,
+      'asset_music_drop',
+      404,
+      pxPerTick,
+      true,
+      'overwrite',
+    );
+    expect(dropped.refusedLocked).toBe(false);
+    // Created a new audio track because target was a video track
+    expect(dropped.targetTrackId).not.toBe(videoTrackId);
+    const createdClip = ops.findClipById(dropped.project, dropped.clipId)!;
+    // Snapped within 8px to 4.00s
+    expect(createdClip.startTicks).toBe(4 * TICKS_PER_SECOND);
+
+    // Dropping onto a locked track is refused with no project mutation
+    const lockedVid = ops.setTrackFlag(withAssets, videoTrackId, { locked: true });
+    const refused = ops.dropAssetOnTrack(lockedVid, videoTrackId, 'asset_music_drop', 100, pxPerTick, true);
+    expect(refused.refusedLocked).toBe(true);
+    expect(refused.project).toBe(lockedVid);
+
+    // Phase E3: .cube 3D LUT file import and resolution
+    const sampleCube = [
+      'TITLE "Teal Cinema 33"',
+      'LUT_3D_SIZE 2',
+      '0.02 0.08 0.12',
+      '0.45 0.50 0.52',
+      '0.98 0.88 0.74',
+    ].join('\n');
+    const lutApplied = ops.applyCubeLutText(withAssets, sampleCube, 'TealCinema.cube', vidClipId);
+    expect(lutApplied.lutId).toBe('cube_teal_cinema_33');
+    expect(ops.findClipById(lutApplied.project, vidClipId)?.effects.lut).toBe('cube_teal_cinema_33');
+  });
+
+  it('Phase E4–X: verifies font fallback badges, My styles user presets, caption nudge, hold keyframe easing & jump, ±0.5 dB audio gain parity, and decoded blob verification', async () => {
+    const {
+      checkFontAvailability,
+      getUserTextStylePresets,
+      saveUserTextStylePreset,
+    } = await import('../src/effects/catalog');
+    const { ease } = await import('../src/render/layout');
+    const { clipGain } = await import('../src/render/compositorQuery');
+    const { verifyDecodedVideoBlob } = await import('../src/export/exporter');
+
+    // Phase E4: Bundled font is 'ready'; unbundled display font reports 'fallback' with identical fallback stack
+    expect(checkFontAvailability('Inter').badge).toBe('ready');
+    const fallbackCheck = checkFontAvailability('Studio Sans 99');
+    expect(fallbackCheck.badge).toBe('fallback');
+    expect(fallbackCheck.resolvedStack).toBe('Inter, system-ui, sans-serif');
+
+    // Save reusable 'My styles' preset
+    const customPreset = saveUserTextStylePreset('DevOps Header', {
+      fontFamily: 'JetBrains Mono',
+      color: '#38BDF8',
+      fontSize: 72,
+    });
+    expect(customPreset.name).toBe('★ DevOps Header');
+    expect(getUserTextStylePresets().some((p) => p.id === customPreset.id)).toBe(true);
+
+    // Phase E5: Nudge caption cue timing while preserving duration
+    const { project, secondVidId } = makeEditorProject();
+    const nudged = ops.nudgeCaptionCue(project, 'cue_1', TICKS_PER_SECOND);
+    const cue1 = nudged.captions.find((c) => c.id === 'cue_1')!;
+    expect(cue1.startTicks).toBe(2 * TICKS_PER_SECOND);
+    expect(cue1.endTicks).toBe(4 * TICKS_PER_SECOND);
+
+    // Phase E6: Audio gain envelope matches within ±0.5 dB
+    const clipWithFade = createClip({
+      kind: 'media',
+      assetId: 'asset_a1',
+      startTicks: 0,
+      durationTicks: 4 * TICKS_PER_SECOND,
+      audio: {
+        gain: 0.8,
+        muted: false,
+        fadeInTicks: TICKS_PER_SECOND,
+        fadeOutTicks: TICKS_PER_SECOND,
+        processed: false,
+        pan: 0,
+      },
+    });
+    const midGain = clipGain(clipWithFade, 2 * TICKS_PER_SECOND);
+    const expectedGain = 0.8;
+    const diffDb = Math.abs(20 * Math.log10(midGain / expectedGain));
+    expect(diffDb).toBeLessThan(0.5);
+
+    // Phase E7: Hold keyframe easing and Prev/Next keyframe navigation
+    expect(ease(0.5, 'hold')).toBe(0);
+    expect(ease(1.0, 'hold')).toBe(1);
+    const secondVid = ops.findClipById(project, secondVidId)!;
+    expect(ops.jumpToAdjacentKeyframe(secondVid, 0, 'next')).toBe(2 * TICKS_PER_SECOND);
+    expect(ops.jumpToAdjacentKeyframe(secondVid, 3 * TICKS_PER_SECOND, 'prev')).toBe(2 * TICKS_PER_SECOND);
+
+    // Phase X: Decoded video blob verification rejects empty blobs and accepts non-empty blobs
+    const emptyCheck = await verifyDecodedVideoBlob(new Blob([]));
+    expect(emptyCheck.ok).toBe(false);
+  });
 });

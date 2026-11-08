@@ -26,6 +26,7 @@ import {
   clamp01,
   normalizeHexColor,
   normalizeRotationDeg,
+  parseCubeLut,
   resolveAlphaMaskShape,
   resolveBoundaryTransition,
   resolveCaptionStylePreset,
@@ -41,7 +42,7 @@ import {
 } from '../effects/catalog';
 import { voicePresetOptions } from '../audio/chain';
 import { SFX_PRESETS, type SfxKind } from '../audio/sfx';
-import { sourceTicks } from '../render/compositorQuery';
+import { snapTargets, snapTicks, sourceTicks } from '../render/compositorQuery';
 
 export type EditMode = 'insert' | 'overwrite';
 
@@ -3346,6 +3347,111 @@ export function resetPresenterPosition(project: Project, clipId: string): Projec
     },
   });
 }
+
+/**
+ * Phase E2 Drag-and-Drop rules:
+ * - Insertion time = dropX converted to ticks at current pxPerTick; snaps within 8 px when snapping is on.
+ * - Target = track under pointer. If asset kind doesn't fit track kind, creates a new track of the right
+ *   type immediately after targetTrack in ONE undo step.
+ * - Locked tracks refuse drops (refusedLocked = true, project unchanged).
+ */
+export function dropAssetOnTrack(
+  project: Project,
+  targetTrackId: string,
+  assetId: string,
+  dropX: number,
+  pxPerTick: number,
+  snapping: boolean,
+  mode: EditMode = 'overwrite',
+): { project: Project; clipId: string; targetTrackId: string; refusedLocked: boolean } {
+  const targetTrack = project.tracks.find((t) => t.id === targetTrackId);
+  const asset = assetById(project, assetId);
+  if (!targetTrack || !asset) {
+    return { project, clipId: '', targetTrackId, refusedLocked: false };
+  }
+  if (targetTrack.locked) {
+    return { project, clipId: '', targetTrackId, refusedLocked: true };
+  }
+
+  const safePxPerTick = Math.max(pxPerTick, 0.00002);
+  const rawTicks = Math.max(0, Math.round(dropX / safePxPerTick));
+  const thresholdTicks = 8 / safePxPerTick;
+  const startTicks = snapping ? snapTicks(rawTicks, snapTargets(project), thresholdTicks) : rawTicks;
+
+  const requiredTrackKind: Track['kind'] = asset.kind === 'audio' ? 'audio' : 'video';
+  let working = project;
+  let destinationTrackId = targetTrack.id;
+
+  if (targetTrack.kind !== requiredTrackKind) {
+    const newTrack = createTrack(
+      requiredTrackKind,
+      requiredTrackKind === 'audio' ? `${asset.name} Audio` : `${asset.name} Video`,
+    );
+    const targetIdx = working.tracks.findIndex((t) => t.id === targetTrack.id);
+    const nextTracks = [...working.tracks];
+    nextTracks.splice(targetIdx + 1, 0, newTrack);
+    working = { ...working, tracks: nextTracks };
+    destinationTrackId = newTrack.id;
+  }
+
+  const added = addAssetClip(working, destinationTrackId, assetId, startTicks, { mode });
+  return {
+    project: added.project,
+    clipId: added.clipId,
+    targetTrackId: destinationTrackId,
+    refusedLocked: false,
+  };
+}
+
+/**
+ * Parse a `.cube` 3D LUT file and apply it to the target clip (or create an Adjustment Layer if no clip is given).
+ */
+export function applyCubeLutText(
+  project: Project,
+  cubeContent: string,
+  fileName = 'Custom.cube',
+  clipId?: string,
+): { project: Project; lutId: string } {
+  const spec = parseCubeLut(cubeContent, fileName);
+  if (clipId && findClip(project, clipId)) {
+    return { project: applyLUT(project, clipId, spec.id), lutId: spec.id };
+  }
+  const adj = addAdjustmentLayer(project, 0, undefined, spec.id);
+  return { project: adj.project, lutId: spec.id };
+}
+
+/** Nudge a caption cue's start and end timestamps by `deltaTicks`, preserving duration. */
+export function nudgeCaptionCue(project: Project, cueId: string, deltaTicks: Tick): Project {
+  return {
+    ...project,
+    captions: project.captions.map((cue) => {
+      if (cue.id !== cueId) return cue;
+      const duration = Math.max(1, cue.endTicks - cue.startTicks);
+      const nextStart = Math.max(0, cue.startTicks + deltaTicks);
+      return { ...cue, startTicks: nextStart, endTicks: nextStart + duration };
+    }),
+  };
+}
+
+/** Find the previous or next keyframe timestamp (in clip-local ticks) on a clip. */
+export function jumpToAdjacentKeyframe(
+  clip: Clip,
+  currentLocalTicks: Tick,
+  direction: 'prev' | 'next',
+): Tick | null {
+  const allTicks = Array.from(
+    new Set(clip.keyframes.flatMap((group) => group.keyframes.map((kf) => kf.atTicks))),
+  ).sort((a, b) => a - b);
+  if (allTicks.length === 0) return null;
+  if (direction === 'prev') {
+    const prev = allTicks.filter((t) => t < currentLocalTicks);
+    return prev.length > 0 ? prev[prev.length - 1]! : allTicks[0]!;
+  }
+  const next = allTicks.filter((t) => t > currentLocalTicks);
+  return next.length > 0 ? next[0]! : allTicks[allTicks.length - 1]!;
+}
+
+
 
 
 

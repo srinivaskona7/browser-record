@@ -9,6 +9,8 @@ import {
   BOUNDARY_TRANSITIONS,
   TEXT_STYLE_PRESETS,
   CINEMATIC_LUTS,
+  getCustomCubeLuts,
+  getUserTextStylePresets,
   type VideoEffectSpec,
   type ColorFilterSpec,
   type CinematicLutSpec,
@@ -188,9 +190,9 @@ export function EditorToolLibrary({ tool, project, clip }: { tool: EditorTool; p
         : tool === 'filters'
           ? COLOR_FILTERS
           : tool === 'adjust'
-            ? CINEMATIC_LUTS
+            ? [...getCustomCubeLuts(), ...CINEMATIC_LUTS]
             : tool === 'text'
-              ? TEXT_STYLE_PRESETS
+              ? [...getUserTextStylePresets(), ...TEXT_STYLE_PRESETS]
               : [];
   const active =
     tool === 'effects'
@@ -288,12 +290,29 @@ export function EditorToolLibrary({ tool, project, clip }: { tool: EditorTool; p
           )}
           {tool === 'transitions' && <p className="field-hint">Applies to the selected clip’s incoming boundary.</p>}
           {tool === 'adjust' && (
-            <Button
-              size="sm"
-              onClick={() => apply('Add adjustment layer', (p) => ops.addAdjustmentLayer(p, playhead).project)}
-            >
-              + Add adjustment layer at playhead
-            </Button>
+            <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+              <Button
+                size="sm"
+                onClick={() => apply('Add adjustment layer', (p) => ops.addAdjustmentLayer(p, playhead).project)}
+              >
+                + Add adjustment layer
+              </Button>
+              <label className="btn btn-sm" style={{ cursor: 'pointer' }}>
+                + Import .cube LUT
+                <input
+                  type="file"
+                  accept=".cube,text/plain"
+                  hidden
+                  onChange={async (event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = '';
+                    if (!file) return;
+                    const text = await file.text();
+                    apply(`Import .cube LUT: ${file.name}`, (p) => ops.applyCubeLutText(p, text, file.name, clip?.id).project);
+                  }}
+                />
+              </label>
+            </div>
           )}
           {tool !== 'text' && (
             <Button

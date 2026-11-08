@@ -17,6 +17,8 @@ import {
   TEXT_ANIMATIONS,
   TEXT_STYLE_PRESETS,
   VIDEO_EFFECTS,
+  checkFontAvailability,
+  saveUserTextStylePreset,
 } from '../effects/catalog';
 import { Badge, Button, Field, Panel, Select, Slider, Toggle } from './components';
 import { DeleteProjectDialog } from './DeleteProjectDialog';
@@ -95,8 +97,8 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
         <Field label="Speed" hint="Cuts and captions keep their timing; linked audio follows the visual cut.">
           <Slider
             label="Playback rate"
-            min={0.25}
-            max={4}
+            min={0.1}
+            max={10}
             step={0.05}
             value={clip.speed}
             format={(value) => `${value.toFixed(2)}×`}
@@ -426,13 +428,52 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
               ]}
             />
           </Field>
-          <Field label="Font family (406 fonts)">
-            <Select
-              value={clip.text.fontFamily}
-              onChange={(value) => apply(`Font: ${value}`, (p) => ops.setTextFont(p, clip.id, value))}
-              options={FONT_FAMILIES.map((family) => ({ value: family, label: family }))}
-            />
+          <Field
+            label="Font family (406 fonts)"
+            hint={
+              checkFontAvailability(clip.text.fontFamily).badge === 'fallback'
+                ? 'Font not installed locally — rendering with fallback font in preview & export'
+                : 'Font verified and ready for preview & export'
+            }
+          >
+            <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+              <Select
+                value={clip.text.fontFamily}
+                onChange={(value) => apply(`Font: ${value}`, (p) => ops.setTextFont(p, clip.id, value))}
+                options={FONT_FAMILIES.map((family) => ({ value: family, label: family }))}
+              />
+              <Badge tone={checkFontAvailability(clip.text.fontFamily).badge === 'ready' ? 'ok' : 'warn'}>
+                {checkFontAvailability(clip.text.fontFamily).badge}
+              </Badge>
+            </div>
           </Field>
+          <div className="row" style={{ gap: 6 }}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                const saved = saveUserTextStylePreset(clip.label ?? 'Custom Style', {
+                  fontFamily: clip.text!.fontFamily,
+                  fontWeight: clip.text!.fontWeight,
+                  fontSize: clip.text!.fontSize,
+                  color: clip.text!.color,
+                  gradientToColor: clip.text!.gradientToColor,
+                  background: clip.text!.background,
+                  backgroundOpacity: clip.text!.backgroundOpacity,
+                  strokeColor: clip.text!.strokeColor,
+                  strokeWidth: clip.text!.strokeWidth,
+                  shadowColor: clip.text!.shadowColor,
+                  shadowBlur: clip.text!.shadowBlur,
+                  glowColor: clip.text!.glowColor,
+                  glowBlur: clip.text!.glowBlur,
+                  letterSpacing: clip.text!.letterSpacing,
+                });
+                apply(`Save style: ${saved.name}`, (p) => ops.applyTextPreset(p, clip.id, saved.id));
+              }}
+            >
+              + Save to My styles
+            </Button>
+          </div>
           <Field label="Emphasis style (5 styles)">
             <Select
               value={clip.text.emphasis ?? 'none'}
@@ -645,6 +686,30 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
       </InspectorSection>
 
       <InspectorSection title="Keyframes">
+        <div className="row" style={{ gap: 6, marginBottom: 6 }}>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={clip.keyframes.length === 0}
+            onClick={() => {
+              const target = ops.jumpToAdjacentKeyframe(clip, localTicks, 'prev');
+              if (target !== null) useEditor.getState().setPlayhead(clip.startTicks + target);
+            }}
+          >
+            ◀ Prev key
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={clip.keyframes.length === 0}
+            onClick={() => {
+              const target = ops.jumpToAdjacentKeyframe(clip, localTicks, 'next');
+              if (target !== null) useEditor.getState().setPlayhead(clip.startTicks + target);
+            }}
+          >
+            Next key ▶
+          </Button>
+        </div>
         {clip.keyframes.length === 0 && <div className="field-hint">No keyframes.</div>}
         {clip.keyframes.map((group) => (
           <div key={group.target} className="row" style={{ justifyContent: 'space-between', fontSize: 12 }}>

@@ -23,6 +23,7 @@ import {
   setClipClipboard,
   type EditorTool,
 } from './EditorTools';
+import { selectAllClips } from '../editor/selection';
 import { SvgIcon } from './icons';
 
 export function EditPage() {
@@ -46,6 +47,7 @@ export function EditPage() {
   const [showEndScreenGuide, setShowEndScreenGuide] = useState(false);
   const [muted, setMuted] = useState(true);
   const [tool, setTool] = useState<EditorTool>('media');
+  const [drawerOpen, setDrawerOpen] = useState(true);
   const [toolSearch, setToolSearch] = useState('');
   const [inspectorVisible, setInspectorVisible] = useState(true);
   const [advancedPreview, setAdvancedPreview] = useState(false);
@@ -184,11 +186,87 @@ export function EditPage() {
         }
         return;
       }
+      if (meta && event.key.toLowerCase() === 'a') {
+        event.preventDefault();
+        state.setSelection(selectAllClips(project));
+        return;
+      }
+      if (event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+        if (state.selectedClipIds.length > 0) {
+          event.preventDefault();
+          const step = (event.shiftKey ? 10 : 1) * frameTicks * (event.key === 'ArrowLeft' ? -1 : 1);
+          const id = state.selectedClipIds[0]!;
+          state.apply('Nudge clip', (p) => ops.moveClip(p, id, step));
+        }
+        return;
+      }
       switch (event.key) {
         case ' ':
           event.preventDefault();
           setPlaying(!state.playing);
           break;
+        case 'j':
+        case 'J':
+          event.preventDefault();
+          setPlaying(false);
+          setPlayhead(Math.max(0, state.playheadTicks - TICKS_PER_SECOND));
+          break;
+        case 'k':
+        case 'K':
+          event.preventDefault();
+          setPlaying(false);
+          break;
+        case 'l':
+        case 'L':
+          event.preventDefault();
+          setPlaying(true);
+          break;
+        case 'n':
+        case 'N':
+          event.preventDefault();
+          state.setSnapping(!state.snapping);
+          break;
+        case 'Z':
+          if (event.shiftKey) {
+            event.preventDefault();
+            const durSec = Math.max(5, project.durationTicks / TICKS_PER_SECOND);
+            state.setZoom(Math.max(20, Math.min(300, Math.round(900 / durSec))));
+          }
+          break;
+        case '[':
+          if (state.selectedClipIds[0]) {
+            event.preventDefault();
+            const id = state.selectedClipIds[0];
+            state.apply('Trim start to playhead', (p) => ops.trimStart(p, id, state.playheadTicks));
+          }
+          break;
+        case ']':
+          if (state.selectedClipIds[0]) {
+            event.preventDefault();
+            const id = state.selectedClipIds[0];
+            state.apply('Trim end to playhead', (p) => ops.trimEnd(p, id, state.playheadTicks));
+          }
+          break;
+        case 'i':
+        case 'I': {
+          event.preventDefault();
+          const end =
+            state.selection.kind === 'range' && state.selection.end > state.playheadTicks
+              ? state.selection.end
+              : state.playheadTicks + 2 * TICKS_PER_SECOND;
+          state.selectRange(state.playheadTicks, end);
+          break;
+        }
+        case 'o':
+        case 'O': {
+          event.preventDefault();
+          const start =
+            state.selection.kind === 'range' && state.selection.start < state.playheadTicks
+              ? state.selection.start
+              : Math.max(0, state.playheadTicks - 2 * TICKS_PER_SECOND);
+          state.selectRange(start, state.playheadTicks);
+          break;
+        }
         case 'ArrowLeft': {
           event.preventDefault();
           const delta = event.shiftKey ? TICKS_PER_SECOND : frameTicks;
@@ -217,7 +295,9 @@ export function EditPage() {
         case 'Backspace':
           if (state.selectedClipIds.length > 0) {
             event.preventDefault();
-            state.apply('Ripple delete', (p) => ops.deleteClips(p, state.selectedClipIds, 'ripple'));
+            state.apply('Delete clip', (p) =>
+              ops.deleteClips(p, state.selectedClipIds, event.shiftKey ? 'ripple' : 'lift'),
+            );
           }
           break;
         case 'm':
@@ -231,7 +311,7 @@ export function EditPage() {
           }));
           break;
         case 'Escape':
-          state.selectClips([]);
+          state.stepBackSelection();
           break;
         default:
           break;
@@ -280,13 +360,18 @@ export function EditPage() {
         {EDITOR_TOOLS.filter((item) => item.label.toLowerCase().includes(toolSearch.toLowerCase())).map((item) => (
           <button
             key={item.id}
-            aria-pressed={tool === item.id}
+            aria-pressed={drawerOpen && tool === item.id}
             onClick={() => {
               if (item.id === 'voiceover') {
                 setVoiceoverOpen(true);
                 return;
               }
+              if (tool === item.id) {
+                setDrawerOpen((prev) => !prev);
+                return;
+              }
               setTool(item.id as EditorTool);
+              setDrawerOpen(true);
               if (item.id === 'captions') setPanel('captions');
               else if (item.id === 'adjust') setPanel('effects');
             }}
@@ -296,9 +381,11 @@ export function EditPage() {
           </button>
         ))}
       </nav>
+      {drawerOpen && (
       <aside className="editor-side scroll-thin">
         {tool === 'media' || tool === 'more' ? <MediaBin key={tool} initialTab={tool === 'more' ? 'add' : 'uploads'} project={project} onOpenVoiceover={() => setVoiceoverOpen(true)} /> : tool === 'captions' ? <CaptionsPanel project={project} onOpenTranscribe={() => setTranscribeOpen(true)} /> : <EditorToolLibrary key={tool} tool={tool} project={project} clip={selectedClip?.clip ?? null} />}
       </aside>
+      )}
 
       <div className="editor-center">
         <Preview

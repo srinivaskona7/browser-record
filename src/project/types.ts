@@ -149,7 +149,7 @@ export interface Transform {
   flipY?: boolean;
 }
 
-export type Easing = 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out';
+export type Easing = 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out' | 'hold';
 
 export type KeyframeTarget =
   | 'x'

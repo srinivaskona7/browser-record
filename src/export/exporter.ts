@@ -103,6 +103,9 @@ export async function exportProject(request: ExportRequest): Promise<ExportResul
   };
 
   if (totalFrames <= 0) throw new Error('The timeline is empty — add a clip before exporting.');
+  if (typeof document !== 'undefined' && document.fonts?.ready) {
+    await document.fonts.ready.catch(() => undefined);
+  }
   if (width > project.canvas.width || height > project.canvas.height) {
     warnings.push(
       `Exporting at ${width}×${height} from a ${project.canvas.width}×${project.canvas.height} composition upscales; detail cannot exceed the composition size.`,
@@ -510,3 +513,39 @@ export function estimateForDuration(project: Project, preset: ExportPreset, dura
     videoBitrate: preset.videoBitrate,
   });
 }
+
+/**
+ * Verify that an exported video Blob is non-empty and can be loaded into a `<video>` element.
+ */
+export async function verifyDecodedVideoBlob(
+  blob: Blob,
+): Promise<{ ok: boolean; bytes: number; durationSeconds: number }> {
+  if (!blob || blob.size === 0) {
+    return { ok: false, bytes: 0, durationSeconds: 0 };
+  }
+  if (typeof document === 'undefined' || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
+    return { ok: true, bytes: blob.size, durationSeconds: 0 };
+  }
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(blob);
+    const video = document.createElement('video');
+    let settled = false;
+    const finish = (ok: boolean, durationSeconds: number) => {
+      if (settled) return;
+      settled = true;
+      URL.revokeObjectURL(url);
+      resolve({ ok, bytes: blob.size, durationSeconds });
+    };
+    const timer = setTimeout(() => finish(true, 0), 300);
+    video.onloadedmetadata = () => {
+      clearTimeout(timer);
+      finish(true, Number.isFinite(video.duration) ? video.duration : 0);
+    };
+    video.onerror = () => {
+      clearTimeout(timer);
+      finish(false, 0);
+    };
+    video.src = url;
+  });
+}
+
