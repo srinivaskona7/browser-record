@@ -49,6 +49,12 @@ import {
   openFloatingCamera,
   type FloatingCameraSession,
 } from '../capture/floatingCamera';
+import {
+  describeCapMode,
+  resolveCameraLayerVisibility,
+  type CameraDuplicationMode,
+  type CapMode,
+} from '../capture/stateMachine';
 import type { PresenterProps, Project } from '../project/types';
 
 type Stage = 'idle' | 'selecting' | 'ready' | 'countdown' | 'recording' | 'paused' | 'finishing';
@@ -65,9 +71,14 @@ interface PreparedSourceSummary {
 export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
   const project = useEditor((state) => state.project);
   const session = useSession();
+  const [capMode, setCapMode] = useState<CapMode>('studio');
   const [openEditorAfterStop, setOpenEditorAfterStop] = useState(true);
   const [showMonitor, setShowMonitor] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(true);
+  const [controlsHidden, setControlsHidden] = useState(false);
+  const [floatingClosedDuringTake, setFloatingClosedDuringTake] = useState(false);
+  const [cameraDuplicationMode, setCameraDuplicationMode] = useState<CameraDuplicationMode>('baked-in-screen');
+  const [postRecordTitle, setPostRecordTitle] = useState('');
   const [hideFloatingPreview, setHideFloatingPreview] = useState(false);
   const [hideMonitorDuringDisplay, setHideMonitorDuringDisplay] = useState(true);
   const stoppingRef = useRef(false);
@@ -422,11 +433,15 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         onToggleHidePreview: () => setHideFloatingPreview((prev) => !prev),
         onClose: () => {
           floatingCameraRef.current = null;
-          if (mountedRef.current) setFloatingCameraOpen(false);
+          if (mountedRef.current) {
+            setFloatingCameraOpen(false);
+            setFloatingClosedDuringTake(true);
+          }
         },
       });
       floatingCameraRef.current = pipSession;
       setFloatingCameraOpen(true);
+      setFloatingClosedDuringTake(false);
     } catch (err) {
       setError(`Floating camera unavailable: ${(err as Error).message}`);
     }
@@ -814,7 +829,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     }
   };
 
-  const stopTake = async () => {
+  const stopTake = async (forcePostRecordSheet = false) => {
     const capture = captureRef.current;
     if (!capture || stoppingRef.current) return;
     stoppingRef.current = true;
@@ -822,6 +837,9 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     try {
       const result = await capture.stop();
       captureRef.current = null;
+      setActiveTakeId(null);
+      setControlsHidden(false);
+      setPostRecordTitle(project?.name ?? `Take ${result.takeId}`);
       setTakeResult(result);
       // The live stats belong to a take that no longer exists; leaving them up
       // showed "recording" and 0 B committed after the take had finished.
@@ -829,9 +847,11 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       sessionStats.current = null;
       setStage('idle');
       void refreshTakes();
-      // Preserve the review dialog for warnings or an insertion failure.
-      // insertTake only navigates after the take has been placed successfully.
-      if (openEditorAfterStop && result.warnings.length === 0) insertTake(result);
+      // Preserve the review / post-record sheet when in Instant mode, when
+      // forcePostRecordSheet is requested ("Stop & export"), or when warnings occurred.
+      const shouldOpenEditorImmediately =
+        !forcePostRecordSheet && capMode !== 'instant' && openEditorAfterStop && result.warnings.length === 0;
+      if (shouldOpenEditorImmediately) insertTake(result);
     } catch (err) {
       setError(`Could not finalise the take: ${(err as Error).message}`);
       setStage('idle');
@@ -868,15 +888,21 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     setMicMuted(!track.enabled);
   };
 
-  // Keyboard control while a take runs: P pause/resume, S stop & keep, M marker,
-  // U mute. Ignored while typing, with modifiers held, or when no take is live.
+  // Keyboard control while a take runs: Space/P pause/resume, S or Cmd/Ctrl+Shift+S stop,
+  // M/K marker, U mute, H hide/show controls, Esc restore hidden controls.
   useEffect(() => {
     if (stage !== 'recording' && stage !== 'paused') return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target as HTMLElement | null;
       if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 's') {
+        event.preventDefault();
+        void stopTake();
+        return;
+      }
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
       switch (event.key.toLowerCase()) {
+        case ' ':
         case 'p':
           togglePause();
           break;
@@ -884,10 +910,17 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
           void stopTake();
           break;
         case 'm':
+        case 'k':
           addMarker();
           break;
         case 'u':
           if (micOn) toggleMicMute();
+          break;
+        case 'h':
+          setControlsHidden((prev) => !prev);
+          break;
+        case 'escape':
+          if (controlsHidden) setControlsHidden(false);
           break;
         default:
           return;
@@ -898,7 +931,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     return () => window.removeEventListener('keydown', onKey);
     // The handlers read refs and the current stage; re-binding on stage is enough.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stage, micOn]);
+  }, [stage, micOn, controlsHidden]);
 
   /** Self-view position after the user drags it; null keeps the default corner. Remembered across reloads. */
   const SELF_VIEW_KEY = 'browser-record.self-view-position';
@@ -1188,6 +1221,16 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     (stage === 'countdown' || stage === 'recording' || stage === 'paused') &&
     screenOn &&
     (actualReturnedSurface.surface === 'screen' || (!actualReturnedSurface.surface && surface === 'screen'));
+  const cameraLayerRule = useMemo(
+    () =>
+      resolveCameraLayerVisibility({
+        cameraOn,
+        surface: screenOn ? (actualReturnedSurface.surface ?? surface) : null,
+        hideFloatingPreview,
+        duplicationMode: cameraDuplicationMode,
+      }),
+    [cameraOn, screenOn, actualReturnedSurface.surface, surface, hideFloatingPreview, cameraDuplicationMode],
+  );
 
   useEffect(() => {
     floatingCameraRef.current?.updateRecordingState({
@@ -1449,12 +1492,11 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         </div>
       )}
 
-      {/* Loom/Cap-style floating control pill. It stays out of the settings
-          table's way and keeps Stop reachable at any scroll position; live
-          per-source figures stay in the Take panel below. */}
+      {/* Loom/Cap-style floating control pill. Supports hiding/collapsing into a minimal
+          pill during recording so controls never block screen content. */}
       {(stage === 'countdown' || stage === 'recording' || stage === 'paused' || stage === 'finishing') && (
         <div
-          className={`rec-bar rec-dock${stage === 'paused' ? ' paused' : ''}`}
+          className={`rec-bar rec-dock${stage === 'paused' ? ' paused' : ''}${controlsHidden ? ' rec-dock-collapsed' : ''}`}
           role="group"
           aria-label="Recording controls"
         >
@@ -1464,73 +1506,141 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
               {stage === 'countdown' ? 'STARTING' : stage === 'paused' ? 'PAUSED' : stage === 'finishing' ? 'SAVING' : 'REC'}
             </strong>
             <span className="rec-timer" aria-hidden="true">{stage === 'countdown' ? countdown : formatElapsed(elapsedSeconds)}</span>
-            {(stats?.markers.length ?? 0) > 0 && (
+            {!controlsHidden && (stats?.markers.length ?? 0) > 0 && (
               <span className="rec-markers">
                 {stats?.markers.length} marker{stats?.markers.length === 1 ? '' : 's'}
               </span>
             )}
-            {(error || warnings[0]) && (
+            {!controlsHidden && (error || warnings[0]) && (
               <Badge tone={error ? 'danger' : 'warn'}>{error ?? warnings[0]}</Badge>
             )}
           </span>
 
           {stage === 'finishing' && <span className="field-hint">Flushing segments to disk…</span>}
           {stage === 'countdown' && <span className="field-hint">Waiting for the countdown</span>}
-          {(stage === 'recording' || stage === 'paused') && (
-            <div className="rec-dock-actions">
-              <RecordingActions paused={stage === 'paused'} openEditor={openEditorAfterStop} onPause={togglePause} onStop={() => void stopTake()} />
-              <Button size="sm" variant="ghost" onClick={addMarker} title="Shortcut: M">
-                Marker
-              </Button>
-              {cameraOn && (
+          {(stage === 'recording' || stage === 'paused') &&
+            (controlsHidden ? (
+              <div className="rec-dock-actions">
                 <Button
                   size="sm"
                   variant="ghost"
-                  aria-pressed={hideFloatingPreview}
-                  onClick={() => setHideFloatingPreview((prev) => !prev)}
-                  title="Hide floating camera preview on display while continuing to record camera separately for the editor"
+                  aria-label="Show recording controls"
+                  title="Restore full recording controls (Shortcut: H)"
+                  onClick={() => setControlsHidden(false)}
                 >
-                  {hideFloatingPreview ? 'Show floating preview' : 'Hide floating preview'}
+                  Show controls ▴
                 </Button>
-              )}
-              <Button
-                size="sm"
-                variant="ghost"
-                className="rec-restart"
-                onClick={() => setRestartOpen(true)}
-                aria-label="Restart take"
-                title="Restart: discards this take, then counts down again"
-              >
-                ↻
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setDiscardOpen(true)}
-                title="Abandon this take without keeping it"
-              >
-                Discard
-              </Button>
-              {micOn && (
+              </div>
+            ) : (
+              <div className="rec-dock-actions">
+                <RecordingActions paused={stage === 'paused'} openEditor={openEditorAfterStop && capMode !== 'instant'} onPause={togglePause} onStop={() => void stopTake()} />
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={toggleMicMute}
-                  aria-label={micMuted ? 'Unmute the microphone' : 'Mute the microphone'}
-                  title={micMuted ? 'Microphone is muted in the recording' : 'Mute the microphone'}
+                  onClick={() => void stopTake(true)}
+                  title="Stop and open Quick Export / Post-record sheet"
                 >
-                  {micMuted ? 'Unmute' : 'Mute'}
+                  Stop &amp; export
                 </Button>
-              )}
-
-            </div>
-          )}
+                <Button size="sm" variant="ghost" onClick={addMarker} title="Shortcut: M or K">
+                  Marker
+                </Button>
+                {cameraOn && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    aria-pressed={hideFloatingPreview}
+                    onClick={() => setHideFloatingPreview((prev) => !prev)}
+                    title="Hide floating camera preview on display while continuing to record camera separately for the editor"
+                  >
+                    {hideFloatingPreview ? 'Show floating preview' : 'Hide floating preview'}
+                  </Button>
+                )}
+                {cameraOn && floatingClosedDuringTake && !floatingCameraOpen && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => void toggleFloatingCamera()}
+                    title="Reopen the floating Document PiP camera & controls window"
+                  >
+                    Reopen floating controls
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="rec-restart"
+                  onClick={() => setRestartOpen(true)}
+                  aria-label="Restart take"
+                  title="Restart: discards this take, then counts down again"
+                >
+                  ↻
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setDiscardOpen(true)}
+                  title="Abandon this take without keeping it"
+                >
+                  Discard
+                </Button>
+                {micOn && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={toggleMicMute}
+                    aria-label={micMuted ? 'Unmute the microphone' : 'Mute the microphone'}
+                    title={micMuted ? 'Microphone is muted in the recording' : 'Mute the microphone'}
+                  >
+                    {micMuted ? 'Unmute' : 'Mute'}
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-label="Hide recording controls"
+                  title="Collapse recording controls into a minimal pill (Shortcut: H)"
+                  onClick={() => setControlsHidden(true)}
+                >
+                  Hide controls ▾
+                </Button>
+              </div>
+            ))}
         </div>
       )}
 
       <div className="split-grid">
         <div className="stack" style={{ gap: 14 }}>
-          <Panel title="Sources" bodyClassName="stack">
+          <Panel
+            title="Sources"
+            action={
+              <Button size="sm" variant="ghost" onClick={() => setShowMonitor((prev) => !prev)}>
+                {showMonitor ? 'Hide monitor' : 'Show monitor'}
+              </Button>
+            }
+            bodyClassName="stack"
+          >
+            <div className="cap-mode-switcher" role="group" aria-label="Capture mode">
+              {(['instant', 'studio', 'screenshot'] as const).map((m) => {
+                const info = describeCapMode(m);
+                return (
+                  <button
+                    key={m}
+                    type="button"
+                    disabled={stage !== 'idle' && stage !== 'ready'}
+                    aria-pressed={capMode === m}
+                    onClick={() => {
+                      setCapMode(m);
+                      if (m === 'instant') setOpenEditorAfterStop(false);
+                      else if (m === 'studio') setOpenEditorAfterStop(true);
+                    }}
+                  >
+                    <span>{info.label}</span>
+                    <span className="mode-sub">{info.subLabel}</span>
+                  </button>
+                );
+              })}
+            </div>
             <div className="capture-mode-grid" role="group" aria-label="Recording source">
               {([
                 { id: 'screen', iconName: 'screen' as IconName, label: 'Display' },
@@ -1580,9 +1690,14 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                       : 'Audio-only mode — records narration from your microphone.'}
               </p>
               {stage === 'idle' && (
-                <Button size="sm" variant="ghost" onClick={() => void chooseSource()}>
-                  Choose source…
-                </Button>
+                <div className="row" style={{ gap: 6 }}>
+                  <Button size="sm" variant="ghost" onClick={() => void chooseSource()}>
+                    Choose source…
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => useSession.getState().setRoute('edit')}>
+                    New blank edit →
+                  </Button>
+                </div>
               )}
             </div>
 
@@ -1602,7 +1717,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                 <br />
                 • <strong>Floating PiP &amp; controls</strong>: Open the floating camera via Document PiP from an explicit click. Closing the floating window leaves the take running. Chrome lets you move the PiP window, while the editor controls the separate presenter layer in the export.
               </div>
-              <div className="row" style={{ gap: 12, flexWrap: 'wrap' }}>
+              <div className="row" style={{ gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
                 <Toggle
                   label="Hide floating preview (keep recording camera separately for editor to avoid double bubble)"
                   checked={hideFloatingPreview}
@@ -1613,7 +1728,28 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                   checked={hideMonitorDuringDisplay}
                   onChange={setHideMonitorDuringDisplay}
                 />
+                {cameraOn && screenOn && surface !== 'tab' && (
+                  <Select
+                    label="Camera export mode on Display/Window"
+                    value={cameraDuplicationMode}
+                    onChange={(v) => setCameraDuplicationMode(v as CameraDuplicationMode)}
+                    options={[
+                      { value: 'baked-in-screen', label: 'Bubble baked into screen (no duplicate layer in export)' },
+                      { value: 'separate-layer', label: 'Separate camera layer in editor/export' },
+                    ]}
+                  />
+                )}
+                {cameraOn && floatingClosedDuringTake && !floatingCameraOpen && (
+                  <Button size="sm" variant="primary" onClick={() => void toggleFloatingCamera()}>
+                    Reopen floating controls
+                  </Button>
+                )}
               </div>
+              {cameraOn && (
+                <div className="field-hint">
+                  Camera export rule: <strong>{cameraLayerRule.summary}</strong>
+                </div>
+              )}
             </div>
 
             <div className="cap-device-rows">
@@ -2290,7 +2426,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
           setTakeResult(null);
           void refreshTakes();
         }}
-        title="Recording finished"
+        title="Recording finished — Post-record actions"
         footer={
           <>
             <Button
@@ -2304,11 +2440,19 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
               variant="ghost"
               disabled={downloadingOriginals}
               onClick={() => {
-                // Keep the files, but make them re-addable from the takes panel.
+                // Append the finished take to the timeline and stay on Record for the next take!
+                if (takeResult && project) {
+                  const startAt = nextFreeStart(project);
+                  const placed = placeTake(project, takeResult.assets, startAt, presenter);
+                  useEditor.getState().apply('Append recorded take', () => ({
+                    ...placed,
+                    assets: [...project.assets, ...takeResult.assets],
+                  }));
+                }
                 setTakeResult(null);
                 useSession
                   .getState()
-                  .pushToast("Take kept on disk. Use 'Add to timeline' in the takes panel to insert it.", 'info');
+                  .pushToast('Take appended to timeline. Ready to record the next take.', 'info');
                 void refreshTakes();
               }}
             >
@@ -2321,17 +2465,38 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
             >
               {downloadingOriginals ? 'Preparing…' : 'Download originals'}
             </Button>
-            <Button variant="ghost" onClick={() => void saveSessionToFolder()}>
-              {session.storageMode === 'fsa' ? 'Save a copy…' : 'Save to a folder…'}
-            </Button>
-            <Button variant="primary" onClick={() => insertTake(takeResult!)}>
+            <Button
+              variant={capMode === 'instant' ? 'ghost' : 'primary'}
+              onClick={() => insertTake(takeResult!)}
+            >
               Edit recording
+            </Button>
+            <Button
+              variant={capMode === 'instant' ? 'primary' : 'ghost'}
+              onClick={() => {
+                if (!takeResult) return;
+                insertTake(takeResult);
+                useSession.getState().setRoute('export');
+              }}
+            >
+              Export now ↗
             </Button>
           </>
         }
       >
         {takeResult && (
           <div className="stack">
+            <Field label="Take title">
+              <input
+                className="input"
+                aria-label="Take title"
+                value={postRecordTitle}
+                onChange={(event) => {
+                  setPostRecordTitle(event.target.value);
+                  useEditor.getState().apply('Rename project', (p) => ops.renameProject(p, event.target.value));
+                }}
+              />
+            </Field>
             <div className="row" style={{ gap: 20, flexWrap: 'wrap' }}>
               <Stat label="Duration" value={formatElapsed(takeResult.durationTicks / TICKS_PER_SECOND)} />
               <Stat label="Assets" value={takeResult.assets.length} />

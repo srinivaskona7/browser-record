@@ -248,4 +248,70 @@ it('opens Document Picture-in-Picture with camera + controls, toggles Hide previ
   delete window.documentPictureInPicture;
 });
 
+it('enforces the 3-case Camera-Duplication Rule so export contains the camera at most once, and supports hiding/restoring recording controls and Instant post-record export', async () => {
+  const { resolveCameraLayerVisibility, canTransitionStage } = await import('../src/capture/stateMachine');
+
+  // State machine transitions
+  expect(canTransitionStage('idle', 'selecting')).toBe(true);
+  expect(canTransitionStage('selecting', 'ready')).toBe(true);
+  expect(canTransitionStage('ready', 'countdown')).toBe(true);
+  expect(canTransitionStage('recording', 'paused')).toBe(true);
+  expect(canTransitionStage('paused', 'finishing')).toBe(true);
+  expect(canTransitionStage('finishing', 'postRecord')).toBe(true);
+
+  // Case 1: Display capture + visible floating bubble + baked-in-screen default => do NOT composite camera a second time
+  const case1 = resolveCameraLayerVisibility({
+    cameraOn: true,
+    surface: 'screen',
+    hideFloatingPreview: false,
+    duplicationMode: 'baked-in-screen',
+  });
+  expect(case1.compositeInExport).toBe(false);
+
+  // Case 2: Display capture + Hide floating preview active => composite separate camera layer once in export
+  const case2 = resolveCameraLayerVisibility({
+    cameraOn: true,
+    surface: 'screen',
+    hideFloatingPreview: true,
+    duplicationMode: 'baked-in-screen',
+  });
+  expect(case2.compositeInExport).toBe(true);
+
+  // Case 3: Browser tab capture => PiP is not in tab stream, so composite separate camera layer once in export
+  const case3 = resolveCameraLayerVisibility({
+    cameraOn: true,
+    surface: 'tab',
+    hideFloatingPreview: false,
+    duplicationMode: 'baked-in-screen',
+  });
+  expect(case3.compositeInExport).toBe(true);
+
+  // Verify hideable recording controls (.rec-dock) and Instant mode Post-Record Quick Export sheet
+  await act(async () => root.render(<RecordPage />));
+  await act(async () => button('Instant').click());
+  await act(() => {
+    checkbox('Camera').click();
+    checkbox('Microphone').click();
+    const countdown = host.querySelector('select[aria-label="Recording countdown"]') as HTMLSelectElement;
+    countdown.value = '0';
+    countdown.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await act(async () => button('Start recording').click());
+
+  // Collapse recording controls into minimal pill and restore them
+  await act(async () => button('Hide controls ▾').click());
+  expect(host.querySelector('.rec-dock.rec-dock-collapsed')).not.toBeNull();
+  await act(async () => button('Show controls ▴').click());
+  expect(host.querySelector('.rec-dock.rec-dock-collapsed')).toBeNull();
+
+  // Stopping in Instant mode opens the Post-Record Quick Export sheet with Export now, Edit recording, Record another take, Discard
+  await act(async () => button('Stop & review').click());
+  expect(host.textContent).toContain('Recording finished — Post-record actions');
+  expect(host.textContent).toContain('Export now ↗');
+  expect(host.textContent).toContain('Edit recording');
+  expect(host.textContent).toContain('Record another take');
+  expect(host.textContent).toContain('Discard this take');
+});
+
+
 

@@ -25,14 +25,20 @@ interface ProjectRow {
   error?: string;
 }
 
+function aspectLabel(width?: number, height?: number): string {
+  if (!width || !height) return '16:9';
+  if (width === height) return '1:1 Square';
+  if (width < height) return width * 5 === height * 4 ? '4:5 Portrait' : '9:16 Vertical';
+  return width >= 3840 ? '16:9 4K' : '16:9 HD';
+}
+
 export function ProjectsPage() {
   const session = useSession();
   const [rows, setRows] = useState<ProjectRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const [name, setName] = useState('Linux fundamentals — lesson 1');
-  // Conservative first run: 1080p. 4K is available once a capture/benchmark
-  // shows the machine can sustain it.
   const [resolution, setResolution] = useState<'4k' | '1440' | '1080' | 'vertical' | 'square'>('1080');
   const [fps, setFps] = useState<'30' | '60'>('30');
   const [segmentSeconds, setSegmentSeconds] = useState('10');
@@ -74,27 +80,38 @@ export function ProjectsPage() {
     }
   })();
 
+  const filteredRows = rows.filter((row) => {
+    if (!searchQuery.trim()) return true;
+    const label = `${row.project?.name ?? ''} ${row.folder}`.toLowerCase();
+    return label.includes(searchQuery.trim().toLowerCase());
+  });
+
   return (
     <div className="page">
       <header className="page-head">
         <div>
-          <h1 className="page-title">Browser 4K Studio</h1>
+          <span className="eyebrow">LOCAL CREATOR WORKSPACE</span>
+          <h1 className="page-title">Projects &amp; Recordings</h1>
           <p className="page-subtitle">
-            Record, edit and caption technical lessons entirely on this machine. Media never leaves your disk; there is
-            no account and no upload path in the core workflow.
+            Start a new screen recording, import media directly into the editor, or reopen a saved project.
           </p>
         </div>
-        <div className="row" style={{ gap: 8 }}>
-          <Badge tone={features.fileSystemAccess ? 'ok' : 'warn'}>
-            {features.fileSystemAccess ? 'Folder access' : 'No folder access'}
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <Badge tone={workspace?.info.mode === 'fsa' ? 'ok' : 'warn'}>
+            {workspace ? `${workspace.info.name} (${workspace.info.mode === 'fsa' ? 'Disk folder' : 'Browser storage'})` : 'No workspace connected'}
           </Badge>
-          <Badge tone={features.webCodecsEncode ? 'ok' : 'warn'}>{features.webCodecsEncode ? 'WebCodecs' : 'No WebCodecs'}</Badge>
-          <Badge tone={features.webGpu ? 'ok' : 'neutral'}>{features.webGpu ? 'WebGPU' : 'CPU only'}</Badge>
+          <Badge tone={features.webCodecsEncode ? 'ok' : 'warn'}>{features.webCodecsEncode ? 'WebCodecs ready' : 'WebM fallback'}</Badge>
         </div>
       </header>
 
-      <div className="stack" style={{ gap: 18, maxWidth: 1180 }}>
-        <Panel title="Start here" bodyClassName="stack">
+      <div className="stack" style={{ gap: 16, maxWidth: 1180 }}>
+        <section className="projects-hero" aria-label="Quick creation actions">
+          <div className="stack" style={{ gap: 4 }}>
+            <strong style={{ fontSize: 16 }}>Create or continue</strong>
+            <span className="field-hint">
+              Recordings and edits stay 100% local on this machine — no account or cloud upload required.
+            </span>
+          </div>
           <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
             <Button
               variant="primary"
@@ -107,21 +124,17 @@ export function ProjectsPage() {
                 }
               }}
             >
-              Start recording
+              ● Start recording
             </Button>
-            <Button
-              onClick={() => importInput.current?.click()}
-              disabled={quickImporting}
-            >
-              {quickImporting ? 'Importing…' : 'Import a video'}
+            <Button onClick={() => importInput.current?.click()} disabled={quickImporting}>
+              {quickImporting ? 'Importing…' : '+ Import media'}
+            </Button>
+            <Button onClick={() => setCreateOpen(true)} disabled={!workspace}>
+              + New project
             </Button>
             <Button variant="ghost" onClick={() => session.setRoute('edit')}>
-              Open the editor
+              Open the editor ↗
             </Button>
-          </div>
-          <div className="field-hint">
-            No project is needed first. Recording creates a temporary local session automatically; importing creates one
-            and places the clip on a timeline. Nothing is uploaded.
           </div>
           <input
             ref={importInput}
@@ -130,15 +143,15 @@ export function ProjectsPage() {
             multiple
             hidden
             onChange={async (event) => {
-              // Copy before resetting the input: clearing `value` empties the
-              // live FileList too, which made this handler silently do nothing.
               const files = Array.from(event.target.files ?? []);
               event.target.value = '';
               if (files.length === 0) return;
               setQuickImporting(true);
               try {
-                await importMediaIntoSession(files);
-                session.setRoute('edit');
+                const outcome = await importMediaIntoSession(files);
+                if (outcome.imported.length > 0) {
+                  session.setRoute('edit');
+                }
               } catch (error) {
                 session.pushToast(`Could not import: ${(error as Error).message}`, 'error');
               } finally {
@@ -146,56 +159,170 @@ export function ProjectsPage() {
               }
             }}
           />
-        </Panel>
+        </section>
 
-        <Panel title="Workspace" action={<Button size="sm" variant="ghost" onClick={() => session.setRoute('diagnostics')}>Diagnostics</Button>}>
-          {workspace ? (
-            <div className="stack" style={{ gap: 12 }}>
-              <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
-                <div>
-                  <div style={{ fontWeight: 600 }}>{workspace.info.name}</div>
-                  <div className="field-hint">
-                    {workspace.info.mode === 'fsa' ? 'A real folder on disk. Files are readable outside this app.' : 'Browser-managed storage (OPFS). Export to disk to keep long-term copies.'}
-                  </div>
-                </div>
-                <div className="row" style={{ gap: 8 }}>
-                  <Button size="sm" onClick={() => setCreateOpen(true)} variant="primary">
-                    New project
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => projectBundleInput.current?.click()}>
-                    Import project
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => void refresh()}>
-                    {loading ? 'Refreshing…' : 'Refresh'}
-                  </Button>
-                </div>
+        {project && (
+          <div className="hint-card row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+            <div>
+              <span className="eyebrow">ACTIVE SESSION</span>
+              <div style={{ fontWeight: 600, fontSize: 14 }}>
+                {project.name} · <span className="mono">{project.canvas.width}×{project.canvas.height}</span> ·{' '}
+                {formatClock(project.durationTicks)}
               </div>
-              {project && (
-                <div className="hint-card">
-                  Open: <strong>{project.name}</strong> —{' '}
-                  <Button size="sm" variant="ghost" onClick={() => session.setRoute('edit')}>
-                    Back to editing
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => void duplicateCurrentProject()}>
-                    Duplicate
-                  </Button>
-                </div>
-              )}
             </div>
-          ) : (
-            <div className="stack" style={{ gap: 12 }}>
-              <div className="field-hint">
-                Choose a folder once per browser profile. The browser remembers the grant, and the project folder stays
-                portable: originals, proxies, captions and exports live inside it.
+            <div className="row" style={{ gap: 8 }}>
+              <Button size="sm" variant="primary" onClick={() => session.setRoute('edit')}>
+                Resume editing ↗
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => session.setRoute('record')}>
+                Record another take
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => void duplicateCurrentProject()}>
+                Duplicate
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {workspace ? (
+          <Panel
+            title={`Saved Projects (${filteredRows.length})`}
+            action={
+              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                <input
+                  className="input"
+                  aria-label="Search projects"
+                  placeholder="Filter projects…"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  style={{ width: 180, padding: '4px 8px', fontSize: 12 }}
+                />
+                <Button size="sm" variant="ghost" onClick={() => projectBundleInput.current?.click()}>
+                  Import .json
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => void refresh()}>
+                  {loading ? 'Refreshing…' : 'Refresh'}
+                </Button>
+              </div>
+            }
+          >
+            {filteredRows.length === 0 ? (
+              <EmptyState
+                title={rows.length === 0 ? 'No projects in this workspace yet' : 'No matching projects'}
+                action={
+                  <Button variant="primary" onClick={() => setCreateOpen(true)}>
+                    Create project
+                  </Button>
+                }
+              >
+                Each project stores its timeline, recordings, imported assets, and captions in its own folder.
+              </EmptyState>
+            ) : (
+              <div className="grid-cards">
+                {filteredRows.map((row) => (
+                  <div key={row.folder} className="project-card">
+                    <div>
+                      <div className="project-card-preview" style={{ marginBottom: 10 }}>
+                        <Badge tone="ok">{aspectLabel(row.project?.canvas.width, row.project?.canvas.height)}</Badge>
+                        <span className="mono" style={{ fontSize: 12, color: 'var(--text-2)' }}>
+                          {formatClock(row.project?.durationTicks ?? 0)}
+                        </span>
+                      </div>
+                      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                        <strong style={{ fontSize: 14.5 }}>{row.project?.name ?? row.folder}</strong>
+                        {row.error && <Badge tone="danger">unreadable</Badge>}
+                      </div>
+                      {row.error ? (
+                        <div className="danger-card" style={{ marginTop: 8 }}>{row.error}</div>
+                      ) : (
+                        <div className="field-hint mono" style={{ marginTop: 4 }}>
+                          {row.project?.canvas.width}×{row.project?.canvas.height} ·{' '}
+                          {row.project ? `${row.project.canvas.fps.num}/${row.project.canvas.fps.den}` : '30'} fps ·{' '}
+                          {row.project ? new Date(row.project.updatedAt).toLocaleDateString() : '—'}
+                        </div>
+                      )}
+                    </div>
+
+                    {!row.error && (
+                      <div className="row" style={{ gap: 16 }}>
+                        <Stat
+                          label="Clips"
+                          value={row.project?.tracks.reduce((sum, track) => sum + track.clips.length, 0) ?? 0}
+                        />
+                        <Stat label="Assets" value={row.project?.assets.length ?? 0} />
+                      </div>
+                    )}
+
+                    <div className="row" style={{ justifyContent: 'space-between', gap: 6, flexWrap: 'wrap' }}>
+                      {row.project && (
+                        <div className="row" style={{ gap: 6 }}>
+                          <Button
+                            size="sm"
+                            variant="primary"
+                            aria-label={`Open ${row.project.name}`}
+                            onClick={() => void openProjectFolder(row.folder)}
+                          >
+                            Open
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={async () => {
+                              await openProjectFolder(row.folder);
+                              session.setRoute('record');
+                            }}
+                          >
+                            Record take
+                          </Button>
+                        </div>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        aria-label={`Delete ${row.project?.name ?? row.folder}`}
+                        onClick={() => setDeleteTarget(row)}
+                      >
+                        Delete…
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Panel>
+        ) : null}
+
+        <Panel
+          title="Workspace &amp; Storage Location"
+          action={
+            <Button size="sm" variant="ghost" onClick={() => session.setRoute('diagnostics')}>
+              Diagnostics
+            </Button>
+          }
+        >
+          <div className="stack" style={{ gap: 10 }}>
+            <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+              <div className="field-hint" style={{ maxWidth: 620 }}>
+                {workspace
+                  ? workspace.info.mode === 'fsa'
+                    ? `Connected to disk folder "${workspace.info.name}". Recordings and exports are written directly to your computer.`
+                    : `Using browser-managed storage (${workspace.info.name}). Choose a disk folder in Chrome or Edge for permanent file-system storage.`
+                  : 'Connect a local folder on disk (Chrome/Edge) or use private browser storage (OPFS).'}
               </div>
               <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                <Button variant="primary" onClick={() => void connectDiskWorkspace()} disabled={!features.fileSystemAccess}>
+                <Button
+                  size="sm"
+                  variant={workspace ? 'ghost' : 'primary'}
+                  onClick={() => void connectDiskWorkspace()}
+                  disabled={!features.fileSystemAccess}
+                >
                   Choose a folder
                 </Button>
-                <Button onClick={() => void connectFallbackWorkspace()} disabled={!features.opfs}>
+                <Button size="sm" variant="ghost" onClick={() => void connectFallbackWorkspace()} disabled={!features.opfs}>
                   Use browser storage instead
                 </Button>
                 <Button
+                  size="sm"
                   variant="ghost"
                   onClick={async () => {
                     try {
@@ -206,144 +333,29 @@ export function ProjectsPage() {
                         restored ? 'success' : 'error',
                       );
                     } catch (error) {
-                      // A granted handle can still point at an unmounted folder.
                       session.pushToast(`Could not reopen the workspace: ${(error as Error).message}`, 'error');
                     }
                   }}
                 >
                   Reopen last workspace
                 </Button>
-                <Button variant="ghost" onClick={() => projectBundleInput.current?.click()}>
+                <Button size="sm" variant="ghost" onClick={() => projectBundleInput.current?.click()}>
                   Import project bundle
                 </Button>
               </div>
-              {!features.fileSystemAccess && (
-                <div className="warn-card">
-                  This browser does not expose the File System Access API. Recording can still use browser storage,
-                  but long 4K sessions are not safe there — export often, or use Chrome or Edge for folder-backed
-                  recording. <span className="mono">{session.browser.name} {session.browser.version} on {session.browser.os}</span>
-                </div>
-              )}
             </div>
-          )}
-          <input
-            ref={projectBundleInput}
-            type="file"
-            accept=".json,application/json"
-            hidden
-            onChange={async (event) => {
-              const file = event.target.files?.[0];
-              if (file) await importProjectBundle(file);
-              event.target.value = '';
-            }}
-          />
-          {session.workspaceError && <div className="danger-card" style={{ marginTop: 12 }}>{session.workspaceError}</div>}
-        </Panel>
-
-        {workspace && (
-          <Panel title={`Projects (${rows.length})`}>
-            {rows.length === 0 ? (
-              <EmptyState
-                title="No projects in this folder"
-                action={
-                  <Button variant="primary" onClick={() => setCreateOpen(true)}>
-                    Create the first project
-                  </Button>
-                }
-              >
-                Each project gets its own folder with structured media subdirectories and an autosaved manifest.
-              </EmptyState>
-            ) : (
-              <div className="grid-cards">
-                {rows.map((row) => (
-                  <div
-                    key={row.folder}
-                    className="panel"
-                    style={{ textAlign: 'left', padding: 16 }}
-                  >
-                    <div className="row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
-                      <strong style={{ fontSize: 14 }}>{row.project?.name ?? row.folder}</strong>
-                      <div className="row" style={{ gap: 6 }}>
-                        {row.error ? <Badge tone="danger">unreadable</Badge> : <Badge>project</Badge>}
-                        {row.project && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            aria-label={`Open ${row.project.name}`}
-                            onClick={() => void openProjectFolder(row.folder)}
-                          >
-                            Open
-                          </Button>
-                        )}
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          aria-label={`Delete ${row.project?.name ?? row.folder}`}
-                          onClick={() => setDeleteTarget(row)}
-                        >
-                          Delete…
-                        </Button>
-                      </div>
-                    </div>
-                    {row.error ? (
-                      <div className="danger-card" style={{ marginTop: 8 }}>{row.error}</div>
-                    ) : (
-                      <div className="stack" style={{ gap: 10 }}>
-                        <div className="row" style={{ gap: 18 }}>
-                          <Stat label="Duration" value={formatClock(row.project?.durationTicks ?? 0)} />
-                          <Stat label="Clips" value={row.project?.tracks.reduce((sum, track) => sum + track.clips.length, 0) ?? 0} />
-                          <Stat label="Assets" value={row.project?.assets.length ?? 0} />
-                        </div>
-                        <div className="field-hint mono">
-                          {row.project?.canvas.width}×{row.project?.canvas.height} ·{' '}
-                          {row.project ? `${row.project.canvas.fps.num}/${row.project.canvas.fps.den}` : '—'} fps · updated{' '}
-                          {row.project ? new Date(row.project.updatedAt).toLocaleString() : '—'}
-                        </div>
-                        <div className="field-hint mono" style={{ fontSize: 10.5 }}>
-                          {row.folder}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </Panel>
-        )}
-
-        <Panel title="What this build can and cannot promise">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Capability</th>
-                <th>Reality</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>True 4K capture</td>
-                <td>Only when the display or window itself is 3840×2160. Smaller sources are upscaled and labelled as such. 1080p is the default capture target.</td>
-              </tr>
-              <tr>
-                <td>System audio</td>
-                <td>Offered only when the browser actually returns an audio track from the picker. Chrome does not on every surface.</td>
-              </tr>
-              <tr>
-                <td>Auto zoom, cursor telemetry</td>
-                <td>Manual zoom/pan keyframes. A web page cannot read OS-wide pointer input; nothing is invented.</td>
-              </tr>
-              <tr>
-                <td>Crash recovery</td>
-                <td>Committed segments survive. The active segment (up to the configured interval) can be lost and is reported, never hidden.</td>
-              </tr>
-              <tr>
-                <td>File size</td>
-                <td>Estimates from duration and bitrate. VBR lands near the target, not exactly on it.</td>
-              </tr>
-            </tbody>
-          </table>
-          <div className="field-hint" style={{ marginTop: 10 }}>
-            Full matrix: <button type="button" className="btn btn-ghost btn-sm" onClick={() => session.setRoute('diagnostics')}>open diagnostics →</button>
+            <input
+              ref={projectBundleInput}
+              type="file"
+              accept=".json,application/json"
+              hidden
+              onChange={async (event) => {
+                const file = event.target.files?.[0];
+                if (file) await importProjectBundle(file);
+                event.target.value = '';
+              }}
+            />
+            {session.workspaceError && <div className="danger-card">{session.workspaceError}</div>}
           </div>
         </Panel>
       </div>
@@ -376,33 +388,33 @@ export function ProjectsPage() {
         }
       >
         <div className="stack">
-          <Field label="Lesson name">
+          <Field label="Project name">
             <input className="input" value={name} onChange={(event) => setName(event.target.value)} autoFocus />
           </Field>
-          <Field label="Canvas" hint="This is the composition size. 1080p is the default; 4K is opt-in because it costs roughly four times the compositing work.">
+          <Field label="Canvas aspect ratio &amp; resolution">
             <Select
               value={resolution}
               onChange={setResolution}
               options={[
-                { value: '4k', label: '3840×2160 — 4K 16:9' },
+                { value: '1080', label: '1920×1080 — 1080p 16:9 (YouTube / LinkedIn)' },
+                { value: '4k', label: '3840×2160 — 4K 16:9 (Studio Master)' },
+                { value: 'vertical', label: '1080×1920 — 9:16 Vertical (Shorts / Reels)' },
+                { value: 'square', label: '1080×1080 — 1:1 Square (Carousel / Post)' },
                 { value: '1440', label: '2560×1440 — 1440p 16:9' },
-                { value: '1080', label: '1920×1080 — 1080p 16:9' },
-                { value: 'vertical', label: '1080×1920 — 9:16 vertical' },
-                { value: 'square', label: '1080×1080 — 1:1 square' },
               ]}
             />
           </Field>
-          <Field label="Frame rate" hint="30 fps is the default for terminal and slide lessons. 60 fps roughly doubles file size for little gain on static content.">
+          <Field label="Frame rate">
             <Select
               value={fps}
               onChange={setFps}
               options={[
-                { value: '30', label: '30 fps' },
-                { value: '60', label: '60 fps (test on this machine first)' },
+                { value: '30', label: '30 fps (recommended)' },
+                { value: '60', label: '60 fps (high motion)' },
               ]}
             />
           </Field>
-          <Field label="Recording segment commit interval" hint="How often recorded bytes are flushed to disk. Shorter means less loss on a crash, more disk commits.">
+          <Field label="Recording segment commit interval">
             <Select
               value={segmentSeconds}
               onChange={setSegmentSeconds}
@@ -415,7 +427,7 @@ export function ProjectsPage() {
             />
           </Field>
           <div className="field-hint">
-            Disk estimate: one hour of 4K at 10 Mbps is about {formatBytes((10e6 * 3600) / 8)} including audio overhead.
+            Estimated disk usage: 1 hour of 1080p is ~{formatBytes((6e6 * 3600) / 8)}.
           </div>
         </div>
       </Dialog>

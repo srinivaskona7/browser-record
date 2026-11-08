@@ -36,6 +36,19 @@
     a browser tab to keep the app out of the recording; the UI states this next
     to "What to share".
 
+## Browser Picture-in-Picture & Floating Camera Support Matrix
+
+| Browser / Platform | Document PiP (`camera + controls`) | Video PiP (`camera only`) | Behavior & Limitations |
+| :--- | :--- | :--- | :--- |
+| **Chrome / Edge 116+ (macOS, Windows, Linux)** | **Supported** (`window.documentPictureInPicture`) | Supported | Opens a floating always-on-top window containing both the styled camera bubble and live recording controls (`REC`/`PAUSED` timer, `Pause`/`Resume`, `Stop`, `Hide preview`). Closing the window leaves the take running. Window has standard Chromium title bar chrome. |
+| **Safari 16+ (macOS)** | Unsupported | **Supported** (`HTMLVideoElement.requestPictureInPicture`) | Floats the live camera video in a macOS Picture-in-Picture window; recording controls remain in the Studio tab. |
+| **Firefox (macOS, Windows, Linux)** | Unsupported | Manual user toggle | Standard DOM `requestPictureInPicture` is not exposed; camera bubble renders in-tab (`.rec-selfview`) and Firefox's built-in PiP toggle can pop out the video. |
+| **Mobile Browsers (iOS Safari, Android Chrome)** | Unsupported | Partial (OS-dependent) | Camera self-view renders inside the responsive recorder viewport. |
+
+### Camera-Duplication Rule on Display vs. Browser Tab Capture
+- **Display (`monitor`) or Window (`window`) capture + Camera ON**: When the floating PiP bubble is visible on the captured screen, `resolveCameraLayerVisibility` defaults to **`Bubble baked into screen`** (`compositeInExport: false`) so the exported video does not composite a second duplicate camera bubble, while still storing the raw `camera.webm` track in the project for Studio re-editing. Alternatively, clicking **`Hide floating preview`** hides the preview on screen while continuing to record `camera.webm` separately for the editor.
+- **Browser tab (`browser`) capture + Camera ON**: Single-tab capture never records the floating PiP window, so the separate camera layer is composited in preview and export (`compositeInExport: true`).
+
 ## Prioritised follow-ups
 
 1. Add a Playwright end-to-end test with fake media devices

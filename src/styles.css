@@ -1,4 +1,5 @@
 @import 'tailwindcss';
+@import './styles/tokens.css';
 
 @theme {
   --font-sans: 'Inter var', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -1538,4 +1539,88 @@ select:disabled {
 .cap-device-row { display: grid; gap: 6px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); }
 .cap-recorder[data-route-hidden='true'] { padding: 0; margin: 0; max-width: none; min-height: 0; height: 0; overflow: visible; }
 .cap-recorder[data-route-hidden='true'] > :not(.rec-dock):not(.rec-selfview) { display: none !important; }
+
+/* Cap-style 3-mode switcher (Instant / Studio / Screenshot) */
+.cap-mode-switcher {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--token-space-1);
+  padding: 4px;
+  border-radius: var(--token-radius-md);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+.cap-mode-switcher button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 6px;
+  border-radius: var(--token-radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--token-font-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+.cap-mode-switcher button[aria-pressed='true'] {
+  background: var(--surface-1);
+  color: var(--text-1);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+}
+.cap-mode-switcher button span.mode-sub {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+/* Hideable / collapsible Cap-style floating recording control bar */
+.rec-dock.rec-dock-collapsed {
+  padding: 6px 12px;
+  gap: 8px;
+  opacity: 0.88;
+}
+.rec-dock.rec-dock-collapsed:hover {
+  opacity: 1;
+}
+
+/* Redesigned Projects Grid & Cards */
+.projects-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 18px 20px;
+  border-radius: var(--token-radius-lg);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 10%, var(--surface-1)), var(--surface-1));
+  border: 1px solid var(--line);
+}
+.project-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  border-radius: var(--token-radius-md);
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.project-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+.project-card-preview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-radius: var(--token-radius-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+
 
