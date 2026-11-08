@@ -53,7 +53,7 @@ export function EditPage() {
   const [showEndScreenGuide, setShowEndScreenGuide] = useState(false);
   const [muted, setMuted] = useState(true);
   const [tool, setTool] = useState<EditorTool>('media');
-  const [drawerOpen, setDrawerOpen] = useState(true);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [toolSearch, setToolSearch] = useState('');
   const [inspectorVisible, setInspectorVisible] = useState(true);
   const [focusMode, setFocusMode] = useState(false);

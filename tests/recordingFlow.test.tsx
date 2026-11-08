@@ -111,7 +111,7 @@ it('stays on the recorder when all imported files fail', async () => {
   expect(useSession.getState().route).toBe('record');
 });
 
-it('appends a new take and places the editor playhead on it without overwriting the previous edit', async () => {
+it('opens a clean timeline containing only the current recorded take at playhead 0', async () => {
   const project = useEditor.getState().project!;
   const previous = createClip({ kind: 'media', assetId: 'previous', startTicks: 0, durationTicks: 8 * TICKS_PER_SECOND });
   project.tracks[0]!.clips = [previous];
@@ -119,8 +119,10 @@ it('appends a new take and places the editor playhead on it without overwriting 
   await startRecording();
   await act(async () => button('Stop & edit').click());
   const updated = useEditor.getState();
-  expect(updated.project!.tracks[0]!.clips).toContainEqual(previous);
-  expect(updated.playheadTicks).toBe(8 * TICKS_PER_SECOND);
+  expect(updated.project!.assets).toEqual(result.assets);
+  expect(updated.project!.tracks.flatMap((t) => t.clips)).toHaveLength(1);
+  expect(updated.project!.tracks[0]!.clips[0]?.assetId).toBe('screen_asset');
+  expect(updated.playheadTicks).toBe(0);
   const selected = updated.project!.tracks.flatMap((t) => t.clips).find((c) => c.id === updated.selectedClipIds[0]);
   expect(selected?.assetId).toBe('screen_asset');
 });

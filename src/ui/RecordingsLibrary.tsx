@@ -210,15 +210,17 @@ export function RecordingsLibrary({
         ? await recoverInterruptedTake(workspace.root, item.projectFolder, item.take.takeId)
         : null;
     const builtAssets = report ? report.assets : buildAssetsFromManifest(item.take.manifest);
-    apply(`Insert take ${item.label}`, (p) => {
-      // Idempotent guard: never insert the same take twice if already present on the timeline
-      const existingTakeIds = new Set(takeIdsOf(p));
-      if (existingTakeIds.has(item.take.takeId)) return p;
-      let next = p;
+    let firstClipId: string | undefined;
+    apply(`Open take ${item.label}`, (p) => {
+      let next: Project = {
+        ...p,
+        tracks: [],
+        assets: [...builtAssets],
+        markers: [],
+        captions: [],
+        durationTicks: 0,
+      };
       for (const asset of builtAssets) {
-        if (!next.assets.some((a) => a.id === asset.id || a.path === asset.path)) {
-          next = ops.upsertAsset(next, asset);
-        }
         const trackName =
           asset.kind === 'video'
             ? /camera/i.test(asset.name)
@@ -232,11 +234,14 @@ export function RecordingsLibrary({
           track = createTrack(asset.kind === 'video' ? 'video' : 'audio', trackName);
           next = ops.addTrack(next, track);
         }
-        const start = track.clips.reduce((m, c) => Math.max(m, c.startTicks + c.durationTicks), 0);
-        next = ops.addAssetClip(next, track.id, asset.id, start, { mode: 'overwrite' }).project;
+        const placed = ops.addAssetClip(next, track.id, asset.id, 0, { mode: 'overwrite' });
+        next = placed.project;
+        if (!firstClipId) firstClipId = placed.clipId;
       }
       return next;
     });
+    useEditor.getState().setPlayhead(0);
+    if (firstClipId) useEditor.getState().selectClips([firstClipId]);
     setRoute('edit');
     await refresh();
     onChanged?.();

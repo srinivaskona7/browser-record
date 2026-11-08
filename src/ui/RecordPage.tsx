@@ -38,7 +38,6 @@ import {
 import { newId } from '../core/ids';
 import type { TakeSummary } from '../workspace/types';
 import * as ops from '../project/ops';
-import { nextFreeStart } from '../project/ops';
 import { createTrack, defaultPresenter } from '../project/factory';
 import { formatBytes } from '../export/presets';
 import { TICKS_PER_SECOND } from '../core/time';
@@ -1148,37 +1147,32 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       useSession.getState().pushToast('This take has no media files, so nothing was added to the timeline.', 'error');
       return;
     }
-    let insertedAt = 0;
     let firstClipId: string | undefined;
     try {
-      useEditor.getState().apply('Add recorded take', (p) => {
-        // Idempotent guard: retrying an interrupted save must not append the same take twice.
-        const existingAssetIds = new Set(p.assets.map((a) => a.id));
-        const newAssets = result.assets.filter((a) => !existingAssetIds.has(a.id));
-        const startTicks = nextFreeStart(p);
-        insertedAt = startTicks;
+      useEditor.getState().apply('Open recorded take', (p) => {
         const effectivePresenter: PresenterProps = {
           ...presenter,
           visible: presenter.visible !== false && cameraLayerRule.compositeInExport,
         };
-        let working = placeTake(
-          { ...p, assets: [...p.assets, ...newAssets] },
+        const cleanBase: Project = {
+          ...p,
+          tracks: [],
+          assets: [...result.assets],
+          markers: [...result.markers],
+          captions: [],
+          durationTicks: 0,
+        };
+        const working = placeTake(
+          cleanBase,
           result.assets,
-          startTicks,
+          0,
           effectivePresenter,
           trimRange,
         );
         const assetIds = new Set(result.assets.map((asset) => asset.id));
-        firstClipId = working.tracks.flatMap((track) => track.clips).find((clip) => clip.assetId && assetIds.has(clip.assetId))?.id;
-        if (result.markers.length > 0 && newAssets.length > 0) {
-          working = {
-            ...working,
-            markers: [
-              ...working.markers,
-              ...result.markers.map((marker) => ({ ...marker, atTicks: marker.atTicks + startTicks })),
-            ],
-          };
-        }
+        firstClipId = working.tracks
+          .flatMap((track) => track.clips)
+          .find((clip) => clip.assetId && assetIds.has(clip.assetId))?.id;
         return working;
       });
     } catch (err) {
@@ -1187,10 +1181,10 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         .pushToast(`Could not add the take to the timeline: ${(err as Error).message}`, 'error');
       return;
     }
-    useEditor.getState().setPlayhead(insertedAt);
+    useEditor.getState().setPlayhead(0);
     if (firstClipId) useEditor.getState().selectClips([firstClipId]);
     setTakeResult(null);
-    useSession.getState().pushToast('Recording added to the timeline.', 'success');
+    useSession.getState().pushToast('Recording opened in the editor.', 'success');
     useSession.getState().setRoute('edit');
   }
 
