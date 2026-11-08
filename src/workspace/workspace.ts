@@ -1,5 +1,6 @@
 import type { Project } from '../project/types';
 import { parseProject, serializeProject } from '../project/serialize';
+import { takeIdsOf } from './takeRefs';
 import {
   WORKSPACE_LAYOUT,
   type DirectoryHandleLike,
@@ -188,6 +189,14 @@ export async function readBlob(root: DirectoryHandleLike, path: string): Promise
   return handle.getFile();
 }
 
+export async function readFile(root: DirectoryHandleLike, path: string): Promise<File | null> {
+  try {
+    return await readBlob(root, path);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Write a file atomically where the browser allows it: write to a temp name,
  * then move it over the target. If move() is unavailable the target is written
@@ -333,8 +342,12 @@ export async function loadProject(root: DirectoryHandleLike, folder: string): Pr
   return loaded;
 }
 
-export async function saveProject(root: DirectoryHandleLike, project: Project): Promise<string> {
-  const folder = projectFolderName(project);
+export async function saveProject(
+  root: DirectoryHandleLike,
+  project: Project,
+  folderOverride?: string,
+): Promise<string> {
+  const folder = folderOverride ?? projectFolderName(project);
   const base = `${WORKSPACE_LAYOUT.projects}/${folder}`;
   await ensureDir(root, base);
   try {
@@ -616,6 +629,282 @@ export async function cleanRecordingsFolder(
 /** Sum of durable bytes per the manifest — what recovery can actually rely on. */
 export function committedBytes(manifest: RecordingManifest): number {
   return manifest.assets.reduce((sum, asset) => sum + asset.committedBytes, 0);
+}
+
+/** Update the human-readable label of a saved take manifest in place. */
+export async function renameTake(
+  root: DirectoryHandleLike,
+  projectFolder: string,
+  takeId: string,
+  label: string,
+): Promise<RecordingManifest | null> {
+  const manifest = await readTakeManifest(root, projectFolder, takeId);
+  if (!manifest) return null;
+  const updated: RecordingManifest = { ...manifest, label: label.trim() || manifest.takeId };
+  await writeTakeManifest(root, projectFolder, updated);
+  return updated;
+}
+
+export interface ClearUnusedTakeCandidate {
+  projectFolder: string;
+  projectName: string;
+  takeId: string;
+  label: string;
+  startedAt: string;
+  durationSeconds: number;
+  bytes: number;
+  sourceSummary: string;
+  status: 'saved' | 'recoverable';
+}
+
+export interface ClearUnusedExcludedTake {
+  projectFolder: string;
+  projectName: string;
+  takeId: string;
+  bytes: number;
+  reason: 'active' | 'used-in-timeline' | 'recoverable-unselected';
+}
+
+export interface ClearUnusedPlan {
+  candidates: ClearUnusedTakeCandidate[];
+  excluded: ClearUnusedExcludedTake[];
+  totalReclaimBytes: number;
+  affectedProjects: Array<{ folder: string; name: string; count: number; bytes: number }>;
+  /** Snapshot fingerprint of referenced and active takes so stale plans are rejected. */
+  fingerprint: string;
+  createdAt: string;
+}
+
+export interface ExecuteClearUnusedResult {
+  ok: boolean;
+  stale: boolean;
+  error?: string;
+  deleted: Array<{ projectFolder: string; takeId: string; bytes: number }>;
+  failed: Array<{ projectFolder: string; takeId: string; reason: string }>;
+  reclaimedBytes: number;
+}
+
+function summarizeTakeDurationSeconds(manifest: RecordingManifest): number {
+  if (manifest.startedAt && manifest.endedAt) {
+    const ms = Date.parse(manifest.endedAt) - Date.parse(manifest.startedAt);
+    if (Number.isFinite(ms) && ms > 0) return Math.round(ms / 100) / 10;
+  }
+  const segCount = Math.max(0, ...manifest.assets.map((a) => a.segments.length));
+  return segCount * (manifest.segmentSeconds || 5);
+}
+
+function summarizeTakeSources(manifest: RecordingManifest): string {
+  const kinds = manifest.assets.map((a) => a.kind);
+  return kinds.length > 0 ? kinds.join(' + ') : 'recording';
+}
+
+async function computeWorkspaceReferenceSnapshot(
+  root: DirectoryHandleLike,
+  folders: readonly string[],
+  currentProjects?: ReadonlyMap<string, Project>,
+  activeTakeIds?: ReadonlySet<string>,
+): Promise<{
+  refsByFolder: Map<string, Set<string>>;
+  namesByFolder: Map<string, string>;
+  fingerprint: string;
+}> {
+  const refsByFolder = new Map<string, Set<string>>();
+  const namesByFolder = new Map<string, string>();
+  const parts: string[] = [];
+  const activeSorted = [...(activeTakeIds ?? [])].sort();
+  parts.push(`active:${activeSorted.join(',')}`);
+
+  for (const folder of [...folders].sort()) {
+    let project = currentProjects?.get(folder) ?? null;
+    if (!project) {
+      try {
+        const loaded = await loadProject(root, folder);
+        project = loaded.project;
+      } catch {
+        project = null;
+      }
+    }
+    const refs = new Set<string>(project ? takeIdsOf(project) : []);
+    refsByFolder.set(folder, refs);
+    namesByFolder.set(folder, project?.name ?? folder);
+    parts.push(`${folder}:${[...refs].sort().join(',')}`);
+  }
+  return {
+    refsByFolder,
+    namesByFolder,
+    fingerprint: parts.join('|'),
+  };
+}
+
+/**
+ * Preview-first planner for "Clear unused recordings".
+ * Excludes active takes, takes referenced anywhere in their owning project,
+ * and recoverable interrupted sessions unless explicitly selected in
+ * `selectedRecoverableTakeIds`.
+ */
+export async function planClearUnusedRecordings(
+  root: DirectoryHandleLike,
+  options: {
+    projectFolder?: string;
+    activeTakeIds?: ReadonlySet<string>;
+    selectedRecoverableTakeIds?: ReadonlySet<string>;
+    currentProjects?: ReadonlyMap<string, Project>;
+  } = {},
+): Promise<ClearUnusedPlan> {
+  const allFolders = await listProjectFolders(root);
+  const folders = options.projectFolder
+    ? allFolders.filter((f) => f === options.projectFolder)
+    : allFolders;
+  const activeSet = options.activeTakeIds ?? new Set<string>();
+  const selectedRecoverable = options.selectedRecoverableTakeIds ?? new Set<string>();
+
+  const snapshot = await computeWorkspaceReferenceSnapshot(
+    root,
+    folders,
+    options.currentProjects,
+    activeSet,
+  );
+
+  const candidates: ClearUnusedTakeCandidate[] = [];
+  const excluded: ClearUnusedExcludedTake[] = [];
+  const byProject = new Map<string, { folder: string; name: string; count: number; bytes: number }>();
+
+  for (const folder of folders) {
+    const projectName = snapshot.namesByFolder.get(folder) ?? folder;
+    const refs = snapshot.refsByFolder.get(folder) ?? new Set<string>();
+    const takes = await listTakes(root, folder);
+    for (const take of takes) {
+      const bytes = committedBytes(take.manifest);
+      const isActive = activeSet.has(take.takeId);
+      const isReferenced = refs.has(take.takeId);
+      const isRecoverable = take.interrupted || take.manifest.status === 'recording';
+
+      if (isActive) {
+        excluded.push({ projectFolder: folder, projectName, takeId: take.takeId, bytes, reason: 'active' });
+        continue;
+      }
+      if (isReferenced) {
+        excluded.push({ projectFolder: folder, projectName, takeId: take.takeId, bytes, reason: 'used-in-timeline' });
+        continue;
+      }
+      if (isRecoverable && !selectedRecoverable.has(take.takeId)) {
+        excluded.push({
+          projectFolder: folder,
+          projectName,
+          takeId: take.takeId,
+          bytes,
+          reason: 'recoverable-unselected',
+        });
+        continue;
+      }
+
+      candidates.push({
+        projectFolder: folder,
+        projectName,
+        takeId: take.takeId,
+        label: take.manifest.label || take.takeId,
+        startedAt: take.manifest.startedAt,
+        durationSeconds: summarizeTakeDurationSeconds(take.manifest),
+        bytes,
+        sourceSummary: summarizeTakeSources(take.manifest),
+        status: isRecoverable ? 'recoverable' : 'saved',
+      });
+      const existing = byProject.get(folder) ?? { folder, name: projectName, count: 0, bytes: 0 };
+      existing.count += 1;
+      existing.bytes += bytes;
+      byProject.set(folder, existing);
+    }
+  }
+
+  return {
+    candidates,
+    excluded,
+    totalReclaimBytes: candidates.reduce((sum, item) => sum + item.bytes, 0),
+    affectedProjects: [...byProject.values()],
+    fingerprint: snapshot.fingerprint,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Execute a previously previewed `ClearUnusedPlan`.
+ * Rejects stale plans if any project's take references or active takes changed
+ * since the preview was generated.
+ */
+export async function executeClearUnusedPlan(
+  root: DirectoryHandleLike,
+  plan: ClearUnusedPlan,
+  options: {
+    currentProjects?: ReadonlyMap<string, Project>;
+    activeTakeIds?: ReadonlySet<string>;
+  } = {},
+): Promise<ExecuteClearUnusedResult> {
+  const allFolders = await listProjectFolders(root);
+  const planFolders = Array.from(
+    new Set([
+      ...plan.candidates.map((c) => c.projectFolder),
+      ...plan.excluded.map((e) => e.projectFolder),
+    ]),
+  );
+  const checkFolders = planFolders.length > 0 ? planFolders : allFolders;
+  const currentSnapshot = await computeWorkspaceReferenceSnapshot(
+    root,
+    checkFolders,
+    options.currentProjects,
+    options.activeTakeIds,
+  );
+
+  if (currentSnapshot.fingerprint !== plan.fingerprint) {
+    return {
+      ok: false,
+      stale: true,
+      error: 'Project references or active takes changed since the preview was generated. Refresh the preview before deleting.',
+      deleted: [],
+      failed: [],
+      reclaimedBytes: 0,
+    };
+  }
+
+  const deleted: Array<{ projectFolder: string; takeId: string; bytes: number }> = [];
+  const failed: Array<{ projectFolder: string; takeId: string; reason: string }> = [];
+  let reclaimedBytes = 0;
+
+  for (const candidate of plan.candidates) {
+    const refs = currentSnapshot.refsByFolder.get(candidate.projectFolder);
+    if (refs?.has(candidate.takeId) || options.activeTakeIds?.has(candidate.takeId)) {
+      return {
+        ok: false,
+        stale: true,
+        error: `Take "${candidate.label}" became referenced or active before deletion started.`,
+        deleted,
+        failed,
+        reclaimedBytes,
+      };
+    }
+    const ok = await deleteTake(root, candidate.projectFolder, candidate.takeId);
+    if (ok) {
+      deleted.push({
+        projectFolder: candidate.projectFolder,
+        takeId: candidate.takeId,
+        bytes: candidate.bytes,
+      });
+      reclaimedBytes += candidate.bytes;
+    } else {
+      failed.push({
+        projectFolder: candidate.projectFolder,
+        takeId: candidate.takeId,
+        reason: 'Could not remove take folder from storage.',
+      });
+    }
+  }
+
+  return {
+    ok: failed.length === 0,
+    stale: false,
+    deleted,
+    failed,
+    reclaimedBytes,
+  };
 }
 
 /** Segment writer that commits bounded byte ranges to disk and records them. */

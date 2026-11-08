@@ -1,8 +1,10 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { renderFrame } from '../render/compose';
 import type { Project } from '../project/types';
 import type { PreviewPlayer } from './player';
 import { ManipulationOverlay } from './ManipulationOverlay';
+import { useEditor } from '../project/store';
+import { ensureProjectFontsLoaded } from '../effects/catalog';
 
 /** Renders one frame at full project resolution as a PNG, with the same compositor as export. */
 export async function snapshotFrame(
@@ -96,6 +98,18 @@ export function Preview({
   editable?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const compareOriginal = useEditor((state) => state.compareOriginal);
+  const [fontsEpoch, setFontsEpoch] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    void ensureProjectFontsLoaded(project).then(() => {
+      if (!cancelled) setFontsEpoch((n) => n + 1);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [project]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -125,20 +139,38 @@ export function Preview({
         showCaptionGuides,
         showEndScreenGuide,
         captionsEnabled,
+        compareOriginal,
       });
     } finally {
       ctx.restore();
     }
-  }, [project, player, ticks, showSafeAreas, previewScale, showCaptionGuides, showEndScreenGuide, captionsEnabled, revision]);
+  }, [
+    project,
+    player,
+    ticks,
+    showSafeAreas,
+    previewScale,
+    showCaptionGuides,
+    showEndScreenGuide,
+    captionsEnabled,
+    compareOriginal,
+    revision,
+    fontsEpoch,
+  ]);
 
   return (
-    <div className="preview-shell">
+    <div className="preview-shell" style={{ position: 'relative' }}>
       <canvas
         ref={canvasRef}
         className="preview-canvas"
         style={{ aspectRatio: `${project.canvas.width} / ${project.canvas.height}` }}
         aria-label="Timeline preview"
       />
+      {compareOriginal && (
+        <div className="compare-badge" data-testid="compare-original-badge">
+          Original (ungraded)
+        </div>
+      )}
       {editable && <ManipulationOverlay project={project} />}
     </div>
   );

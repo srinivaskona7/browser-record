@@ -5,22 +5,40 @@ export type RecorderStage =
   | 'countdown'
   | 'recording'
   | 'paused'
+  | 'finalizing'
   | 'finishing'
-  | 'postRecord';
+  | 'review'
+  | 'postRecord'
+  | 'interrupted'
+  | 'recoverable failure'
+  | 'recoverable_failure';
 
 export type CapMode = 'instant' | 'studio' | 'screenshot';
+
+export type QuietMode = 'full' | 'compact' | 'controls-only';
+
+export const QUIET_MODES: ReadonlyArray<{ id: QuietMode; label: string; description: string }> = [
+  { id: 'full', label: 'Full controls', description: 'Show REC timer, level meters, marker, pause/resume, and stop.' },
+  { id: 'compact', label: 'Compact controls', description: 'Condense the control bar to timer, pause/resume, and stop.' },
+  { id: 'controls-only', label: 'Controls only', description: 'Minimal pill with elapsed timer and stop.' },
+];
 
 export type CameraDuplicationMode = 'baked-in-screen' | 'separate-layer';
 
 const ALLOWED_TRANSITIONS: Record<RecorderStage, ReadonlyArray<RecorderStage>> = {
-  idle: ['selecting', 'countdown', 'recording'],
-  selecting: ['ready', 'idle'],
-  ready: ['countdown', 'recording', 'selecting', 'idle'],
-  countdown: ['recording', 'idle'],
-  recording: ['paused', 'finishing', 'idle'],
-  paused: ['recording', 'finishing', 'idle'],
-  finishing: ['postRecord', 'idle'],
-  postRecord: ['idle', 'selecting'],
+  idle: ['selecting', 'ready', 'countdown', 'recording', 'interrupted', 'recoverable failure', 'recoverable_failure'],
+  selecting: ['ready', 'idle', 'interrupted', 'recoverable failure', 'recoverable_failure'],
+  ready: ['countdown', 'recording', 'selecting', 'idle', 'interrupted', 'recoverable failure', 'recoverable_failure'],
+  countdown: ['recording', 'ready', 'idle', 'interrupted', 'recoverable failure', 'recoverable_failure'],
+  recording: ['paused', 'finalizing', 'finishing', 'interrupted', 'recoverable failure', 'recoverable_failure', 'idle'],
+  paused: ['recording', 'finalizing', 'finishing', 'interrupted', 'recoverable failure', 'recoverable_failure', 'idle'],
+  finalizing: ['review', 'postRecord', 'interrupted', 'recoverable failure', 'recoverable_failure', 'idle'],
+  finishing: ['postRecord', 'review', 'interrupted', 'recoverable failure', 'recoverable_failure', 'idle'],
+  review: ['idle', 'selecting', 'ready'],
+  postRecord: ['idle', 'selecting', 'ready'],
+  interrupted: ['recoverable failure', 'recoverable_failure', 'review', 'postRecord', 'idle', 'selecting'],
+  'recoverable failure': ['review', 'postRecord', 'idle', 'selecting', 'ready'],
+  recoverable_failure: ['review', 'postRecord', 'idle', 'selecting', 'ready'],
 };
 
 export function canTransitionStage(from: RecorderStage, to: RecorderStage): boolean {

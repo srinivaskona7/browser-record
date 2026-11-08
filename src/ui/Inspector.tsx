@@ -18,6 +18,8 @@ import {
   TEXT_STYLE_PRESETS,
   VIDEO_EFFECTS,
   checkFontAvailability,
+  loadCustomFontDescriptor,
+  parseAndValidateCustomFont,
   saveUserTextStylePreset,
 } from '../effects/catalog';
 import { Badge, Button, Field, Panel, Select, Slider, Toggle } from './components';
@@ -32,7 +34,13 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
   const updateGesture = useEditor((state) => state.updateGesture);
   const endGesture = useEditor((state) => state.endGesture);
   const cancelGesture = useEditor((state) => state.cancelGesture);
+  const compareOriginal = useEditor((state) => state.compareOriginal);
+  const setCompareOriginal = useEditor((state) => state.setCompareOriginal);
   const gestureOpen = useRef(false);
+  const fontInputRef = useRef<HTMLInputElement>(null);
+  const lutInputRef = useRef<HTMLInputElement>(null);
+  const [fontUploadError, setFontUploadError] = useState<string | null>(null);
+  const [lutUploadError, setLutUploadError] = useState<string | null>(null);
   const playhead = useEditor((state) => state.playheadTicks);
   const project = useEditor((state) => state.project);
   const selection = useEditor((state) => state.selection);
@@ -331,15 +339,16 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
               onChange={(value) => patch('Presenter layout', { presenter: { layout: value } })}
               options={[
                 { value: 'bubble', label: 'Bubble over screen' },
-                { value: 'side-by-side', label: 'Side by side' },
+                { value: 'side-by-side', label: 'Side by side (Split)' },
                 { value: 'full', label: 'Camera only' },
+                { value: 'screen-only', label: 'Screen only' },
               ]}
             />
           </Field>
           <Field label="Corner">
             <Select
               value={clip.presenter!.corner}
-              onChange={(value) => patch('Bubble corner', { presenter: { corner: value } })}
+              onChange={(value) => patch('Bubble corner', { presenter: { corner: value, x: undefined, y: undefined } })}
               options={[
                 { value: 'bottom-right', label: 'Bottom right' },
                 { value: 'bottom-left', label: 'Bottom left' },
@@ -358,6 +367,8 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
                 { value: 'rounded', label: 'Rounded rectangle' },
                 { value: 'square', label: 'Square' },
                 { value: 'portrait', label: 'Portrait card (3:4)' },
+                { value: 'pill', label: 'Pill (stadium)' },
+                { value: 'hexagon', label: 'Hexagon' },
               ]}
             />
           </Field>
@@ -446,9 +457,9 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
             />
           </Field>
           <Field
-            label="Font family (406 fonts)"
+            label="Font family (406 fonts + uploaded)"
             hint={
-              checkFontAvailability(clip.text.fontFamily).badge === 'fallback'
+              checkFontAvailability(clip.text.fontFamily, project).badge === 'fallback'
                 ? 'Font not installed locally — rendering with fallback font in preview & export'
                 : 'Font verified and ready for preview & export'
             }
@@ -457,14 +468,52 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
               <Select
                 value={clip.text.fontFamily}
                 onChange={(value) => apply(`Font: ${value}`, (p) => ops.setTextFont(p, clip.id, value))}
-                options={FONT_FAMILIES.map((family) => ({ value: family, label: family }))}
+                options={[
+                  ...(project?.customFonts ?? []).map((f) => ({
+                    value: f.family,
+                    label: `${f.family} (uploaded .${f.format})`,
+                  })),
+                  ...FONT_FAMILIES.map((family) => ({ value: family, label: family })),
+                ]}
               />
-              <Badge tone={checkFontAvailability(clip.text.fontFamily).badge === 'ready' ? 'ok' : 'warn'}>
-                {checkFontAvailability(clip.text.fontFamily).badge}
+              <Badge tone={checkFontAvailability(clip.text.fontFamily, project).badge === 'ready' ? 'ok' : 'warn'}>
+                {checkFontAvailability(clip.text.fontFamily, project).badge}
               </Badge>
             </div>
           </Field>
-          <div className="row" style={{ gap: 6 }}>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+            <input
+              ref={fontInputRef}
+              type="file"
+              accept=".woff2,.woff,.ttf,.otf,font/woff2,font/woff,font/ttf,font/otf"
+              aria-label="Upload custom font file"
+              style={{ display: 'none' }}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                if (!file) return;
+                setFontUploadError(null);
+                void file
+                  .arrayBuffer()
+                  .then(async (buf) => {
+                    const descriptor = parseAndValidateCustomFont({
+                      fileName: file.name,
+                      bytes: new Uint8Array(buf),
+                    });
+                    await loadCustomFontDescriptor(descriptor);
+                    apply(`Upload font: ${descriptor.family}`, (p) => {
+                      const withFont = ops.addCustomFontToProject(p, descriptor);
+                      return ops.setTextFont(withFont, clip.id, descriptor.family);
+                    });
+                  })
+                  .catch((err: unknown) => {
+                    setFontUploadError((err as Error).message);
+                  });
+              }}
+            />
+            <Button size="sm" variant="ghost" onClick={() => fontInputRef.current?.click()}>
+              Upload font (.woff2/.woff/.ttf/.otf)
+            </Button>
             <Button
               size="sm"
               variant="ghost"
@@ -491,6 +540,26 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
               + Save to My styles
             </Button>
           </div>
+          {fontUploadError && <div className="warn-card">{fontUploadError}</div>}
+          {project?.customFonts && project.customFonts.length > 0 && (
+            <div className="stack" style={{ gap: 4 }}>
+              <span className="field-label">Uploaded project fonts ({project.customFonts.length})</span>
+              {project.customFonts.map((f) => (
+                <div key={f.id} className="row" style={{ justifyContent: 'space-between', fontSize: 12 }}>
+                  <span>
+                    {f.family} <span className="mono">(.{f.format})</span>
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => apply(`Remove font ${f.family}`, (p) => ops.removeCustomFontFromProject(p, f.id))}
+                  >
+                    Remove
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
           <Field label="Emphasis style (5 styles)">
             <Select
               value={clip.text.emphasis ?? 'none'}
@@ -581,6 +650,41 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
       )}
 
       <InspectorSection title="Colour">
+        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+          <Button
+            size="sm"
+            variant={compareOriginal ? 'primary' : 'ghost'}
+            aria-pressed={compareOriginal}
+            onClick={() => setCompareOriginal(!compareOriginal)}
+          >
+            {compareOriginal ? 'Comparing Original (Click for Graded)' : 'Compare Original / Graded'}
+          </Button>
+          <input
+            ref={lutInputRef}
+            type="file"
+            accept=".cube"
+            aria-label="Import .cube LUT file"
+            style={{ display: 'none' }}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = '';
+              if (!file) return;
+              setLutUploadError(null);
+              void file
+                .text()
+                .then((text) => {
+                  apply(`Import .cube LUT (${file.name})`, (p) => ops.importCustomCubeLut(p, text, clip.id));
+                })
+                .catch((err: unknown) => {
+                  setLutUploadError((err as Error).message);
+                });
+            }}
+          />
+          <Button size="sm" variant="ghost" onClick={() => lutInputRef.current?.click()}>
+            Import .cube LUT…
+          </Button>
+        </div>
+        {lutUploadError && <div className="warn-card">{lutUploadError}</div>}
         <Field label="Color filter (77 presets)">
           <Select
             value={clip.effects.colorFilter ?? 'normal'}
@@ -620,8 +724,10 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
               onChange={(value) => apply('LUT strength', (p) => ops.setLutStrength(p, [clip.id], value))}
             />
             <p className="hint">
-              {clip.effects.customLutData.name}: {clip.effects.customLutData.size}³ lattice saved with this project
-              ({clip.effects.customLutData.lattice.length / 3} samples), so it survives a refresh and a backup restore.
+              {clip.effects.customLutData.name}: {clip.effects.customLutData.size}³ lattice (domain [
+              {clip.effects.customLutData.domainMin.join(', ')}]..[
+              {clip.effects.customLutData.domainMax.join(', ')}], {clip.effects.customLutData.lattice.length / 3}{' '}
+              samples) saved with this project, so it survives a refresh and a backup restore.
             </p>
             <Button
               size="sm"
@@ -749,24 +855,90 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
               options={[
                 { value: 'blur', label: 'Blur' },
                 { value: 'pixelate', label: 'Pixelate' },
+                { value: 'solid', label: 'Solid cover' },
                 { value: 'spotlight', label: 'Spotlight dimmer' },
               ]}
             />
+            {mask.mode === 'solid' && (
+              <Field label="Cover colour">
+                <input
+                  className="input"
+                  type="color"
+                  aria-label={`Mask ${index + 1} cover colour`}
+                  value={mask.color ?? '#000000'}
+                  onChange={(event) => apply('Mask colour', (p) => ops.updateMask(p, clip.id, index, { color: event.target.value }))}
+                />
+              </Field>
+            )}
             <Slider label="X" min={0} max={1} step={0.01} value={mask.x} format={(v) => `${Math.round(v * 100)}%`} onChange={(value) => apply('Mask position', (p) => ops.updateMask(p, clip.id, index, { x: value }))} />
             <Slider label="Y" min={0} max={1} step={0.01} value={mask.y} format={(v) => `${Math.round(v * 100)}%`} onChange={(value) => apply('Mask position', (p) => ops.updateMask(p, clip.id, index, { y: value }))} />
             <Slider label="Width" min={0.03} max={1} step={0.01} value={mask.width} format={(v) => `${Math.round(v * 100)}%`} onChange={(value) => apply('Mask size', (p) => ops.updateMask(p, clip.id, index, { width: value }))} />
             <Slider label="Height" min={0.03} max={1} step={0.01} value={mask.height} format={(v) => `${Math.round(v * 100)}%`} onChange={(value) => apply('Mask size', (p) => ops.updateMask(p, clip.id, index, { height: value }))} />
-            <Slider label="Strength" min={2} max={40} step={1} value={mask.strength} onChange={(value) => apply('Mask strength', (p) => ops.updateMask(p, clip.id, index, { strength: value }))} />
+            {mask.mode !== 'solid' && (
+              <Slider label="Strength" min={2} max={40} step={1} value={mask.strength} onChange={(value) => apply('Mask strength', (p) => ops.updateMask(p, clip.id, index, { strength: value }))} />
+            )}
+            {mask.mode !== 'spotlight' && (
+              <Slider
+                label="Feather"
+                min={0}
+                max={0.45}
+                step={0.01}
+                value={mask.feather ?? 0}
+                format={(v) => `${Math.round(v * 100)}%`}
+                onChange={(value) => apply('Mask feather', (p) => ops.updateMask(p, clip.id, index, { feather: value }))}
+              />
+            )}
+            <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() =>
+                  apply('Keyframe mask', (p) =>
+                    ops.upsertMaskKeyframe(p, clip.id, index, {
+                      atTicks: localTicks,
+                      x: mask.x,
+                      y: mask.y,
+                      width: mask.width,
+                      height: mask.height,
+                    }),
+                  )
+                }
+              >
+                + Keyframe mask at {formatClock(localTicks)} ({mask.keyframes?.length ?? 0})
+              </Button>
+              {(mask.keyframes?.length ?? 0) > 0 && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => apply('Clear mask keyframes', (p) => ops.clearMaskKeyframes(p, clip.id, index))}
+                >
+                  Clear mask keys
+                </Button>
+              )}
+            </div>
           </div>
         ))}
-        <Button
-          size="sm"
-          onClick={() =>
-            apply('Add mask', (p) => ops.addMask(p, clip.id, { x: 0.35, y: 0.35, width: 0.3, height: 0.15, mode: 'blur', strength: 14 }))
-          }
-        >
-          Add mask at centre
-        </Button>
+        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+          <Button
+            size="sm"
+            onClick={() =>
+              apply('Add mask', (p) => ops.addMask(p, clip.id, { x: 0.35, y: 0.35, width: 0.3, height: 0.15, mode: 'blur', strength: 14, feather: 0 }))
+            }
+          >
+            Add mask at centre
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() =>
+              apply('Add solid mask', (p) =>
+                ops.addMask(p, clip.id, { x: 0.35, y: 0.35, width: 0.3, height: 0.15, mode: 'solid', strength: 20, color: '#000000', feather: 0 }),
+              )
+            }
+          >
+            + Solid cover
+          </Button>
+        </div>
       </InspectorSection>
 
       <InspectorSection title="Keyframes">

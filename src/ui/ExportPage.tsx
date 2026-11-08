@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useEditor } from '../project/store';
 import { useSession } from '../app/session';
-import { downloadBlob, ensureAssetFile } from '../app/actions';
+import { downloadBlob, ensureAssetFile, serializeProject } from '../app/actions';
 import { importMediaIntoSession, prepareSession, saveSessionToFolder } from '../app/bootstrap';
 import { Badge, Button, Dialog, EmptyState, Field, Panel, Select, Stat, Toggle } from './components';
+import { toSrt, toVtt } from '../captions/subtitles';
+import { encodeWav, mixdownTimeline } from '../audio/mixdown';
+import { decodeAudioForExport } from '../audio/prepare';
+import { PlanningPanel } from './PlanningPanel';
 import {
   PRESETS,
   defaultPresetId,
@@ -50,6 +54,9 @@ export function ExportPage() {
   const [audioKbps, setAudioKbps] = useState(128);
   const [targetGb, setTargetGb] = useState('');
   const [includeCaptions, setIncludeCaptions] = useState(true);
+  const [sidecarFormat, setSidecarFormat] = useState<'none' | 'srt' | 'vtt' | 'both'>('none');
+  const [wavExportBusy, setWavExportBusy] = useState(false);
+  const [resultPreviewUrl, setResultPreviewUrl] = useState<string | null>(null);
   const [segmentId, setSegmentId] = useState<string>('all');
   const [cancelRef, setCancelRef] = useState<AbortController | null>(null);
   const [progress, setProgress] = useState<ExportProgress | null>(null);
@@ -274,6 +281,32 @@ export function ExportPage() {
         onProgress: setProgress,
       });
       setResult(out);
+      const activeProj = exportTargetProject ?? project;
+      const slug = activeProj.name.replace(/[^\w\-. ]+/g, '').trim().replace(/\s+/g, '-').toLowerCase() || 'lesson';
+      if (sidecarFormat === 'srt' || sidecarFormat === 'both') {
+        downloadBlob(new Blob([toSrt(activeProj.captions)], { type: 'application/x-subrip' }), `${slug}.srt`);
+      }
+      if (sidecarFormat === 'vtt' || sidecarFormat === 'both') {
+        downloadBlob(new Blob([toVtt(activeProj.captions)], { type: 'text/vtt' }), `${slug}.vtt`);
+      }
+      if (out.buffer) {
+        const blob = new Blob([out.buffer], { type: out.container === 'mp4' ? 'video/mp4' : 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        setResultPreviewUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev);
+          return url;
+        });
+      } else if (out.path && session.workspace) {
+        void readBlob(session.workspace.root, out.path)
+          .then((file) => {
+            const url = URL.createObjectURL(file);
+            setResultPreviewUrl((prev) => {
+              if (prev) URL.revokeObjectURL(prev);
+              return url;
+            });
+          })
+          .catch(() => undefined);
+      }
       if (out.warnings.length > 0) {
         session.pushToast(
           `Export written to ${out.path ?? 'the project'} with ${out.warnings.length} warning(s). Check the result panel before publishing.`,
@@ -455,6 +488,22 @@ export function ExportPage() {
             )}
 
             <Toggle label="Include captions in the picture" checked={includeCaptions} onChange={setIncludeCaptions} />
+            <Field
+              label="Subtitle sidecar file (independent of burned-in captions)"
+              hint="Choose whether to also download an editable .SRT or .VTT sidecar alongside the video."
+            >
+              <Select
+                aria-label="Subtitle sidecar format"
+                value={sidecarFormat}
+                onChange={(v) => setSidecarFormat(v)}
+                options={[
+                  { value: 'none', label: 'No sidecar file' },
+                  { value: 'srt', label: 'Download .SRT sidecar' },
+                  { value: 'vtt', label: 'Download .VTT sidecar' },
+                  { value: 'both', label: 'Download both .SRT and .VTT' },
+                ]}
+              />
+            </Field>
             {segments.length > 0 && (
               <Field label="Timeline range / Shorts segment from markers" hint="Pick a marker-to-marker chapter to export as a standalone Short/Reel.">
                 <Select
@@ -478,7 +527,7 @@ export function ExportPage() {
                   const blob = await snapshotThumbnail(
                     exportTargetProject ?? project,
                     null,
-                    useEditor.getState().playheadTicks,
+                    project.coverTimeTicks ?? useEditor.getState().playheadTicks,
                     includeCaptions,
                   );
                   if (blob) {
@@ -488,10 +537,79 @@ export function ExportPage() {
               >
                 Export thumbnail PNG (1280×720)
               </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={wavExportBusy}
+                onClick={async () => {
+                  setWavExportBusy(true);
+                  try {
+                    const target = exportTargetProject ?? project;
+                    const decoded = await decodeAudioForExport(target, (path) => ensureAssetFile(path));
+                    const mix = await mixdownTimeline({
+                      project: target,
+                      decoded,
+                      sampleRate: target.settings.sampleRate || 48_000,
+                    });
+                    const wavBytes = encodeWav(mix.channels, mix.sampleRate);
+                    const copy = new Uint8Array(wavBytes.byteLength);
+                    copy.set(wavBytes);
+                    downloadBlob(
+                      new Blob([copy.buffer], { type: 'audio/wav' }),
+                      `${project.name.replace(/[^\w-]+/g, '-') || 'lesson'}-audio.wav`,
+                    );
+                    session.pushToast('Exported WAV audio mixdown.', 'success');
+                  } catch (err) {
+                    setError(`WAV export failed: ${(err as Error).message}`);
+                  } finally {
+                    setWavExportBusy(false);
+                  }
+                }}
+              >
+                {wavExportBusy ? 'Exporting WAV…' : 'Export WAV audio'}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  const slug = project.name.replace(/[^\w-]+/g, '-') || 'lesson';
+                  downloadBlob(
+                    new Blob([toSrt((exportTargetProject ?? project).captions)], { type: 'application/x-subrip' }),
+                    `${slug}.srt`,
+                  );
+                }}
+              >
+                Export .SRT
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  const slug = project.name.replace(/[^\w-]+/g, '-') || 'lesson';
+                  downloadBlob(
+                    new Blob([toVtt((exportTargetProject ?? project).captions)], { type: 'text/vtt' }),
+                    `${slug}.vtt`,
+                  );
+                }}
+              >
+                Export .VTT
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  const slug = project.name.replace(/[^\w-]+/g, '-') || 'lesson';
+                  downloadBlob(
+                    new Blob([serializeProject(project)], { type: 'application/json' }),
+                    `${slug}-project-bundle.json`,
+                  );
+                }}
+              >
+                Export project bundle (.json)
+              </Button>
             </div>
             <div className="field-hint">
-              Burned-in captions are part of the frame; the separate SRT/VTT stays editable and can be exported from the
-              Captions panel instead.
+              Burned-in captions are part of the frame; the separate SRT/VTT stays editable and can be exported independently.
             </div>
           </Panel>
 
@@ -662,6 +780,15 @@ export function ExportPage() {
                     {describeExport(result)}
                   </span>
                 </div>
+                {resultPreviewUrl && (
+                  <video
+                    src={resultPreviewUrl}
+                    controls
+                    playsInline
+                    aria-label="Exported video result preview"
+                    style={{ width: '100%', maxHeight: 280, background: '#111018', borderRadius: 8 }}
+                  />
+                )}
                 <div className="field-hint">{result.path}</div>
                 {result.warnings.map((warning, index) => (
                   <div key={index} className="warn-card">
@@ -677,6 +804,8 @@ export function ExportPage() {
               </div>
             )}
           </Panel>
+
+          <PlanningPanel project={project} />
 
           <Panel
             title="Encoder support"

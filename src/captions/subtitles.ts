@@ -157,6 +157,9 @@ export function serializeTranscript(cues: readonly CaptionCue[]): string {
   return cues.map((cue) => cue.text.trim()).join('\n\n');
 }
 
+export const toSrt = serializeSrt;
+export const toVtt = serializeVtt;
+
 /** Shift every cue and its word timings. */
 export function retimeCues(cues: readonly CaptionCue[], deltaTicks: Tick): CaptionCue[] {
   return cues.map((cue) => ({

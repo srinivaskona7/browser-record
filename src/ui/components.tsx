@@ -21,23 +21,35 @@ export function Button({
 
 export function Panel({
   title,
+  subtitle,
   action,
+  actions,
   children,
   className = '',
   bodyClassName = '',
 }: {
   title?: ReactNode;
+  subtitle?: ReactNode;
   action?: ReactNode;
+  actions?: ReactNode;
   children: ReactNode;
   className?: string;
   bodyClassName?: string;
 }) {
+  const headerAction = action ?? actions;
   return (
     <section className={`panel ${className}`.trim()}>
-      {title !== undefined && (
+      {(title !== undefined || subtitle !== undefined || headerAction !== undefined) && (
         <header className="panel-head">
-          <h2 className="panel-title">{title}</h2>
-          {action}
+          <div>
+            {title !== undefined && <h2 className="panel-title">{title}</h2>}
+            {subtitle !== undefined && (
+              <div className="field-hint" style={{ marginTop: 2 }}>
+                {subtitle}
+              </div>
+            )}
+          </div>
+          {headerAction}
         </header>
       )}
       <div className={`panel-body ${bodyClassName}`.trim()}>{children}</div>
@@ -74,6 +86,7 @@ export function Select<T extends string>({
   id,
   disabled,
   label,
+  'aria-label': ariaLabel,
 }: {
   value: T;
   onChange: (value: T) => void;
@@ -82,6 +95,7 @@ export function Select<T extends string>({
   disabled?: boolean;
   /** Accessible name. The visible caption is a plain div, so the select needs one. */
   label?: string;
+  'aria-label'?: string;
 }) {
   return (
     <select
@@ -89,7 +103,7 @@ export function Select<T extends string>({
       className="select"
       value={value}
       disabled={disabled}
-      aria-label={label}
+      aria-label={ariaLabel ?? label}
       onChange={(event) => onChange(event.target.value as T)}
     >
       {options.map((option) => (
@@ -190,8 +204,15 @@ export function Slider({
   );
 }
 
-export function Badge({ tone = 'neutral', children }: { tone?: 'neutral' | 'ok' | 'warn' | 'danger'; children: ReactNode }) {
-  const cls = tone === 'neutral' ? '' : `badge-${tone}`;
+export function Badge({
+  tone = 'neutral',
+  children,
+}: {
+  tone?: 'neutral' | 'default' | 'accent' | 'ok' | 'warn' | 'danger';
+  children: ReactNode;
+}) {
+  const normalized = tone === 'default' ? 'neutral' : tone === 'accent' ? 'ok' : tone;
+  const cls = normalized === 'neutral' ? '' : `badge-${normalized}`;
   return <span className={`badge ${cls}`.trim()}>{children}</span>;
 }
 
@@ -268,22 +289,44 @@ export function Dialog({
   );
 }
 
-export function EmptyState({ title, children, action }: { title: string; children?: ReactNode; action?: ReactNode }) {
+export function EmptyState({
+  title,
+  body,
+  children,
+  action,
+}: {
+  title: string;
+  body?: ReactNode;
+  children?: ReactNode;
+  action?: ReactNode;
+}) {
+  const content = children ?? body;
   return (
     <div style={{ textAlign: 'center', padding: '36px 20px', color: 'var(--text-2)' }}>
       <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-1)', marginBottom: 6 }}>{title}</div>
-      {children && <div style={{ fontSize: 13, lineHeight: 1.6, maxWidth: 52 + 'ch', margin: '0 auto 14px' }}>{children}</div>}
+      {content && <div style={{ fontSize: 13, lineHeight: 1.6, maxWidth: 52 + 'ch', margin: '0 auto 14px' }}>{content}</div>}
       {action}
     </div>
   );
 }
 
-export function Stat({ label, value, hint }: { label: string; value: ReactNode; hint?: ReactNode }) {
+export function Stat({
+  label,
+  value,
+  hint,
+  sub,
+}: {
+  label: string;
+  value: ReactNode;
+  hint?: ReactNode;
+  sub?: ReactNode;
+}) {
+  const caption = hint ?? sub;
   return (
     <div className="stat">
       <span className="stat-label">{label}</span>
       <span className="stat-value">{value}</span>
-      {hint && <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{hint}</span>}
+      {caption && <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{caption}</span>}
     </div>
   );
 }

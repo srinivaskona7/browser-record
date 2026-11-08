@@ -79,6 +79,7 @@ export interface RecordingManifest {
   version: 1;
   takeId: string;
   projectId: string;
+  label?: string;
   startedAt: string;
   endedAt?: string;
   status: 'recording' | 'finalized' | 'recovered' | 'aborted';

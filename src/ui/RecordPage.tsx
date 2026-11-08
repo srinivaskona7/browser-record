@@ -51,10 +51,13 @@ import {
 } from '../capture/floatingCamera';
 import {
   describeCapMode,
+  QUIET_MODES,
   resolveCameraLayerVisibility,
   type CameraDuplicationMode,
   type CapMode,
+  type QuietMode,
 } from '../capture/stateMachine';
+import { RecordingsLibrary } from './RecordingsLibrary';
 import type { PresenterProps, Project } from '../project/types';
 
 type Stage = 'idle' | 'selecting' | 'ready' | 'countdown' | 'recording' | 'paused' | 'finishing';
@@ -74,8 +77,12 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
   const [capMode, setCapMode] = useState<CapMode>('studio');
   const [openEditorAfterStop, setOpenEditorAfterStop] = useState(true);
   const [showMonitor, setShowMonitor] = useState(true);
-  const [settingsOpen, setSettingsOpen] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [quietMode, setQuietMode] = useState<QuietMode>('full');
   const [controlsHidden, setControlsHidden] = useState(false);
+  const [reviewTrimIn, setReviewTrimIn] = useState(0);
+  const [reviewTrimOut, setReviewTrimOut] = useState(0);
+  const [reviewPreviewUrl, setReviewPreviewUrl] = useState<string | null>(null);
   const [floatingClosedDuringTake, setFloatingClosedDuringTake] = useState(false);
   const [cameraDuplicationMode, setCameraDuplicationMode] = useState<CameraDuplicationMode>('baked-in-screen');
   const [postRecordTitle, setPostRecordTitle] = useState('');
@@ -1105,7 +1112,40 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     }
   };
 
-  function insertTake(result: TakeResult) {
+  useEffect(() => {
+    if (!takeResult) {
+      setReviewPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+      return;
+    }
+    const durSec = Math.max(0.1, takeResult.durationTicks / TICKS_PER_SECOND);
+    setReviewTrimIn(0);
+    setReviewTrimOut(Number(durSec.toFixed(2)));
+    let cancelled = false;
+    const primary = takeResult.assets[0];
+    if (primary && session.workspace && session.projectFolder) {
+      void ensureAssetFile(primary.path)
+        .then((file) => {
+          if (cancelled || !file || file.size === 0) return;
+          const url = URL.createObjectURL(file);
+          setReviewPreviewUrl((prev) => {
+            if (prev) URL.revokeObjectURL(prev);
+            return url;
+          });
+        })
+        .catch(() => undefined);
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [takeResult, session.workspace, session.projectFolder]);
+
+  function insertTake(
+    result: TakeResult,
+    trimRange?: { inTicks?: number; outTicks?: number },
+  ) {
     if (result.assets.length === 0) {
       useSession.getState().pushToast('This take has no media files, so nothing was added to the timeline.', 'error');
       return;
@@ -1114,8 +1154,9 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     let firstClipId: string | undefined;
     try {
       useEditor.getState().apply('Add recorded take', (p) => {
-        // Append after the existing edit instead of overwriting it: a second take
-        // used to cut away the opening of the first one.
+        // Idempotent guard: retrying an interrupted save must not append the same take twice.
+        const existingAssetIds = new Set(p.assets.map((a) => a.id));
+        const newAssets = result.assets.filter((a) => !existingAssetIds.has(a.id));
         const startTicks = nextFreeStart(p);
         insertedAt = startTicks;
         const effectivePresenter: PresenterProps = {
@@ -1123,14 +1164,15 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
           visible: presenter.visible !== false && cameraLayerRule.compositeInExport,
         };
         let working = placeTake(
-          { ...p, assets: [...p.assets, ...result.assets] },
+          { ...p, assets: [...p.assets, ...newAssets] },
           result.assets,
           startTicks,
           effectivePresenter,
+          trimRange,
         );
         const assetIds = new Set(result.assets.map((asset) => asset.id));
-        firstClipId = working.tracks.flatMap((track) => track.clips).find((clip) => clip.assetId && assetIds.has(clip.assetId) && clip.startTicks === startTicks)?.id;
-        if (result.markers.length > 0) {
+        firstClipId = working.tracks.flatMap((track) => track.clips).find((clip) => clip.assetId && assetIds.has(clip.assetId))?.id;
+        if (result.markers.length > 0 && newAssets.length > 0) {
           working = {
             ...working,
             markers: [
@@ -1736,6 +1778,16 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                 • <strong>Floating PiP &amp; controls</strong>: Open the floating camera via Document PiP from an explicit click. Closing the floating window leaves the take running. Chrome lets you move the PiP window, while the editor controls the separate presenter layer in the export.
               </div>
               <div className="row" style={{ gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                <Select
+                  label="Quiet mode"
+                  value={quietMode}
+                  onChange={(v) => {
+                    const next = v as QuietMode;
+                    setQuietMode(next);
+                    setControlsHidden(next === 'controls-only');
+                  }}
+                  options={QUIET_MODES.map((m) => ({ value: m.id, label: m.label }))}
+                />
                 <Toggle
                   label="Hide floating preview (keep recording camera separately for editor to avoid double bubble)"
                   checked={hideFloatingPreview}
@@ -1902,6 +1954,8 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                         { value: 'rounded', label: 'Rounded square' },
                         { value: 'square', label: 'Square' },
                         { value: 'portrait', label: 'Portrait card (3:4)' },
+                        { value: 'pill', label: 'Pill (stadium)' },
+                        { value: 'hexagon', label: 'Hexagon' },
                       ]}
                     />
                   </Field>
@@ -2438,13 +2492,21 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         </p>
       </Dialog>
 
+      {/* Shared Recordings Library with project filter and preview-first Clear unused recordings */}
+      <RecordingsLibrary
+        activeTakeId={activeTakeId}
+        defaultProjectFolder={session.projectFolder ?? 'all'}
+        compact
+        onChanged={() => void refreshTakes()}
+      />
+
       <Dialog
         open={takeResult !== null}
         onClose={() => {
           setTakeResult(null);
           void refreshTakes();
         }}
-        title="Recording finished — Post-record actions"
+        title="Recording finished — Post-record actions (04 Review take)"
         footer={
           <>
             <Button
@@ -2458,42 +2520,54 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
               variant="ghost"
               disabled={downloadingOriginals}
               onClick={() => {
-                // Append the finished take to the timeline and stay on Record for the next take!
-                if (takeResult && project) {
-                  const startAt = nextFreeStart(project);
-                  const placed = placeTake(project, takeResult.assets, startAt, presenter);
-                  useEditor.getState().apply('Append recorded take', () => ({
-                    ...placed,
-                    assets: [...project.assets, ...takeResult.assets],
-                  }));
-                }
+                // Keep take on disk in the Recordings library without inserting on the timeline yet
                 setTakeResult(null);
-                useSession
-                  .getState()
-                  .pushToast('Take appended to timeline. Ready to record the next take.', 'info');
+                useSession.getState().pushToast('Take kept safely in Recordings library.', 'success');
                 void refreshTakes();
               }}
             >
-              Record another take
+              Keep take
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={downloadingOriginals}
+              onClick={() => {
+                // Retake preserves the previous take on disk until the user explicitly discards it
+                setTakeResult(null);
+                useSession
+                  .getState()
+                  .pushToast('Previous take preserved in Recordings library. Ready to record another take.', 'info');
+                void refreshTakes();
+              }}
+            >
+              Retake · Record another take
             </Button>
             <Button
               variant="ghost"
               disabled={downloadingOriginals}
               onClick={() => void downloadOriginals(takeResult!)}
             >
-              {downloadingOriginals ? 'Preparing…' : 'Download originals'}
+              {downloadingOriginals ? 'Preparing…' : 'Save raw · Download originals'}
             </Button>
             <Button
               variant={capMode === 'instant' ? 'ghost' : 'primary'}
-              onClick={() => insertTake(takeResult!)}
+              onClick={() =>
+                insertTake(takeResult!, {
+                  inTicks: Math.round(reviewTrimIn * TICKS_PER_SECOND),
+                  outTicks: Math.round(reviewTrimOut * TICKS_PER_SECOND),
+                })
+              }
             >
-              Edit recording
+              Open in editor · Edit recording
             </Button>
             <Button
               variant={capMode === 'instant' ? 'primary' : 'ghost'}
               onClick={() => {
                 if (!takeResult) return;
-                insertTake(takeResult);
+                insertTake(takeResult, {
+                  inTicks: Math.round(reviewTrimIn * TICKS_PER_SECOND),
+                  outTicks: Math.round(reviewTrimOut * TICKS_PER_SECOND),
+                });
                 useSession.getState().setRoute('export');
               }}
             >
@@ -2504,6 +2578,15 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       >
         {takeResult && (
           <div className="stack">
+            {reviewPreviewUrl && (
+              <video
+                src={reviewPreviewUrl}
+                controls
+                playsInline
+                aria-label="Review recorded take preview"
+                style={{ width: '100%', maxHeight: 240, background: '#111018', borderRadius: 8 }}
+              />
+            )}
             <Field label="Take title">
               <input
                 className="input"
@@ -2515,6 +2598,26 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                 }}
               />
             </Field>
+            <div className="grid-2">
+              <Slider
+                label="Trim In (non-destructive)"
+                min={0}
+                max={Math.max(0.1, reviewTrimOut - 0.1)}
+                step={0.1}
+                value={reviewTrimIn}
+                format={(v) => `${v.toFixed(1)}s`}
+                onChange={(val) => setReviewTrimIn(Math.min(val, Math.max(0, reviewTrimOut - 0.1)))}
+              />
+              <Slider
+                label="Trim Out (non-destructive)"
+                min={Math.min(reviewTrimIn + 0.1, Math.max(0.2, takeResult.durationTicks / TICKS_PER_SECOND))}
+                max={Math.max(0.2, takeResult.durationTicks / TICKS_PER_SECOND)}
+                step={0.1}
+                value={reviewTrimOut}
+                format={(v) => `${v.toFixed(1)}s`}
+                onChange={(val) => setReviewTrimOut(Math.max(val, reviewTrimIn + 0.1))}
+              />
+            </div>
             <div className="row" style={{ gap: 20, flexWrap: 'wrap' }}>
               <Stat label="Duration" value={formatElapsed(takeResult.durationTicks / TICKS_PER_SECOND)} />
               <Stat label="Assets" value={takeResult.assets.length} />
@@ -2568,11 +2671,10 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
               </table>
             </div>
             <div className="field-hint">
-              <strong>Edit recording</strong> adds the take to the timeline and opens editing. <strong>Download
-              originals</strong> saves each source file (screen, camera, microphone) separately — this is not a
-              composited export. <strong>Record another take</strong> keeps these files on disk without adding them yet;
-              the takes panel can add them later, even after a reload. <strong>Discard this take</strong> deletes this
-              take's files and nothing else.
+              <strong>Open in editor</strong> adds the take (with your non-destructive Trim In/Out range) to the timeline.{' '}
+              <strong>Keep take</strong> leaves the take safely in the Recordings library.{' '}
+              <strong>Retake</strong> preserves this take on disk until you explicitly discard it.{' '}
+              <strong>Save raw</strong> downloads each original source track separately.
             </div>
             <div className="field-hint">
               Original sources stay in the project's <span className="mono">recordings/</span> folder and are never
@@ -2620,20 +2722,23 @@ export { nextFreeStart } from '../project/ops';
 /**
  * Place every asset of a take (live, recovered or kept on disk) on its own
  * track at `startTicks`, with the camera carrying the presenter bubble and all
- * clips clamped to the take duration.
+ * clips clamped to the take duration (or optional non-destructive `trimRange`).
+ * Idempotent: if an asset is already placed on a track, it will not be duplicated.
  */
 export function placeTake(
   project: Project,
   assets: Project['assets'],
   startTicks: number,
   presenter: PresenterProps,
+  trimRange?: { inTicks?: number; outTicks?: number },
 ): Project {
   let working = project;
-  // One link id for the whole take: moving or splitting any source keeps the
-  // screen, camera and microphone on the same cut. Pause/resume is already
-  // reflected in the shared clock; the link preserves it during editing.
   const linkId = newId('link');
   for (const asset of assets) {
+    // Idempotent guard: never place the same recorded asset twice if already on a track
+    const alreadyOnTrack = working.tracks.some((t) => t.clips.some((c) => c.assetId === asset.id));
+    if (alreadyOnTrack) continue;
+
     const role = takeRole(asset);
     let track = trackForRole(working, role);
     if (!track) {
@@ -2642,15 +2747,18 @@ export function placeTake(
     }
     const placed = ops.addAssetClip(working, track.id, asset.id, startTicks, { mode: 'overwrite' });
     working = placed.project;
-    working = ops.updateClip(working, placed.clipId, { linkId, ...(role === 'camera' ? { presenter } : {}) });
-    const clip = ops.findClipById(working, placed.clipId);
-    if (clip) {
-      working = ops.trimEnd(
-        working,
-        placed.clipId,
-        Math.min(clip.startTicks + asset.durationTicks, clip.startTicks + clip.durationTicks),
-      );
-    }
+    const inTicks = Math.max(0, Math.min(asset.durationTicks - 1, Math.round(trimRange?.inTicks ?? 0)));
+    const outTicks =
+      typeof trimRange?.outTicks === 'number' && trimRange.outTicks > inTicks
+        ? Math.min(asset.durationTicks, Math.round(trimRange.outTicks))
+        : asset.durationTicks;
+    const trimmedDuration = Math.max(1, outTicks - inTicks);
+    working = ops.updateClip(working, placed.clipId, {
+      linkId,
+      inTicks,
+      durationTicks: trimmedDuration,
+      ...(role === 'camera' ? { presenter } : {}),
+    });
   }
   return working;
 }

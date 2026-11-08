@@ -44,3 +44,36 @@ export async function prepareMonoAudio(
     offsetSeconds: startTicks / 720_000,
   };
 }
+
+/** Build an AudioResolver for WAV or video export by decoding project audio assets on demand. */
+export async function decodeAudioForExport(
+  project: Project,
+  getAssetFile: (assetPath: string) => Promise<File>,
+  createAudioContext?: () => AudioContext,
+): Promise<AudioResolver> {
+  const contextFactory =
+    createAudioContext ?? (() => new AudioContext({ sampleRate: project.settings.sampleRate || 48_000 }));
+  let context: AudioContext | null = null;
+  const cache = new Map<string, Promise<AudioBuffer | null>>();
+  return {
+    getBuffer: async (assetId: string) => {
+      const existing = cache.get(assetId);
+      if (existing) return existing;
+      const promise = (async () => {
+        const asset = project.assets.find((a) => a.id === assetId);
+        if (!asset) return null;
+        try {
+          context ??= contextFactory();
+          const file = await getAssetFile(asset.path);
+          const bytes = await file.arrayBuffer();
+          return await context.decodeAudioData(bytes);
+        } catch {
+          return null;
+        }
+      })();
+      cache.set(assetId, promise);
+      return promise;
+    },
+  };
+}
+

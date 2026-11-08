@@ -11,6 +11,8 @@ import {
   CINEMATIC_LUTS,
   getCustomCubeLuts,
   getUserTextStylePresets,
+  loadCustomFontDescriptor,
+  parseAndValidateCustomFont,
   type VideoEffectSpec,
   type ColorFilterSpec,
   type CinematicLutSpec,
@@ -20,11 +22,12 @@ import {
 import { SFX_PRESETS } from '../audio/sfx';
 import { TICKS_PER_SECOND } from '../core/time';
 import { formatSelectionScopeChip } from '../editor/selection';
-import { Badge, Button } from './components';
+import { Badge, Button, Toggle } from './components';
 import { SvgIcon, type IconName } from './icons';
 
 export const EDITOR_TOOLS: ReadonlyArray<{ id: string; label: string; iconName: IconName }> = [
   { id: 'media', label: 'Media', iconName: 'uploads' },
+  { id: 'presenter', label: 'Presenter', iconName: 'camera' },
   { id: 'audio', label: 'Audio', iconName: 'audio' },
   { id: 'text', label: 'Text', iconName: 'text' },
   { id: 'captions', label: 'Captions', iconName: 'captions' },
@@ -34,11 +37,13 @@ export const EDITOR_TOOLS: ReadonlyArray<{ id: string; label: string; iconName: 
   { id: 'filters', label: 'Filters', iconName: 'filters' },
   { id: 'adjust', label: 'Adjust', iconName: 'adjust' },
   { id: 'sfx', label: 'Sound FX', iconName: 'sound' },
+  { id: 'planning', label: 'Planning', iconName: 'more' },
   { id: 'more', label: 'More tools', iconName: 'more' },
 ] as const;
 
 export type EditorTool =
   | 'media'
+  | 'presenter'
   | 'audio'
   | 'text'
   | 'captions'
@@ -48,6 +53,7 @@ export type EditorTool =
   | 'filters'
   | 'adjust'
   | 'sfx'
+  | 'planning'
   | 'more';
 
 let clipClipboard: Clip[] = [];
@@ -179,8 +185,13 @@ function renderCatalogPreview(
 
 export function EditorToolLibrary({ tool, project, clip }: { tool: EditorTool; project: Project; clip: Clip | null }) {
   const [query, setQuery] = useState('');
+  const [fontErr, setFontErr] = useState<string | null>(null);
   const apply = useEditor((s) => s.apply);
   const playhead = useEditor((s) => s.playheadTicks);
+  const showSafeAreas = useEditor((s) => s.showSafeAreas);
+  const setShowSafeAreas = useEditor((s) => s.setShowSafeAreas);
+  const compareOriginal = useEditor((s) => s.compareOriginal);
+  const setCompareOriginal = useEditor((s) => s.setCompareOriginal);
   const title = EDITOR_TOOLS.find((t) => t.id === tool)?.label ?? 'Tools';
   const catalog =
     tool === 'effects'
@@ -208,6 +219,14 @@ export function EditorToolLibrary({ tool, project, clip }: { tool: EditorTool; p
     tool === 'text' ||
     Boolean(clip && project.tracks.some((t) => t.kind === 'video' && t.clips.some((c) => c.id === clip.id)));
 
+  const presenterClip =
+    (clip?.presenter ? clip : null) ??
+    project.tracks
+      .filter((t) => t.kind === 'video')
+      .flatMap((t) => t.clips)
+      .find((c) => Boolean(c.presenter)) ??
+    null;
+
   const addTitle = (preset?: string) => {
     let id = '';
     apply('Add text', (p) => {
@@ -227,10 +246,201 @@ export function EditorToolLibrary({ tool, project, clip }: { tool: EditorTool; p
         <h2>{title}</h2>
         <span>{catalog.length || ''}</span>
       </header>
+      {tool === 'presenter' ? (
+        <div className="stack" style={{ gap: 10 }} data-testid="presenter-reframe-panel">
+          <p className="field-hint">
+            06 · Presenter &amp; Reframe: choose camera bubble shape, layout, corner anchor, safe-area guides, or drag the
+            bubble directly on the preview canvas.
+          </p>
+          <div className="stack" style={{ gap: 6 }}>
+            <span className="field-label">Presenter shape</span>
+            <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+              {(
+                [
+                  ['circle', 'Circle'],
+                  ['rounded', 'Rounded'],
+                  ['square', 'Square'],
+                  ['portrait', 'Portrait'],
+                  ['pill', 'Pill'],
+                  ['hexagon', 'Hexagon'],
+                ] as const
+              ).map(([shape, label]) => (
+                <Button
+                  key={shape}
+                  size="sm"
+                  variant={presenterClip?.presenter?.shape === shape ? 'primary' : 'ghost'}
+                  disabled={!presenterClip}
+                  onClick={() =>
+                    presenterClip &&
+                    apply(`Presenter shape: ${label}`, (p) =>
+                      ops.updateClipDeep(p, presenterClip.id, { presenter: { shape } }),
+                    )
+                  }
+                >
+                  {label}
+                </Button>
+              ))}
+            </div>
+          </div>
+          <div className="stack" style={{ gap: 6 }}>
+            <span className="field-label">Composition layout</span>
+            <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+              {(
+                [
+                  ['bubble', 'Bubble'],
+                  ['side-by-side', 'Split'],
+                  ['full', 'Camera-only'],
+                  ['screen-only', 'Screen-only'],
+                ] as const
+              ).map(([layout, label]) => (
+                <Button
+                  key={layout}
+                  size="sm"
+                  variant={presenterClip?.presenter?.layout === layout ? 'primary' : 'ghost'}
+                  disabled={!presenterClip}
+                  onClick={() =>
+                    presenterClip &&
+                    apply(`Presenter layout: ${label}`, (p) =>
+                      ops.updateClipDeep(p, presenterClip.id, { presenter: { layout } }),
+                    )
+                  }
+                >
+                  {label}
+                </Button>
+              ))}
+            </div>
+          </div>
+          <div className="stack" style={{ gap: 6 }}>
+            <span className="field-label">Corner anchor</span>
+            <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+              {(
+                [
+                  ['bottom-right', 'Bottom right'],
+                  ['bottom-left', 'Bottom left'],
+                  ['top-right', 'Top right'],
+                  ['top-left', 'Top left'],
+                ] as const
+              ).map(([corner, label]) => (
+                <Button
+                  key={corner}
+                  size="sm"
+                  variant={presenterClip?.presenter?.corner === corner ? 'primary' : 'ghost'}
+                  disabled={!presenterClip}
+                  onClick={() =>
+                    presenterClip &&
+                    apply(`Presenter anchor: ${label}`, (p) =>
+                      ops.updateClipDeep(p, presenterClip.id, { presenter: { corner, x: undefined, y: undefined } }),
+                    )
+                  }
+                >
+                  {label}
+                </Button>
+              ))}
+            </div>
+          </div>
+          <div className="stack" style={{ gap: 6 }}>
+            <span className="field-label">Canvas reframe aspect</span>
+            <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+              <Button size="sm" onClick={() => apply('Reframe 16:9', (p) => ops.reframe16x9(p))}>
+                16:9
+              </Button>
+              <Button size="sm" onClick={() => apply('Reframe 9:16', (p) => ops.reframe9x16(p))}>
+                9:16
+              </Button>
+              <Button size="sm" onClick={() => apply('Reframe 4:5', (p) => ops.reframe4x5(p))}>
+                4:5
+              </Button>
+              <Button size="sm" onClick={() => apply('Reframe 1:1', (p) => ops.reframe1x1(p))}>
+                1:1
+              </Button>
+            </div>
+          </div>
+          <Toggle label="Show safe-area guides" checked={showSafeAreas} onChange={setShowSafeAreas} />
+          {!presenterClip && (
+            <div className="hint-card">
+              Record with Camera enabled or place a clip on the Camera track to customize the presenter bubble.
+            </div>
+          )}
+        </div>
+      ) : (
+        <>
       {tool === 'text' && (
-        <Button variant="primary" onClick={() => addTitle()}>
-          + Add text
-        </Button>
+        <div className="stack" style={{ gap: 6 }}>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+            <Button variant="primary" onClick={() => addTitle()}>
+              + Add text
+            </Button>
+            <label className="btn btn-sm" style={{ cursor: 'pointer' }}>
+              + Upload font (.woff2/.ttf/.otf)
+              <input
+                type="file"
+                accept=".woff2,.woff,.ttf,.otf"
+                hidden
+                onChange={async (event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = '';
+                  if (!file) return;
+                  setFontErr(null);
+                  try {
+                    const bytes = new Uint8Array(await file.arrayBuffer());
+                    const descriptor = parseAndValidateCustomFont({ fileName: file.name, bytes });
+                    await loadCustomFontDescriptor(descriptor);
+                    apply(`Upload font: ${descriptor.family}`, (p) => {
+                      const next = ops.addCustomFontToProject(p, descriptor);
+                      return clip?.text ? ops.setTextFont(next, clip.id, descriptor.family) : next;
+                    });
+                  } catch (err) {
+                    setFontErr((err as Error).message);
+                  }
+                }}
+              />
+            </label>
+          </div>
+          {fontErr && <div className="warn-card">{fontErr}</div>}
+        </div>
+      )}
+      {tool === 'effects' && clip && (
+        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+          <Button
+            size="sm"
+            onClick={() =>
+              apply('Add blur mask', (p) =>
+                ops.addMask(p, clip.id, { x: 0.35, y: 0.35, width: 0.3, height: 0.15, mode: 'blur', strength: 16, feather: 0 }),
+              )
+            }
+          >
+            + Blur mask
+          </Button>
+          <Button
+            size="sm"
+            onClick={() =>
+              apply('Add pixelate mask', (p) =>
+                ops.addMask(p, clip.id, { x: 0.35, y: 0.35, width: 0.3, height: 0.15, mode: 'pixelate', strength: 16, feather: 0 }),
+              )
+            }
+          >
+            + Pixelate mask
+          </Button>
+          <Button
+            size="sm"
+            onClick={() =>
+              apply('Add solid mask', (p) =>
+                ops.addMask(p, clip.id, {
+                  x: 0.35,
+                  y: 0.35,
+                  width: 0.3,
+                  height: 0.15,
+                  mode: 'solid',
+                  strength: 20,
+                  color: '#000000',
+                  feather: 0,
+                }),
+              )
+            }
+          >
+            + Solid cover
+          </Button>
+        </div>
       )}
       {tool === 'audio' ? (
         <div className="stack">
@@ -291,6 +501,14 @@ export function EditorToolLibrary({ tool, project, clip }: { tool: EditorTool; p
           {tool === 'transitions' && <p className="field-hint">Applies to the selected clip’s incoming boundary.</p>}
           {tool === 'adjust' && (
             <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+              <Button
+                size="sm"
+                variant={compareOriginal ? 'primary' : 'ghost'}
+                aria-pressed={compareOriginal}
+                onClick={() => setCompareOriginal(!compareOriginal)}
+              >
+                {compareOriginal ? 'Showing Original' : 'Compare Original / Graded'}
+              </Button>
               <Button
                 size="sm"
                 onClick={() => apply('Add adjustment layer', (p) => ops.addAdjustmentLayer(p, playhead).project)}
@@ -369,6 +587,8 @@ export function EditorToolLibrary({ tool, project, clip }: { tool: EditorTool; p
           {catalog.filter((item) => item.name.toLowerCase().includes(query.toLowerCase())).length === 0 && (
             <p className="field-hint">No matches. Try another search.</p>
           )}
+        </>
+      )}
         </>
       )}
     </section>

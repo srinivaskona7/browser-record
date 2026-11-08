@@ -136,13 +136,13 @@ export async function createAndOpenProject(params: {
   width: number;
   height: number;
   fps: { num: number; den: number };
-  segmentSeconds: number;
+  segmentSeconds?: number;
 }): Promise<void> {
   const session = useSession.getState();
   const workspace = session.workspace;
   if (!workspace) throw new Error('Connect a workspace first.');
   const project = createProject(params);
-  project.settings.segmentSeconds = params.segmentSeconds;
+  project.settings.segmentSeconds = params.segmentSeconds ?? 5;
   const folder = await saveProject(workspace.root, project);
   useEditor.getState().loadProject(project);
   useSession.getState().setProjectFolder(folder);
@@ -490,4 +490,7 @@ export function ensureDefaultCaptionStyle(project: Project): Project {
   return { ...project, captionStyle: defaultCaptionStyle() };
 }
 
+export { formatBytes } from '../export/presets';
+export const importFilesIntoProject = importMediaFiles;
 export { serializeProject };
+

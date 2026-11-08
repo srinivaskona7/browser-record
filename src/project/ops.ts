@@ -3811,6 +3811,29 @@ export function setCoverTimeTicks(project: Project, coverTimeTicks: Tick): Proje
   return { ...project, coverTimeTicks: Math.max(0, Math.round(coverTimeTicks)) };
 }
 
+export function setProjectNotes(project: Project, notes: string): Project {
+  return { ...project, notes };
+}
+
+export function upsertAsset(project: Project, asset: import('./types').Asset): Project {
+  const idx = project.assets.findIndex((a) => a.id === asset.id);
+  if (idx === -1) return { ...project, assets: [...project.assets, asset] };
+  const assets = [...project.assets];
+  assets[idx] = asset;
+  return { ...project, assets };
+}
+
+export function importCustomCubeLut(
+  project: Project,
+  cubeContent: string,
+  clipId?: string,
+  fileName = 'Custom.cube',
+): Project {
+  return applyCubeLutText(project, cubeContent, fileName, clipId).project;
+}
+
+
+
 
 
 

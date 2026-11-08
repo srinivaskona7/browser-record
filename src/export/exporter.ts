@@ -23,6 +23,7 @@ import {
   type CodecSupport,
 } from '../capabilities/codecs';
 import { mixdownProject, type AudioResolver, type MixdownResult } from '../audio/mixdown';
+import { ensureProjectFontsLoaded } from '../effects/catalog';
 import { renderFrame } from '../render/compose';
 import { MediaAssetResolver, prepareFrameSources } from '../render/sources';
 import { frameCount } from '../project/factory';
@@ -103,6 +104,7 @@ export async function exportProject(request: ExportRequest): Promise<ExportResul
   };
 
   if (totalFrames <= 0) throw new Error('The timeline is empty — add a clip before exporting.');
+  await ensureProjectFontsLoaded(project);
   if (typeof document !== 'undefined' && document.fonts?.ready) {
     await document.fonts.ready.catch(() => undefined);
   }

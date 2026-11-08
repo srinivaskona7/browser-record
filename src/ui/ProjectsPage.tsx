@@ -1,435 +1,539 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSession } from '../app/session';
 import { useEditor } from '../project/store';
 import { Badge, Button, Dialog, EmptyState, Field, Panel, Select, Stat } from './components';
 import { DeleteProjectDialog } from './DeleteProjectDialog';
+import { ImportMediaButton } from './ImportMediaButton';
+import { RecordingsLibrary } from './RecordingsLibrary';
 import {
-  connectDiskWorkspace,
-  connectFallbackWorkspace,
+  chooseFolderWorkspace,
+  importMediaIntoSession,
+  openExistingProject,
+} from '../app/bootstrap';
+import {
   createAndOpenProject,
-  duplicateCurrentProject,
+  formatBytes,
   importProjectBundle,
-  openProjectFolder,
-  refreshProjectList,
-  restoreLastProject,
-  restoreLastWorkspace,
 } from '../app/actions';
-import { importMediaIntoSession, prepareSession } from '../app/bootstrap';
-import { formatBytes } from '../export/presets';
-import { formatClock } from '../core/time';
-import type { Project } from '../project/types';
+import { loadSampleKubernetesLesson } from '../project/sampleLesson';
+import * as ops from '../project/ops';
+import { formatClock, TICKS_PER_SECOND, type FrameRate } from '../core/time';
+import { listProjects, loadProject, saveProject } from '../workspace/workspace';
+import type { ProjectSummary } from '../project/types';
 
-interface ProjectRow {
-  folder: string;
-  project?: Project;
-  error?: string;
-}
+type ProjectSortKey = 'updated-desc' | 'updated-asc' | 'name-asc' | 'duration-desc';
 
-function aspectLabel(width?: number, height?: number): string {
-  if (!width || !height) return '16:9';
-  if (width === height) return '1:1 Square';
-  if (width < height) return width * 5 === height * 4 ? '4:5 Portrait' : '9:16 Vertical';
-  return width >= 3840 ? '16:9 4K' : '16:9 HD';
-}
+const CANVAS_PRESETS = [
+  { id: '4k-16-9', label: '3840 × 2160 · 4K UHD (16:9)', width: 3840, height: 2160 },
+  { id: '1440p', label: '2560 × 1440 · QHD (16:9)', width: 2560, height: 1440 },
+  { id: '1080p', label: '1920 × 1080 · Full HD (16:9)', width: 1920, height: 1080 },
+  { id: 'vertical-4k', label: '2160 × 3840 · 4K Vertical (9:16)', width: 2160, height: 3840 },
+  { id: 'vertical-1080', label: '1080 × 1920 · Shorts / Reels (9:16)', width: 1080, height: 1920 },
+  { id: 'square', label: '1080 × 1080 · Square (1:1)', width: 1080, height: 1080 },
+];
+
+const FPS_OPTIONS: Array<{ value: string; label: string; fps: FrameRate }> = [
+  { value: '24', label: '24 fps (cinema)', fps: { num: 24, den: 1 } },
+  { value: '30', label: '30 fps (standard)', fps: { num: 30, den: 1 } },
+  { value: '60', label: '60 fps (high motion)', fps: { num: 60, den: 1 } },
+];
 
 export function ProjectsPage() {
-  const session = useSession();
-  const [rows, setRows] = useState<ProjectRow[]>([]);
-  const [loading, setLoading] = useState(false);
+  const workspace = useSession((s) => s.workspace);
+  const currentFolder = useSession((s) => s.projectFolder);
+  const setRoute = useSession((s) => s.setRoute);
+  const pushToast = useSession((s) => s.pushToast);
+  const currentProject = useEditor((s) => s.project);
+  const apply = useEditor((s) => s.apply);
+  const softUpdate = useEditor((s) => s.softUpdate);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ folder: string; project: ProjectSummary } | null>(null);
+  const [name, setName] = useState('Untitled session');
+  const [preset, setPreset] = useState('1080p');
+  const [fpsValue, setFpsValue] = useState('30');
   const [searchQuery, setSearchQuery] = useState('');
-  const [name, setName] = useState('Linux fundamentals — lesson 1');
-  const [resolution, setResolution] = useState<'4k' | '1440' | '1080' | 'vertical' | 'square'>('1080');
-  const [fps, setFps] = useState<'30' | '60'>('30');
-  const [segmentSeconds, setSegmentSeconds] = useState('10');
-  const importInput = useRef<HTMLInputElement>(null);
-  const projectBundleInput = useRef<HTMLInputElement>(null);
-  const [quickImporting, setQuickImporting] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<ProjectRow | null>(null);
-  const features = session.features;
-  const workspace = session.workspace;
-  const project = useEditor((state) => state.project);
+  const [sortBy, setSortBy] = useState<ProjectSortKey>('updated-desc');
+  const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  const [shotDraft, setShotDraft] = useState('');
+  const [dragActive, setDragActive] = useState(false);
+  const backupInput = useRef<HTMLInputElement>(null);
 
   const refresh = async () => {
     if (!workspace) return;
-    setLoading(true);
-    try {
-      setRows((await refreshProjectList()) as ProjectRow[]);
-    } finally {
-      setLoading(false);
-    }
+    const rows = await listProjects(workspace.root);
+    const summaries: ProjectSummary[] = rows
+      .filter((row): row is { folder: string; project: NonNullable<typeof row.project> } => Boolean(row.project))
+      .map((row) => ({
+        id: row.project.id,
+        name: row.project.name,
+        folder: row.folder,
+        updatedAt: row.project.updatedAt,
+        durationTicks: row.project.durationTicks,
+      }));
+    setProjects(summaries);
   };
 
   useEffect(() => {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspace]);
+  }, [workspace, currentFolder, currentProject?.updatedAt, currentProject?.name]);
 
-  const dimensions = (() => {
-    switch (resolution) {
-      case '4k':
-        return { width: 3840, height: 2160 };
-      case '1440':
-        return { width: 2560, height: 1440 };
-      case '1080':
-        return { width: 1920, height: 1080 };
-      case 'vertical':
-        return { width: 1080, height: 1920 };
-      case 'square':
-        return { width: 1080, height: 1080 };
+  const handleCreate = async () => {
+    const selectedPreset = CANVAS_PRESETS.find((p) => p.id === preset) ?? CANVAS_PRESETS[2]!;
+    const selectedFps = FPS_OPTIONS.find((f) => f.value === fpsValue) ?? FPS_OPTIONS[1]!;
+    await createAndOpenProject({
+      name: name.trim() || 'Untitled session',
+      width: selectedPreset.width,
+      height: selectedPreset.height,
+      fps: selectedFps.fps,
+    });
+    setCreateOpen(false);
+    await refresh();
+  };
+
+  const handleRenameProject = async (summary: ProjectSummary) => {
+    if (!workspace) return;
+    const trimmed = renameDraft.trim();
+    if (!trimmed) {
+      setRenamingFolder(null);
+      return;
     }
-  })();
+    try {
+      if (currentFolder === summary.folder && currentProject) {
+        apply('Rename project', (p) => ops.renameProject(p, trimmed));
+      } else {
+        const loaded = await loadProject(workspace.root, summary.folder);
+        const renamed = ops.renameProject(loaded.project, trimmed);
+        await saveProject(workspace.root, renamed, summary.folder);
+      }
+      setRenamingFolder(null);
+      await refresh();
+      pushToast(`Renamed project to "${trimmed}".`, 'success');
+    } catch (err) {
+      pushToast(`Could not rename project: ${(err as Error).message}`, 'error');
+    }
+  };
 
-  const filteredRows = rows.filter((row) => {
-    if (!searchQuery.trim()) return true;
-    const label = `${row.project?.name ?? ''} ${row.folder}`.toLowerCase();
-    return label.includes(searchQuery.trim().toLowerCase());
-  });
+  const fsAccessSupported = typeof window !== 'undefined' && 'showDirectoryPicker' in window;
+  const quota = workspace?.info.quota;
+
+  const filteredProjects = useMemo(() => {
+    const filtered = projects.filter((p) =>
+      searchQuery.trim() ? p.name.toLowerCase().includes(searchQuery.trim().toLowerCase()) : true,
+    );
+    return [...filtered].sort((a, b) => {
+      if (sortBy === 'updated-asc') return a.updatedAt.localeCompare(b.updatedAt);
+      if (sortBy === 'name-asc') return a.name.localeCompare(b.name);
+      if (sortBy === 'duration-desc') return b.durationTicks - a.durationTicks;
+      return b.updatedAt.localeCompare(a.updatedAt);
+    });
+  }, [projects, searchQuery, sortBy]);
 
   return (
-    <div className="page">
-      <header className="page-head">
-        <div>
-          <span className="eyebrow">LOCAL CREATOR WORKSPACE</span>
-          <h1 className="page-title">Projects &amp; Recordings</h1>
-          <p className="page-subtitle">
-            Start a new screen recording, import media directly into the editor, or reopen a saved project.
-          </p>
-        </div>
-        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-          <Badge tone={workspace?.info.mode === 'fsa' ? 'ok' : 'warn'}>
-            {workspace ? `${workspace.info.name} (${workspace.info.mode === 'fsa' ? 'Disk folder' : 'Browser storage'})` : 'No workspace connected'}
-          </Badge>
-          <Badge tone={features.webCodecsEncode ? 'ok' : 'warn'}>{features.webCodecsEncode ? 'WebCodecs ready' : 'WebM fallback'}</Badge>
-        </div>
-      </header>
-
-      <div className="stack" style={{ gap: 16, maxWidth: 1180 }}>
-        <section className="projects-hero" aria-label="Quick creation actions">
-          <div className="stack" style={{ gap: 4 }}>
-            <strong style={{ fontSize: 16 }}>Create or continue</strong>
-            <span className="field-hint">
-              Recordings and edits stay 100% local on this machine — no account or cloud upload required.
-            </span>
-          </div>
+    <div
+      className="page stack"
+      style={{
+        gap: 18,
+        outline: dragActive ? '2px dashed var(--lavender)' : undefined,
+        outlineOffset: -6,
+      }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        if (!dragActive) setDragActive(true);
+      }}
+      onDragLeave={(e) => {
+        if (e.currentTarget === e.target) setDragActive(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDragActive(false);
+        const files = e.dataTransfer?.files;
+        if (files && files.length > 0) {
+          void (async () => {
+            await importMediaIntoSession(files);
+            setRoute('edit');
+          })();
+        }
+      }}
+    >
+      {/* Quick-action Hero Row */}
+      <Panel
+        title="01 · Projects & Media Studio"
+        subtitle="Record screen & camera, import local 4K media, organize storyboards, or restore a project backup — 100% locally in your browser."
+        actions={
           <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <Button variant="primary" onClick={() => setRoute('record')}>
+              ● New Recording
+            </Button>
+            <ImportMediaButton label="Import Video / Audio / Image" navigateToEdit />
+            <Button onClick={() => setCreateOpen(true)}>+ Blank Project</Button>
             <Button
-              variant="primary"
-              onClick={async () => {
-                try {
-                  await prepareSession();
-                  session.setRoute('record');
-                } catch (error) {
-                  session.pushToast(`Could not start a session: ${(error as Error).message}`, 'error');
-                }
-              }}
+              variant="ghost"
+              onClick={() => void loadSampleKubernetesLesson('edit')}
+              data-testid="load-sample-kubernetes-btn"
             >
-              ● Start recording
+              Load Sample Kubernetes Lesson
             </Button>
-            <Button onClick={() => importInput.current?.click()} disabled={quickImporting}>
-              {quickImporting ? 'Importing…' : '+ Import media'}
+            <Button variant="ghost" onClick={() => backupInput.current?.click()}>
+              Restore backup JSON…
             </Button>
-            <Button onClick={() => setCreateOpen(true)} disabled={!workspace}>
-              + New project
-            </Button>
-            <Button variant="ghost" onClick={() => session.setRoute('edit')}>
-              Open the editor ↗
-            </Button>
+            <input
+              ref={backupInput}
+              type="file"
+              accept=".json,application/json"
+              style={{ display: 'none' }}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                if (file) void importProjectBundle(file).then(refresh);
+              }}
+            />
           </div>
-          <input
-            ref={importInput}
-            type="file"
-            accept="video/*,audio/*,image/*"
-            multiple
-            hidden
-            onChange={async (event) => {
-              const files = Array.from(event.target.files ?? []);
-              event.target.value = '';
-              if (files.length === 0) return;
-              setQuickImporting(true);
-              try {
-                const outcome = await importMediaIntoSession(files);
-                if (outcome.imported.length > 0) {
-                  session.setRoute('edit');
-                }
-              } catch (error) {
-                session.pushToast(`Could not import: ${(error as Error).message}`, 'error');
-              } finally {
-                setQuickImporting(false);
-              }
-            }}
+        }
+      >
+        <div className="grid-3">
+          <Stat
+            label="Storage mode"
+            value={
+              workspace?.info.mode === 'fsa'
+                ? 'Disk folder'
+                : workspace?.info.mode === 'opfs'
+                  ? 'Browser OPFS'
+                  : 'In-memory'
+            }
+            sub={
+              workspace?.info.persistent
+                ? `Folder: ${workspace.info.name}`
+                : 'Temporary browser storage — pick a folder on disk for 30–60 min recordings'
+            }
           />
-        </section>
-
-        {project && (
-          <div className="hint-card row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
-            <div>
-              <span className="eyebrow">ACTIVE SESSION</span>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>
-                {project.name} · <span className="mono">{project.canvas.width}×{project.canvas.height}</span> ·{' '}
-                {formatClock(project.durationTicks)}
+          <Stat
+            label="Browser quota"
+            value={quota && quota.quota > 0 ? `${formatBytes(quota.usage)} / ${formatBytes(quota.quota)}` : 'Unbounded / native'}
+            sub={
+              quota && quota.quota > 0
+                ? `${Math.round((quota.usage / quota.quota) * 100)}% used`
+                : 'Managed by your operating system'
+            }
+          />
+          <div className="stack" style={{ justifyContent: 'center', gap: 8 }}>
+            {fsAccessSupported ? (
+              <Button onClick={() => void chooseFolderWorkspace().then(() => refresh())}>
+                {workspace?.info.mode === 'fsa' ? 'Switch workspace folder…' : 'Choose workspace folder on disk…'}
+              </Button>
+            ) : (
+              <div className="warn-card">
+                This browser does not expose the File System Access directory picker. Projects are stored in origin-private
+                storage (OPFS); export a backup JSON from the Export tab to keep a copy on disk.
               </div>
-            </div>
-            <div className="row" style={{ gap: 8 }}>
-              <Button size="sm" variant="primary" onClick={() => session.setRoute('edit')}>
-                Resume editing ↗
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => session.setRoute('record')}>
-                Record another take
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => void duplicateCurrentProject()}>
-                Duplicate
-              </Button>
-            </div>
+            )}
           </div>
-        )}
+        </div>
+      </Panel>
 
-        {workspace ? (
+      {/* Active Session + Storyboard & Notes */}
+      {currentProject && (
+        <div className="grid-2">
           <Panel
-            title={`Saved Projects (${filteredRows.length})`}
-            action={
+            title={`Active session: ${currentProject.name}`}
+            subtitle={`${currentProject.canvas.width}×${currentProject.canvas.height} · ${(currentProject.canvas.fps.num / currentProject.canvas.fps.den).toFixed(0)} fps · ${formatClock(currentProject.durationTicks)}`}
+            actions={
               <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                <input
-                  className="input"
-                  aria-label="Search projects"
-                  placeholder="Filter projects…"
-                  value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                  style={{ width: 180, padding: '4px 8px', fontSize: 12 }}
-                />
-                <Button size="sm" variant="ghost" onClick={() => projectBundleInput.current?.click()}>
-                  Import .json
+                <Button size="sm" variant="primary" onClick={() => setRoute('edit')}>
+                  Resume in Editor →
                 </Button>
-                <Button size="sm" variant="ghost" onClick={() => void refresh()}>
-                  {loading ? 'Refreshing…' : 'Refresh'}
+                <Button size="sm" onClick={() => setRoute('record')}>
+                  Record into project
                 </Button>
+                <ImportMediaButton label="+ Add media" size="sm" variant="ghost" />
               </div>
             }
           >
-            {filteredRows.length === 0 ? (
-              <EmptyState
-                title={rows.length === 0 ? 'No projects in this workspace yet' : 'No matching projects'}
-                action={
-                  <Button variant="primary" onClick={() => setCreateOpen(true)}>
-                    Create project
-                  </Button>
-                }
-              >
-                Each project stores its timeline, recordings, imported assets, and captions in its own folder.
-              </EmptyState>
-            ) : (
-              <div className="grid-cards">
-                {filteredRows.map((row) => (
-                  <div key={row.folder} className="project-card">
-                    <div>
-                      <div className="project-card-preview" style={{ marginBottom: 10 }}>
-                        <Badge tone="ok">{aspectLabel(row.project?.canvas.width, row.project?.canvas.height)}</Badge>
-                        <span className="mono" style={{ fontSize: 12, color: 'var(--text-2)' }}>
-                          {formatClock(row.project?.durationTicks ?? 0)}
-                        </span>
-                      </div>
-                      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-                        <strong style={{ fontSize: 14.5 }}>{row.project?.name ?? row.folder}</strong>
-                        {row.error && <Badge tone="danger">unreadable</Badge>}
-                      </div>
-                      {row.error ? (
-                        <div className="danger-card" style={{ marginTop: 8 }}>{row.error}</div>
-                      ) : (
-                        <div className="field-hint mono" style={{ marginTop: 4 }}>
-                          {row.project?.canvas.width}×{row.project?.canvas.height} ·{' '}
-                          {row.project ? `${row.project.canvas.fps.num}/${row.project.canvas.fps.den}` : '30'} fps ·{' '}
-                          {row.project ? new Date(row.project.updatedAt).toLocaleDateString() : '—'}
-                        </div>
-                      )}
-                    </div>
+            <div className="stack" style={{ gap: 10 }}>
+              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                <Badge tone="ok">{currentProject.assets.length} media assets</Badge>
+                <Badge>{currentProject.tracks.reduce((sum, t) => sum + t.clips.length, 0)} timeline clips</Badge>
+                <Badge>{currentProject.captions.length} caption cues</Badge>
+                <Badge>{currentProject.markers.length} chapter markers</Badge>
+              </div>
+              {currentProject.assets.length > 0 && (
+                <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                  {currentProject.assets.slice(0, 6).map((asset) => (
+                    <span key={asset.id} className="pill" title={asset.path}>
+                      <Badge
+                        tone={
+                          asset.kind === 'video' ? 'accent' : asset.kind === 'audio' ? 'ok' : 'default'
+                        }
+                      >
+                        {asset.kind}
+                      </Badge>{' '}
+                      {asset.name}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <Field label="Project notes">
+                <textarea
+                  className="textarea"
+                  aria-label="Project notes"
+                  placeholder="Session notes, shot context, or technical checklist…"
+                  value={currentProject.notes}
+                  onChange={(e) => softUpdate((p) => ops.setProjectNotes(p, e.target.value))}
+                />
+              </Field>
+            </div>
+          </Panel>
 
-                    {!row.error && (
-                      <div className="row" style={{ gap: 16 }}>
-                        <Stat
-                          label="Clips"
-                          value={row.project?.tracks.reduce((sum, track) => sum + track.clips.length, 0) ?? 0}
-                        />
-                        <Stat label="Assets" value={row.project?.assets.length ?? 0} />
-                      </div>
-                    )}
-
-                    <div className="row" style={{ justifyContent: 'space-between', gap: 6, flexWrap: 'wrap' }}>
-                      {row.project && (
-                        <div className="row" style={{ gap: 6 }}>
-                          <Button
-                            size="sm"
-                            variant="primary"
-                            aria-label={`Open ${row.project.name}`}
-                            onClick={() => void openProjectFolder(row.folder)}
-                          >
-                            Open
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={async () => {
-                              await openProjectFolder(row.folder);
-                              session.setRoute('record');
-                            }}
-                          >
-                            Record take
-                          </Button>
-                        </div>
-                      )}
+          <Panel
+            title="Compact Storyboard & Shot List"
+            subtitle="Plan shots and verify completion before final export."
+            actions={
+              <Badge>
+                {(currentProject.storyboard ?? []).filter((s) => s.done).length}/
+                {(currentProject.storyboard ?? []).length} shots done
+              </Badge>
+            }
+          >
+            <div className="stack" style={{ gap: 8 }}>
+              <div className="row" style={{ gap: 6 }}>
+                <input
+                  className="input"
+                  placeholder="Add shot (e.g. 01 Terminal preflight check)…"
+                  aria-label="New storyboard shot title"
+                  value={shotDraft}
+                  onChange={(e) => setShotDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && shotDraft.trim()) {
+                      apply('Add storyboard shot', (p) => ops.addStoryboardItem(p, { title: shotDraft }));
+                      setShotDraft('');
+                    }
+                  }}
+                />
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    if (!shotDraft.trim()) return;
+                    apply('Add storyboard shot', (p) => ops.addStoryboardItem(p, { title: shotDraft }));
+                    setShotDraft('');
+                  }}
+                >
+                  + Add shot
+                </Button>
+              </div>
+              {(currentProject.storyboard ?? []).length === 0 ? (
+                <div className="field-hint">
+                  No storyboard shots yet. Add shots above or load the Sample Kubernetes Lesson to inspect a structured 4-shot lesson.
+                </div>
+              ) : (
+                <div className="storyboard-list">
+                  {(currentProject.storyboard ?? []).map((shot) => (
+                    <div key={shot.id} className={`storyboard-item ${shot.done ? 'done' : ''}`}>
+                      <input
+                        type="checkbox"
+                        checked={shot.done}
+                        aria-label={`Mark ${shot.title} complete`}
+                        onChange={() => apply('Toggle storyboard shot', (p) => ops.toggleStoryboardItem(p, shot.id))}
+                      />
+                      <span className="storyboard-text" style={{ flex: 1 }}>
+                        {shot.title}
+                      </span>
+                      {shot.durationSeconds && <Badge>{shot.durationSeconds}s</Badge>}
                       <Button
                         size="sm"
                         variant="ghost"
-                        aria-label={`Delete ${row.project?.name ?? row.folder}`}
-                        onClick={() => setDeleteTarget(row)}
+                        onClick={() => apply('Remove storyboard shot', (p) => ops.removeStoryboardItem(p, shot.id))}
                       >
-                        Delete…
+                        ×
                       </Button>
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Panel>
-        ) : null}
-
-        <Panel
-          title="Workspace &amp; Storage Location"
-          action={
-            <Button size="sm" variant="ghost" onClick={() => session.setRoute('diagnostics')}>
-              Diagnostics
-            </Button>
-          }
-        >
-          <div className="stack" style={{ gap: 10 }}>
-            <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
-              <div className="field-hint" style={{ maxWidth: 620 }}>
-                {workspace
-                  ? workspace.info.mode === 'fsa'
-                    ? `Connected to disk folder "${workspace.info.name}". Recordings and exports are written directly to your computer.`
-                    : `Using browser-managed storage (${workspace.info.name}). Choose a disk folder in Chrome or Edge for permanent file-system storage.`
-                  : 'Connect a local folder on disk (Chrome/Edge) or use private browser storage (OPFS).'}
-              </div>
-              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                <Button
-                  size="sm"
-                  variant={workspace ? 'ghost' : 'primary'}
-                  onClick={() => void connectDiskWorkspace()}
-                  disabled={!features.fileSystemAccess}
-                >
-                  Choose a folder
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => void connectFallbackWorkspace()} disabled={!features.opfs}>
-                  Use browser storage instead
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={async () => {
-                    try {
-                      const restored = await restoreLastWorkspace();
-                      if (restored) await restoreLastProject();
-                      session.pushToast(
-                        restored ? 'Workspace reopened.' : 'No previous workspace grant found.',
-                        restored ? 'success' : 'error',
-                      );
-                    } catch (error) {
-                      session.pushToast(`Could not reopen the workspace: ${(error as Error).message}`, 'error');
-                    }
-                  }}
-                >
-                  Reopen last workspace
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => projectBundleInput.current?.click()}>
-                  Import project bundle
-                </Button>
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
-            <input
-              ref={projectBundleInput}
-              type="file"
-              accept=".json,application/json"
-              hidden
-              onChange={async (event) => {
-                const file = event.target.files?.[0];
-                if (file) await importProjectBundle(file);
-                event.target.value = '';
-              }}
-            />
-            {session.workspaceError && <div className="danger-card">{session.workspaceError}</div>}
+          </Panel>
+        </div>
+      )}
+
+      {/* Projects Grid with Search, Sort, Rename, Open, Delete */}
+      <Panel
+        title={`Projects in workspace (${projects.length})`}
+        subtitle="Each project has its own folder with project.json, raw recordings, imported originals, and captions."
+        actions={
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            {projects.length > 0 && (
+              <>
+                <input
+                  className="input"
+                  style={{ width: 210 }}
+                  placeholder="Search projects…"
+                  aria-label="Search projects"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+                <Select
+                  aria-label="Sort projects"
+                  value={sortBy}
+                  onChange={(val) => setSortBy(val)}
+                  options={[
+                    { value: 'updated-desc', label: 'Sort: Recently updated' },
+                    { value: 'updated-asc', label: 'Sort: Oldest first' },
+                    { value: 'name-asc', label: 'Sort: Name (A–Z)' },
+                    { value: 'duration-desc', label: 'Sort: Longest duration' },
+                  ]}
+                />
+              </>
+            )}
           </div>
-        </Panel>
-      </div>
+        }
+      >
+        {filteredProjects.length === 0 ? (
+          <EmptyState
+            title={projects.length === 0 ? 'No projects yet' : 'No matching projects'}
+            body={
+              projects.length === 0
+                ? 'Start a new recording, import a local video/audio file, or load the Sample Kubernetes Lesson above.'
+                : 'Try clearing the search filter above.'
+            }
+            action={
+              projects.length === 0 ? (
+                <div className="row" style={{ gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                  <Button variant="primary" onClick={() => setRoute('record')}>
+                    ● Start Recording
+                  </Button>
+                  <ImportMediaButton label="Import Media File" navigateToEdit />
+                  <Button onClick={() => void loadSampleKubernetesLesson('edit')}>
+                    Load Sample Kubernetes Lesson
+                  </Button>
+                </div>
+              ) : undefined
+            }
+          />
+        ) : (
+          <div className="stack" style={{ gap: 10 }}>
+            {filteredProjects.map((project) => {
+              const isCurrent = project.folder === currentFolder;
+              const isRenaming = renamingFolder === project.folder;
+              const durationSec = Math.round(project.durationTicks / TICKS_PER_SECOND);
+              return (
+                <div key={project.id} className="project-card">
+                  <div className="project-meta">
+                    <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                      {isRenaming ? (
+                        <div className="row" style={{ gap: 6 }}>
+                          <input
+                            className="input"
+                            aria-label="New project name"
+                            value={renameDraft}
+                            onChange={(e) => setRenameDraft(e.target.value)}
+                            style={{ width: 220 }}
+                          />
+                          <Button size="sm" variant="primary" onClick={() => void handleRenameProject(project)}>
+                            Save
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => setRenamingFolder(null)}>
+                            Cancel
+                          </Button>
+                        </div>
+                      ) : (
+                        <strong>{project.name}</strong>
+                      )}
+                      {isCurrent && <Badge tone="accent">Active</Badge>}
+                      <Badge>{durationSec}s</Badge>
+                    </div>
+                    <div className="sub">
+                      Updated {new Date(project.updatedAt).toLocaleString()} · folder <code>{project.folder}</code>
+                    </div>
+                  </div>
+                  <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                    <Button
+                      size="sm"
+                      variant={isCurrent ? 'ghost' : 'primary'}
+                      onClick={() =>
+                        void openExistingProject(project.folder).then(() => {
+                          setRoute('edit');
+                        })
+                      }
+                    >
+                      {isCurrent ? 'Open in Editor' : 'Open'}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setRenamingFolder(project.folder);
+                        setRenameDraft(project.name);
+                      }}
+                    >
+                      Rename
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() =>
+                        void openExistingProject(project.folder).then(() => {
+                          setRoute('record');
+                        })
+                      }
+                    >
+                      Record
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      onClick={() => setDeleteTarget({ folder: project.folder, project })}
+                    >
+                      Delete…
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Panel>
+
+      {/* Shared Recordings Library with Preview-First Clear Unused Recordings */}
+      <RecordingsLibrary onChanged={() => void refresh()} />
 
       <Dialog
         open={createOpen}
-        onClose={() => setCreateOpen(false)}
         title="New project"
+        onClose={() => setCreateOpen(false)}
         footer={
           <>
             <Button variant="ghost" onClick={() => setCreateOpen(false)}>
               Cancel
             </Button>
-            <Button
-              variant="primary"
-              onClick={async () => {
-                setCreateOpen(false);
-                await createAndOpenProject({
-                  name: name.trim() || 'Untitled lesson',
-                  width: dimensions.width,
-                  height: dimensions.height,
-                  fps: fps === '60' ? { num: 60, den: 1 } : { num: 30, den: 1 },
-                  segmentSeconds: Number(segmentSeconds),
-                });
-              }}
-            >
-              Create project
+            <Button variant="primary" onClick={() => void handleCreate()}>
+              Create &amp; open
             </Button>
           </>
         }
       >
-        <div className="stack">
-          <Field label="Project name">
-            <input className="input" value={name} onChange={(event) => setName(event.target.value)} autoFocus />
-          </Field>
-          <Field label="Canvas aspect ratio &amp; resolution">
-            <Select
-              value={resolution}
-              onChange={setResolution}
-              options={[
-                { value: '1080', label: '1920×1080 — 1080p 16:9 (YouTube / LinkedIn)' },
-                { value: '4k', label: '3840×2160 — 4K 16:9 (Studio Master)' },
-                { value: 'vertical', label: '1080×1920 — 9:16 Vertical (Shorts / Reels)' },
-                { value: 'square', label: '1080×1080 — 1:1 Square (Carousel / Post)' },
-                { value: '1440', label: '2560×1440 — 1440p 16:9' },
-              ]}
-            />
-          </Field>
-          <Field label="Frame rate">
-            <Select
-              value={fps}
-              onChange={setFps}
-              options={[
-                { value: '30', label: '30 fps (recommended)' },
-                { value: '60', label: '60 fps (high motion)' },
-              ]}
-            />
-          </Field>
-          <Field label="Recording segment commit interval">
-            <Select
-              value={segmentSeconds}
-              onChange={setSegmentSeconds}
-              options={[
-                { value: '5', label: '5 seconds' },
-                { value: '10', label: '10 seconds (recommended)' },
-                { value: '20', label: '20 seconds' },
-                { value: '30', label: '30 seconds' },
-              ]}
-            />
-          </Field>
-          <div className="field-hint">
-            Estimated disk usage: 1 hour of 1080p is ~{formatBytes((6e6 * 3600) / 8)}.
-          </div>
-        </div>
+        <Field label="Project name">
+          <input
+            className="input"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="e.g. Kubernetes rollout demo"
+            autoFocus
+          />
+        </Field>
+        <Field label="Canvas resolution & aspect">
+          <Select
+            value={preset}
+            onChange={setPreset}
+            options={CANVAS_PRESETS.map((p) => ({ value: p.id, label: p.label }))}
+          />
+        </Field>
+        <Field label="Frame rate">
+          <Select
+            value={fpsValue}
+            onChange={setFpsValue}
+            options={FPS_OPTIONS.map((f) => ({ value: f.value, label: f.label }))}
+          />
+        </Field>
       </Dialog>
 
       <DeleteProjectDialog

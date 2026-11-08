@@ -8,6 +8,7 @@ import { Preview, snapshotFrame, snapshotThumbnail } from './Preview';
 import { Timeline } from './Timeline';
 import { MediaBin } from './MediaBin';
 import { CaptionsPanel } from './CaptionsPanel';
+import { PlanningPanel } from './PlanningPanel';
 import { Inspector, NoSelection, ProjectSettingsPanel } from './Inspector';
 import { TranscribeDialog } from './TranscribeDialog';
 import { VoiceoverDialog } from './VoiceoverDialog';
@@ -33,6 +34,8 @@ export function EditPage() {
   const selectedClipIds = useEditor((state) => state.selectedClipIds);
   const previewScale = useEditor((state) => state.previewScale);
   const showSafeAreas = useEditor((state) => state.showSafeAreas);
+  const workspaceView = useEditor((state) => state.workspaceView);
+  const setWorkspaceView = useEditor((state) => state.setWorkspaceView);
   const panel = useEditor((state) => state.panel);
   const historyLength = useEditor((state) => state.history.length);
   const futureLength = useEditor((state) => state.future.length);
@@ -334,8 +337,8 @@ export function EditPage() {
     <div className={`editor edits-workspace${inspectorVisible ? ' show-inspector' : ' inspector-collapsed'}`}>
       <header className="edit-project-bar">
         <div>
-          <span className="eyebrow">EDIT STUDIO</span>
-          <div className="row" style={{ gap: 8 }}>
+          <span className="eyebrow">BROWSER 4K STUDIO · EDIT WORKSPACE</span>
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
             <strong>{project.name}</strong>
             <input
               className="input"
@@ -346,6 +349,33 @@ export function EditPage() {
               }
               style={{ width: 170, padding: '3px 7px', fontSize: 12 }}
             />
+            <div className="row" role="tablist" aria-label="Specialist workspace views" style={{ gap: 4, flexWrap: 'wrap' }}>
+              {(
+                [
+                  { id: '05-timeline', num: '05', label: 'Timeline', tool: 'media' as EditorTool },
+                  { id: '06-presenter', num: '06', label: 'Presenter', tool: 'presenter' as EditorTool },
+                  { id: '07-color', num: '07', label: 'Color', tool: 'adjust' as EditorTool },
+                  { id: '08-effects', num: '08', label: 'Effects & Privacy', tool: 'effects' as EditorTool },
+                  { id: '09-text', num: '09', label: 'Text & Captions', tool: 'text' as EditorTool },
+                  { id: '10-audio', num: '10', label: 'Audio', tool: 'audio' as EditorTool },
+                  { id: '11-planning', num: '11', label: 'Planning & Share', tool: 'planning' as EditorTool },
+                ] as const
+              ).map((v) => (
+                <button
+                  key={v.id}
+                  type="button"
+                  className="workspace-view-pill"
+                  aria-pressed={workspaceView === v.id}
+                  onClick={() => {
+                    setWorkspaceView(v.id);
+                    setTool(v.tool);
+                    setDrawerOpen(true);
+                  }}
+                >
+                  <span className="workspace-view-num">{v.num}</span> {v.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
         <div className="row">
@@ -386,7 +416,7 @@ export function EditPage() {
       </nav>
       {drawerOpen && (
       <aside className="editor-side scroll-thin">
-        {tool === 'media' || tool === 'more' ? <MediaBin key={tool} initialTab={tool === 'more' ? 'add' : 'uploads'} project={project} onOpenVoiceover={() => setVoiceoverOpen(true)} /> : tool === 'captions' ? <CaptionsPanel project={project} onOpenTranscribe={() => setTranscribeOpen(true)} /> : <EditorToolLibrary key={tool} tool={tool} project={project} clip={selectedClip?.clip ?? null} />}
+        {tool === 'media' || tool === 'more' ? <MediaBin key={tool} initialTab={tool === 'more' ? 'add' : 'uploads'} project={project} onOpenVoiceover={() => setVoiceoverOpen(true)} /> : tool === 'captions' ? <CaptionsPanel project={project} onOpenTranscribe={() => setTranscribeOpen(true)} /> : tool === 'planning' ? <PlanningPanel project={project} /> : <EditorToolLibrary key={tool} tool={tool} project={project} clip={selectedClip?.clip ?? null} />}
       </aside>
       )}
 
