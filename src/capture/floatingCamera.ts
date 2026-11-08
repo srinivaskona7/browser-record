@@ -161,40 +161,55 @@ function copyStylesToPipDocument(sourceDoc: Document, targetDoc: Document): void
   }
 }
 
-function stateRingColor(stage: FloatingRecordingControlState['stage']): string {
-  if (stage === 'recording' || stage === 'countdown') return '#ef4444';
-  if (stage === 'paused') return '#f59e0b';
-  return '#687385';
-}
-
 function applyPresenterStyleToDocPip(
   container: HTMLElement,
   video: HTMLVideoElement,
   presenter: PresenterProps,
   stage: FloatingRecordingControlState['stage'],
 ) {
+  container.style.clipPath =
+    presenter.shape === 'hexagon'
+      ? 'polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%)'
+      : 'none';
   container.style.borderRadius =
     presenter.shape === 'circle'
       ? '50%'
-      : presenter.shape === 'rounded'
-        ? '22px'
-        : presenter.shape === 'portrait'
-          ? '18px'
-          : '8px';
-  const ringColor = stateRingColor(stage);
+      : presenter.shape === 'pill'
+        ? '999px'
+        : presenter.shape === 'rounded'
+          ? '24px'
+          : presenter.shape === 'portrait'
+            ? '20px'
+            : '10px';
+  const ringColor =
+    stage === 'recording' || stage === 'countdown'
+      ? '#ff5c7c'
+      : stage === 'paused'
+        ? '#f59e0b'
+        : presenter.borderColor || '#c3adff';
   const borderWidth = Math.max(3, presenter.border || 3);
-  container.style.border = `${borderWidth}px solid ${ringColor}`;
-  container.style.boxShadow = `0 0 0 2px rgba(0,0,0,0.65), 0 8px 24px rgba(0,0,0,0.5)`;
+  container.style.border = presenter.shape === 'hexagon' ? 'none' : `${borderWidth}px solid ${ringColor}`;
+  container.style.boxShadow = `0 0 0 2px rgba(17, 16, 24, 0.85), 0 14px 34px rgba(0, 0, 0, 0.65)`;
   video.style.transform = presenter.mirror ? 'scaleX(-1)' : 'none';
 }
 
+const PIP_SHAPE_ORDER: Array<PresenterProps['shape']> = [
+  'circle',
+  'rounded',
+  'portrait',
+  'pill',
+  'hexagon',
+  'square',
+];
+
 /**
  * Opens an always-on-top floating camera & controls window from an explicit user click,
- * reusing the active camera stream (never opening a duplicate getUserMedia stream) and
- * keeping its lifecycle separate from the recording session so closing it leaves the take running.
+ * requesting the PiP window synchronously on the user gesture before awaiting any
+ * pending camera stream so Chrome never drops transient user activation.
  */
 export async function openFloatingCamera(options: {
-  stream: MediaStream;
+  stream?: MediaStream | null;
+  streamPromise?: Promise<MediaStream | null>;
   videoElement?: HTMLVideoElement | null;
   presenter: PresenterProps;
   initialControlState?: FloatingRecordingControlState;
@@ -202,6 +217,7 @@ export async function openFloatingCamera(options: {
   onTogglePause?: () => void;
   onStop?: () => void;
   onToggleHidePreview?: () => void;
+  onUpdatePresenter?: (patch: Partial<PresenterProps>) => void;
   onClose?: () => void;
 }): Promise<FloatingCameraSession> {
   const support = detectFloatingCameraSupport();
@@ -209,6 +225,8 @@ export async function openFloatingCamera(options: {
 
   if (support.mode === 'document-pip' && window.documentPictureInPicture) {
     const initialDims = dimensionsForPipSize(prefs.sizePreset, options.presenter.shape);
+    // CRITICAL: Call requestWindow synchronously on the user click BEFORE awaiting any streamPromise
+    // so transient user activation is guaranteed to be active in Chrome/Edge.
     const pipWin = await window.documentPictureInPicture.requestWindow({
       width: initialDims.width,
       height: initialDims.height,
@@ -218,13 +236,13 @@ export async function openFloatingCamera(options: {
     if (typeof document !== 'undefined') {
       copyStylesToPipDocument(document, doc);
     }
-    doc.title = 'Studio Floating Camera & Controls';
+    doc.title = 'Browser 4K Studio — Floating Camera';
     doc.body.style.margin = '0';
     doc.body.style.width = '100vw';
     doc.body.style.height = '100vh';
-    doc.body.style.background = 'var(--token-bg-app, #090d12)';
-    doc.body.style.color = 'var(--token-text-primary, #f0f6fc)';
-    doc.body.style.fontFamily = 'Inter, -apple-system, BlinkMacSystemFont, sans-serif';
+    doc.body.style.background = '#111018';
+    doc.body.style.color = '#f5f2ff';
+    doc.body.style.fontFamily = 'Plus Jakarta Sans, Inter, -apple-system, BlinkMacSystemFont, sans-serif';
     doc.body.style.display = 'grid';
     doc.body.style.gap = '6px';
     doc.body.style.padding = '8px';
@@ -242,11 +260,11 @@ export async function openFloatingCamera(options: {
 
     const frame = doc.createElement('div');
     frame.setAttribute('data-testid', 'pip-camera-frame');
-    frame.style.width = 'min(100%, 210px)';
-    frame.style.height = 'min(100%, 210px)';
+    frame.style.width = 'min(100%, 220px)';
+    frame.style.height = 'min(100%, 220px)';
     frame.style.overflow = 'hidden';
     frame.style.position = 'relative';
-    frame.style.background = '#11161a';
+    frame.style.background = '#16141e';
 
     const video = doc.createElement('video');
     video.muted = true;
@@ -255,7 +273,9 @@ export async function openFloatingCamera(options: {
     video.style.width = '100%';
     video.style.height = '100%';
     video.style.objectFit = 'cover';
-    video.srcObject = options.stream;
+    if (options.stream) {
+      video.srcObject = options.stream;
+    }
 
     // Always-visible elapsed-time badge overlaid on top-left of the bubble
     const badge = doc.createElement('div');
@@ -263,10 +283,10 @@ export async function openFloatingCamera(options: {
     badge.style.position = 'absolute';
     badge.style.top = '8px';
     badge.style.left = '8px';
-    badge.style.padding = '3px 7px';
+    badge.style.padding = '3px 8px';
     badge.style.borderRadius = '999px';
-    badge.style.background = 'rgba(9, 13, 18, 0.82)';
-    badge.style.border = '1px solid rgba(255,255,255,0.16)';
+    badge.style.background = 'rgba(17, 16, 24, 0.86)';
+    badge.style.border = '1px solid rgba(195, 173, 255, 0.28)';
     badge.style.fontSize = '11px';
     badge.style.fontWeight = '700';
     badge.style.fontVariantNumeric = 'tabular-nums';
@@ -278,7 +298,7 @@ export async function openFloatingCamera(options: {
     hiddenNotice.style.fontSize = '11.5px';
     hiddenNotice.style.lineHeight = '1.45';
     hiddenNotice.style.textAlign = 'center';
-    hiddenNotice.style.color = '#8b949e';
+    hiddenNotice.style.color = '#b2abc4';
     hiddenNotice.textContent =
       'Camera preview hidden to avoid a double bubble on Entire screen capture. Camera track continues recording separately for the editor.';
 
@@ -287,18 +307,19 @@ export async function openFloatingCamera(options: {
     stageWrap.appendChild(badge);
     stageWrap.appendChild(hiddenNotice);
 
-    // Floating control bar inside Document PiP (timer + Pause/Resume + Stop + Hide preview)
+    // Floating control bar inside Document PiP (timer + Pause/Resume + Stop + Shape + Hide preview)
     const bar = doc.createElement('div');
     bar.setAttribute('role', 'toolbar');
     bar.setAttribute('aria-label', 'Floating recording controls');
     bar.style.display = 'flex';
     bar.style.alignItems = 'center';
     bar.style.justifyContent = 'space-between';
+    bar.style.flexWrap = 'wrap';
     bar.style.gap = '6px';
     bar.style.padding = '6px 8px';
-    bar.style.borderRadius = '8px';
-    bar.style.background = '#161b22';
-    bar.style.border = '1px solid #30363d';
+    bar.style.borderRadius = '10px';
+    bar.style.background = '#16141e';
+    bar.style.border = '1px solid #322d41';
     bar.style.fontSize = '11.5px';
 
     const statusSpan = doc.createElement('span');
@@ -308,16 +329,17 @@ export async function openFloatingCamera(options: {
 
     const btnWrap = doc.createElement('div');
     btnWrap.style.display = 'flex';
+    btnWrap.style.flexWrap = 'wrap';
     btnWrap.style.gap = '4px';
 
     const styleBtn = (btn: HTMLButtonElement, danger = false) => {
       btn.type = 'button';
-      btn.style.minHeight = '28px';
-      btn.style.padding = '4px 8px';
+      btn.style.minHeight = '26px';
+      btn.style.padding = '3px 7px';
       btn.style.borderRadius = '6px';
-      btn.style.border = '1px solid ' + (danger ? '#f85149' : '#30363d');
-      btn.style.background = danger ? '#da3633' : '#21262d';
-      btn.style.color = '#f0f6fc';
+      btn.style.border = '1px solid ' + (danger ? '#ff5c7c' : '#322d41');
+      btn.style.background = danger ? '#da3633' : '#1c1927';
+      btn.style.color = '#f5f2ff';
       btn.style.fontSize = '11px';
       btn.style.fontWeight = '600';
       btn.style.cursor = 'pointer';
@@ -332,6 +354,27 @@ export async function openFloatingCamera(options: {
     stopBtn.textContent = 'Stop';
     stopBtn.addEventListener('click', () => options.onStop?.());
 
+    let currentPresenter = options.presenter;
+    let currentState: FloatingRecordingControlState = options.initialControlState ?? {
+      stage: 'idle',
+      elapsedText: '00:00:00',
+      previewHidden: false,
+    };
+
+    const shapeBtn = doc.createElement('button');
+    styleBtn(shapeBtn, false);
+    shapeBtn.textContent = `Shape: ${currentPresenter.shape}`;
+    shapeBtn.title = 'Cycle presenter bubble shape across tabs';
+    shapeBtn.addEventListener('click', () => {
+      const idx = PIP_SHAPE_ORDER.indexOf(currentPresenter.shape);
+      const nextShape = PIP_SHAPE_ORDER[(idx + 1) % PIP_SHAPE_ORDER.length]!;
+      currentPresenter = { ...currentPresenter, shape: nextShape };
+      shapeBtn.textContent = `Shape: ${nextShape}`;
+      applyPresenterStyleToDocPip(frame, video, currentPresenter, currentState.stage);
+      applyLayout();
+      options.onUpdatePresenter?.({ shape: nextShape });
+    });
+
     const hidePreviewBtn = doc.createElement('button');
     styleBtn(hidePreviewBtn, false);
     hidePreviewBtn.textContent = 'Hide preview';
@@ -340,20 +383,24 @@ export async function openFloatingCamera(options: {
 
     btnWrap.appendChild(pauseBtn);
     btnWrap.appendChild(stopBtn);
+    btnWrap.appendChild(shapeBtn);
     btnWrap.appendChild(hidePreviewBtn);
     bar.appendChild(statusSpan);
     bar.appendChild(btnWrap);
 
     doc.body.appendChild(stageWrap);
     doc.body.appendChild(bar);
-    void video.play().catch(() => undefined);
+    if (options.stream) {
+      void video.play().catch(() => undefined);
+    } else if (options.streamPromise) {
+      void options.streamPromise.then((resolved) => {
+        if (resolved && !closed) {
+          video.srcObject = resolved;
+          void video.play().catch(() => undefined);
+        }
+      });
+    }
 
-    let currentPresenter = options.presenter;
-    let currentState: FloatingRecordingControlState = options.initialControlState ?? {
-      stage: 'idle',
-      elapsedText: '00:00:00',
-      previewHidden: false,
-    };
     let activeLayout: 'bubble' | 'tall' | 'bar' = 'tall';
 
     const applyLayout = () => {
@@ -367,19 +414,20 @@ export async function openFloatingCamera(options: {
         doc.body.style.gridTemplateRows = '1fr';
         stageWrap.style.display = currentState.previewHidden ? 'grid' : 'none';
         bar.style.display = 'flex';
-      } else if (activeLayout === 'bubble') {
-        doc.body.style.gridTemplateRows = '1fr auto';
-        stageWrap.style.display = 'grid';
-        const side = Math.max(96, Math.min(w - 16, h - 48));
-        frame.style.width = `${side}px`;
-        frame.style.height = `${side}px`;
-        bar.style.display = prefs.showControls ? 'flex' : 'none';
       } else {
         doc.body.style.gridTemplateRows = '1fr auto';
         stageWrap.style.display = 'grid';
-        const side = Math.max(110, Math.min(w - 16, h - 56));
-        frame.style.width = `${side}px`;
-        frame.style.height = `${side}px`;
+        const side = Math.max(104, Math.min(w - 16, h - 56));
+        if (currentPresenter.shape === 'pill') {
+          frame.style.width = `${Math.min(w - 16, Math.round(side * 1.35))}px`;
+          frame.style.height = `${Math.round(side * 0.85)}px`;
+        } else if (currentPresenter.shape === 'portrait') {
+          frame.style.width = `${Math.round(side * 0.82)}px`;
+          frame.style.height = `${side}px`;
+        } else {
+          frame.style.width = `${side}px`;
+          frame.style.height = `${side}px`;
+        }
         bar.style.display = prefs.showControls ? 'flex' : 'none';
       }
     };
@@ -387,7 +435,7 @@ export async function openFloatingCamera(options: {
     const renderControlState = (state: FloatingRecordingControlState) => {
       currentState = state;
       const active = state.stage === 'recording' || state.stage === 'paused';
-      const prefix = state.stage === 'paused' ? 'PAUSED' : state.stage === 'recording' ? 'REC' : 'READY';
+      const prefix = state.stage === 'paused' ? 'PAUSED' : state.stage === 'recording' ? 'REC' : 'LIVE';
       const labelText = `${prefix} ${state.elapsedText}`;
       statusSpan.textContent = labelText;
       badge.textContent = `● ${labelText}`;
@@ -418,7 +466,11 @@ export async function openFloatingCamera(options: {
       mode: 'document-pip',
       updatePresenter: (nextPresenter) => {
         currentPresenter = nextPresenter;
-        if (!closed) applyPresenterStyleToDocPip(frame, video, nextPresenter, currentState.stage);
+        shapeBtn.textContent = `Shape: ${nextPresenter.shape}`;
+        if (!closed) {
+          applyPresenterStyleToDocPip(frame, video, nextPresenter, currentState.stage);
+          applyLayout();
+        }
       },
       updateStream: (nextStream) => {
         if (!closed) {
@@ -460,8 +512,20 @@ export async function openFloatingCamera(options: {
 
   if (support.mode === 'video-pip' && options.videoElement) {
     const videoEl = options.videoElement;
-    if (videoEl.srcObject !== options.stream) {
-      videoEl.srcObject = options.stream;
+    const resolvedStream = options.stream ?? (options.streamPromise ? await options.streamPromise : null);
+    if (!resolvedStream) throw new Error('Camera stream is not available.');
+    if (videoEl.srcObject !== resolvedStream) {
+      videoEl.srcObject = resolvedStream;
+    }
+    if (videoEl.readyState < 1) {
+      await new Promise<void>((resolve) => {
+        const onLoaded = () => {
+          videoEl.removeEventListener('loadedmetadata', onLoaded);
+          resolve();
+        };
+        videoEl.addEventListener('loadedmetadata', onLoaded, { once: true });
+        setTimeout(resolve, 600);
+      });
     }
     await videoEl.play().catch(() => undefined);
     await videoEl.requestPictureInPicture();

@@ -216,10 +216,16 @@ export async function exportProject(request: ExportRequest): Promise<ExportResul
   const canvas = createExportCanvas(width, height);
   const ctx = canvas.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
   if (!ctx) throw new Error('Could not create the export canvas.');
+  if ('imageSmoothingEnabled' in ctx) {
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+  }
 
   const videoSource = new CanvasSource(canvas, {
     codec: mediaBunnyVideoCodec(chosenVideo.codec) as VideoCodec,
     quality: new Quality({ bitrate: videoBitrate, bitrateMode: 'variable' }),
+    keyFrameInterval: 4,
+    latencyMode: 'quality',
   });
   output.addVideoTrack(videoSource, { frameRate: fpsNumber });
 

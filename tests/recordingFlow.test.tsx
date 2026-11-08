@@ -254,6 +254,43 @@ it('opens Document Picture-in-Picture with camera + controls, toggles Hide previ
   expect(closedCount).toBe(1);
   expect(stopClicked).toBe(0);
 
+  // Verify synchronous requestWindow BEFORE streamPromise resolves so user activation never expires
+  let requestWindowCalledWhileStreamPending = false;
+  let streamResolved = false;
+  window.documentPictureInPicture = {
+    requestWindow: vi.fn(async () => {
+      requestWindowCalledWhileStreamPending = !streamResolved;
+      pipDoc.body.innerHTML = '';
+      return fakePipWin;
+    }),
+  };
+  let resolveDelayedStream!: (s: MediaStream) => void;
+  const delayedStreamPromise = new Promise<MediaStream>((r) => {
+    resolveDelayedStream = r;
+  });
+  let updatedShape: string | undefined;
+  const asyncSession = await openFloatingCamera({
+    streamPromise: delayedStreamPromise,
+    presenter: defaultPresenter(),
+    onUpdatePresenter: (patch) => {
+      updatedShape = patch.shape;
+    },
+  });
+  expect(requestWindowCalledWhileStreamPending).toBe(true);
+  const delayedStream = new MediaStream();
+  streamResolved = true;
+  resolveDelayedStream(delayedStream);
+  await Promise.resolve();
+  const pipVideo = pipDoc.querySelector('video') as HTMLVideoElement;
+  expect(pipVideo.srcObject).toBe(delayedStream);
+
+  // Cycle bubble shape inside floating PiP window
+  const shapeBtn = [...pipDoc.querySelectorAll('button')].find((b) => b.textContent?.startsWith('Shape:'));
+  expect(shapeBtn).toBeDefined();
+  shapeBtn!.click();
+  expect(updatedShape).toBe('rounded');
+  await asyncSession.close();
+
   delete window.documentPictureInPicture;
 });
 

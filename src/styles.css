@@ -1040,21 +1040,26 @@ kbd {
   background: color-mix(in oklab, var(--warn, #d9a441) 8%, var(--surface-1));
 }
 
-/* Self-view bubble during a take: the monitor can scroll out of sight, this cannot. */
+/* Self-view bubble during preview, ready, and recording: always visible and draggable. */
 .rec-selfview {
   position: fixed;
-  right: 20px;
-  bottom: 88px;
-  width: 148px;
-  height: 148px;
+  right: 24px;
+  bottom: 92px;
+  width: 188px;
+  height: 188px;
   z-index: 55;
   overflow: hidden;
-  background: #11161a;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  background: #16141e;
+  box-shadow: 0 0 0 2px rgba(17, 16, 24, 0.9), 0 18px 44px rgba(0, 0, 0, 0.65);
+  transition: width 140ms ease, height 140ms ease, border-radius 140ms ease, box-shadow 140ms ease;
   /* Draggable like Cap's camera bubble; touch-action stops a phone drag from scrolling the page. */
   cursor: grab;
   touch-action: none;
   user-select: none;
+}
+
+.rec-selfview.is-recording {
+  box-shadow: 0 0 0 3px rgba(255, 92, 124, 0.32), 0 20px 48px rgba(0, 0, 0, 0.72);
 }
 
 .rec-selfview:active {
@@ -1066,6 +1071,41 @@ kbd {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.rec-selfview-controls {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 140ms ease;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.rec-selfview:hover .rec-selfview-controls,
+.rec-selfview:focus-within .rec-selfview-controls {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.rec-selfview-chip {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(17, 16, 24, 0.88);
+  border: 1px solid rgba(195, 173, 255, 0.35);
+  color: #f5f2ff;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+}
+.rec-selfview-chip:hover {
+  background: #1c1927;
+  border-color: var(--accent);
 }
 
 /* Floating Loom/Cap-style mini bar: always in view without covering the page. */

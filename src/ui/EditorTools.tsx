@@ -27,18 +27,17 @@ import { SvgIcon, type IconName } from './icons';
 
 export const EDITOR_TOOLS: ReadonlyArray<{ id: string; label: string; iconName: IconName }> = [
   { id: 'media', label: 'Media', iconName: 'uploads' },
-  { id: 'presenter', label: 'Presenter', iconName: 'camera' },
-  { id: 'audio', label: 'Audio', iconName: 'audio' },
   { id: 'text', label: 'Text', iconName: 'text' },
   { id: 'captions', label: 'Captions', iconName: 'captions' },
+  { id: 'audio', label: 'Audio', iconName: 'audio' },
   { id: 'voiceover', label: 'Voiceover', iconName: 'mic' },
+  { id: 'presenter', label: 'Bubble', iconName: 'camera' },
+  { id: 'adjust', label: 'Adjust', iconName: 'adjust' },
+  { id: 'filters', label: 'Filters', iconName: 'filters' },
   { id: 'effects', label: 'Effects', iconName: 'effects' },
   { id: 'transitions', label: 'Transitions', iconName: 'transitions' },
-  { id: 'filters', label: 'Filters', iconName: 'filters' },
-  { id: 'adjust', label: 'Adjust', iconName: 'adjust' },
   { id: 'sfx', label: 'Sound FX', iconName: 'sound' },
-  { id: 'planning', label: 'Planning', iconName: 'more' },
-  { id: 'more', label: 'More tools', iconName: 'more' },
+  { id: 'more', label: 'Overlays', iconName: 'more' },
 ] as const;
 
 export type EditorTool =
@@ -704,15 +703,15 @@ export function ClipQuickActions({ project }: { project: Project }) {
   return (
     <div className="clip-quick-actions" role="toolbar" aria-label="Clip actions">
       <Badge tone={selection.kind === 'none' ? 'neutral' : 'ok'}>{scopeChip}</Badge>
-      <Button size="sm" disabled={!inside} onClick={() => apply('Trim start', (p) => ops.trimStart(p, clip!.id, tick))}>
-        Trim start
-      </Button>
       <Button
         size="sm"
         disabled={!inside}
         onClick={() => apply('Split clip', (p) => ops.splitAt(p, tick, { clipIds: selected, splitLinked: true }))}
       >
         Split
+      </Button>
+      <Button size="sm" disabled={!inside} onClick={() => apply('Trim start', (p) => ops.trimStart(p, clip!.id, tick))}>
+        Trim start
       </Button>
       <Button size="sm" disabled={!inside} onClick={() => apply('Trim end', (p) => ops.trimEnd(p, clip!.id, tick))}>
         Trim end
@@ -726,60 +725,11 @@ export function ClipQuickActions({ project }: { project: Project }) {
       </Button>
       <Button
         size="sm"
-        disabled={!clip}
-        onClick={() => {
-          setClipClipboard(selectedClips);
-        }}
-      >
-        Copy
-      </Button>
-      <Button
-        size="sm"
-        disabled={clipClipboard.length === 0}
-        onClick={() => {
-          let newIds: string[] = [];
-          apply('Paste clips', (p) => {
-            const res = ops.pasteClipsAtPlayhead(p, clipClipboard, tick);
-            newIds = res.newClipIds;
-            return res.project;
-          });
-          if (newIds.length > 0) selectClips(newIds);
-        }}
-      >
-        Paste
-      </Button>
-      <Button
-        size="sm"
         disabled={!inside || clip?.kind !== 'media'}
         onClick={() => apply('Freeze frame', (p) => ops.holdFrame(p, track!.id, clip!.id, tick, 2 * TICKS_PER_SECOND).project)}
       >
         Freeze
       </Button>
-      <Button
-        size="sm"
-        disabled={!clip || clip.kind !== 'media'}
-        aria-pressed={Boolean(clip?.reverse)}
-        onClick={() => apply('Reverse clip', (p) => ops.toggleClipReverse(p, clip!.id))}
-      >
-        {clip?.reverse ? 'Reversed' : 'Reverse'}
-      </Button>
-      <Button
-        size="sm"
-        disabled={!clip || track?.kind !== 'video' || !clip.assetId}
-        onClick={() => apply('Extract audio', (p) => ops.extractAudio(p, clip!.id).project)}
-      >
-        Extract audio
-      </Button>
-      {selected.length >= 2 && (
-        <Button size="sm" onClick={() => apply('Group clips', (p) => ops.groupClips(p, selected))}>
-          Group
-        </Button>
-      )}
-      {Boolean(clip?.linkId) && (
-        <Button size="sm" onClick={() => apply('Ungroup clips', (p) => ops.ungroupClips(p, selected))}>
-          Ungroup
-        </Button>
-      )}
       <Button size="sm" disabled={!clip} onClick={() => apply('Mute clip', (p) => ops.muteClip(p, clip!.id))}>
         {clip?.audio.muted ? 'Unmute' : 'Mute'}
       </Button>
@@ -791,6 +741,66 @@ export function ClipQuickActions({ project }: { project: Project }) {
       >
         Delete
       </Button>
+      <details className="rec-more-menu">
+        <summary className="btn btn-ghost btn-sm" aria-label="More clip actions">
+          More ▾
+        </summary>
+        <div className="rec-more-popover">
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={!clip}
+            onClick={() => {
+              setClipClipboard(selectedClips);
+            }}
+          >
+            Copy
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={clipClipboard.length === 0}
+            onClick={() => {
+              let newIds: string[] = [];
+              apply('Paste clips', (p) => {
+                const res = ops.pasteClipsAtPlayhead(p, clipClipboard, tick);
+                newIds = res.newClipIds;
+                return res.project;
+              });
+              if (newIds.length > 0) selectClips(newIds);
+            }}
+          >
+            Paste
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={!clip || clip.kind !== 'media'}
+            aria-pressed={Boolean(clip?.reverse)}
+            onClick={() => apply('Reverse clip', (p) => ops.toggleClipReverse(p, clip!.id))}
+          >
+            {clip?.reverse ? 'Reversed' : 'Reverse'}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={!clip || track?.kind !== 'video' || !clip.assetId}
+            onClick={() => apply('Extract audio', (p) => ops.extractAudio(p, clip!.id).project)}
+          >
+            Extract audio
+          </Button>
+          {selected.length >= 2 && (
+            <Button size="sm" variant="ghost" onClick={() => apply('Group clips', (p) => ops.groupClips(p, selected))}>
+              Group
+            </Button>
+          )}
+          {Boolean(clip?.linkId) && (
+            <Button size="sm" variant="ghost" onClick={() => apply('Ungroup clips', (p) => ops.ungroupClips(p, selected))}>
+              Ungroup
+            </Button>
+          )}
+        </div>
+      </details>
     </div>
   );
 }

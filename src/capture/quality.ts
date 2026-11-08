@@ -32,16 +32,15 @@ export function captureDimensions(resolution: CaptureResolution): CaptureDimensi
 }
 
 /**
- * Bitrate that keeps terminal text sharp without asking a 1080p capture to
- * pretend it is 4K. 8 Mbps at 1080p/30 is already generous for static content;
- * 4K needs roughly 4× the pixels.
+ * Bitrate that keeps terminal text sharp in a compact file size without asking a
+ * 1080p capture to pretend it is 4K. ~4 Mbps at 1080p30 and ~14 Mbps at 4K30 VBR.
  */
 export function recordingBitrate(width: number, height: number, fps: number): number {
   const pixels = Math.max(1, width * height);
   const pixelsPerSecond = pixels * Math.max(1, fps);
-  const bitsPerPixel = 0.14;
-  const floor = 4_000_000;
-  const ceiling = 40_000_000;
+  const bitsPerPixel = 0.06;
+  const floor = 2_800_000;
+  const ceiling = 24_000_000;
   return Math.round(Math.min(ceiling, Math.max(floor, pixelsPerSecond * bitsPerPixel)));
 }
 

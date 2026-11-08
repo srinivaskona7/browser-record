@@ -34,8 +34,6 @@ export function EditPage() {
   const selectedClipIds = useEditor((state) => state.selectedClipIds);
   const previewScale = useEditor((state) => state.previewScale);
   const showSafeAreas = useEditor((state) => state.showSafeAreas);
-  const workspaceView = useEditor((state) => state.workspaceView);
-  const setWorkspaceView = useEditor((state) => state.setWorkspaceView);
   const panel = useEditor((state) => state.panel);
   const historyLength = useEditor((state) => state.history.length);
   const futureLength = useEditor((state) => state.future.length);
@@ -368,17 +366,6 @@ export function EditPage() {
   const sideModeClass =
     drawerOpen && activeSidePanel === 'tools' ? ' active-side-tools' : ' active-side-inspector';
 
-  const syncWorkspaceForTool = (nextTool: EditorTool) => {
-    if (nextTool === 'presenter') setWorkspaceView('06-presenter');
-    else if (nextTool === 'adjust') setWorkspaceView('07-color');
-    else if (nextTool === 'effects' || nextTool === 'transitions' || nextTool === 'filters')
-      setWorkspaceView('08-effects');
-    else if (nextTool === 'text' || nextTool === 'captions') setWorkspaceView('09-text');
-    else if (nextTool === 'audio' || nextTool === 'sfx' || nextTool === 'voiceover') setWorkspaceView('10-audio');
-    else if (nextTool === 'planning') setWorkspaceView('11-planning');
-    else setWorkspaceView('05-timeline');
-  };
-
   return (
     <div
       className={`editor edits-workspace${focusMode ? ' focus-mode' : inspectorVisible ? ' show-inspector' : ' inspector-collapsed'}${!focusMode && !drawerOpen ? ' drawer-collapsed' : ''}${sideModeClass}`}
@@ -386,65 +373,48 @@ export function EditPage() {
       data-side-panel={activeSidePanel}
     >
       <header className="edit-project-bar">
-        <div className="stack" style={{ gap: 6 }}>
-          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-            <span className="eyebrow">BROWSER 4K STUDIO · EDIT WORKSPACE</span>
-            <strong>{project.name}</strong>
-            <input
-              className="input"
-              aria-label="Edit project name"
-              value={project.name}
-              onChange={(event) =>
-                useEditor.getState().apply('Rename project', (p) => ops.renameProject(p, event.target.value))
-              }
-              style={{ width: 170, padding: '3px 7px', fontSize: 12 }}
-            />
-          </div>
-          {!focusMode && (
-            <div className="row edit-workspace-row" role="tablist" aria-label="Specialist workspace views" style={{ gap: 4, flexWrap: 'wrap' }}>
-              {(
-                [
-                  { id: '05-timeline', label: 'Timeline', tool: 'media' as EditorTool },
-                  { id: '06-presenter', label: 'Presenter', tool: 'presenter' as EditorTool },
-                  { id: '07-color', label: 'Color', tool: 'adjust' as EditorTool },
-                  { id: '08-effects', label: 'Effects & Privacy', tool: 'effects' as EditorTool },
-                  { id: '09-text', label: 'Text & Captions', tool: 'text' as EditorTool },
-                  { id: '10-audio', label: 'Audio', tool: 'audio' as EditorTool },
-                  { id: '11-planning', label: 'Planning & Share', tool: 'planning' as EditorTool },
-                ] as const
-              ).map((v) => (
-                <button
-                  key={v.id}
-                  type="button"
-                  className="workspace-view-pill"
-                  aria-pressed={workspaceView === v.id}
-                  onClick={() => {
-                    setFocusMode(false);
-                    setWorkspaceView(v.id);
-                    setTool(v.tool);
-                    if (v.id === '05-timeline') {
-                      setDrawerOpen(false);
-                      setInspectorVisible(true);
-                      setActiveSidePanel('inspector');
-                    } else {
-                      setDrawerOpen(true);
-                      setActiveSidePanel('tools');
-                    }
-                    setPanel('effects');
-                  }}
-                >
-                  {v.label}
-                </button>
-              ))}
-            </div>
-          )}
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <input
+            className="input"
+            aria-label="Edit project name"
+            value={project.name}
+            onChange={(event) =>
+              useEditor.getState().apply('Rename project', (p) => ops.renameProject(p, event.target.value))
+            }
+            style={{ width: 190, padding: '4px 8px', fontSize: 13, fontWeight: 600 }}
+          />
+          <Select
+            label="Canvas aspect ratio"
+            value={`${project.canvas.width}:${project.canvas.height}`}
+            onChange={(value) =>
+              useEditor
+                .getState()
+                .apply('Change canvas', (p) =>
+                  value === '1080:1920'
+                    ? ops.reframe9x16(p)
+                    : value === '1080:1080'
+                      ? ops.reframe1x1(p)
+                      : value === '1080:1350'
+                        ? ops.reframe4x5(p)
+                        : ops.reframe16x9(p),
+                )
+            }
+            options={[
+              { value: `${project.canvas.width}:${project.canvas.height}`, label: `${project.canvas.width} × ${project.canvas.height}` },
+              ...[
+                { value: '1080:1920', label: '9:16 · Reel' },
+                { value: '1920:1080', label: '16:9 · Landscape' },
+                { value: '1080:1080', label: '1:1 · Square' },
+                { value: '1080:1350', label: '4:5 · Portrait' },
+              ].filter((o) => o.value !== `${project.canvas.width}:${project.canvas.height}`),
+            ]}
+          />
         </div>
-        <div className="row">
-          <ImportMediaButton />
+        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+          <ImportMediaButton size="sm" />
           <Button size="sm" onClick={() => { setPlaying(false); useSession.getState().setRoute('record'); }}>● Record</Button>
           <Button size="sm" onClick={() => useEditor.getState().undo()} disabled={historyLength === 0}>↶ Undo</Button>
           <Button size="sm" onClick={() => useEditor.getState().redo()} disabled={futureLength === 0}>↷ Redo</Button>
-          <Select label="Canvas aspect ratio" value={`${project.canvas.width}:${project.canvas.height}`} onChange={(value) => useEditor.getState().apply('Change canvas', (p) => value === '1080:1920' ? ops.reframe9x16(p) : value === '1080:1080' ? ops.reframe1x1(p) : value === '1080:1350' ? ops.reframe4x5(p) : ops.reframe16x9(p))} options={[{value: `${project.canvas.width}:${project.canvas.height}`, label: `${project.canvas.width} × ${project.canvas.height}`}, ...[{value: '1080:1920', label: '9:16 · Reel'}, {value: '1920:1080', label: '16:9 · Landscape'}, {value: '1080:1080', label: '1:1 · Square'}, {value: '1080:1350', label: '4:5 · Portrait'}].filter((o) => o.value !== `${project.canvas.width}:${project.canvas.height}`)]} />
           <Button
             size="sm"
             variant={focusMode ? 'primary' : 'ghost'}
@@ -455,42 +425,24 @@ export function EditPage() {
             {focusMode ? 'Exit focus' : 'Focus'}
           </Button>
           {!focusMode && (
-            <div className="row" role="group" aria-label="Side panel switch" style={{ gap: 4 }}>
-              <Button
-                size="sm"
-                variant={drawerOpen && activeSidePanel === 'tools' ? 'primary' : 'ghost'}
-                aria-pressed={drawerOpen && activeSidePanel === 'tools'}
-                onClick={() => {
-                  if (drawerOpen && activeSidePanel === 'tools') {
-                    setDrawerOpen(false);
-                    setActiveSidePanel('inspector');
-                  } else {
-                    setDrawerOpen(true);
-                    setActiveSidePanel('tools');
-                  }
-                }}
-              >
-                Tools
-              </Button>
-              <Button
-                size="sm"
-                variant={inspectorVisible && activeSidePanel === 'inspector' ? 'primary' : 'ghost'}
-                aria-pressed={inspectorVisible && activeSidePanel === 'inspector'}
-                onClick={() => {
-                  if (inspectorVisible && activeSidePanel === 'inspector') {
-                    setInspectorVisible(false);
-                  } else {
-                    setInspectorVisible(true);
-                    setActiveSidePanel('inspector');
-                    setPanel('effects');
-                  }
-                }}
-              >
-                Inspector
-              </Button>
-            </div>
+            <Button
+              size="sm"
+              variant={inspectorVisible && activeSidePanel === 'inspector' ? 'primary' : 'ghost'}
+              aria-pressed={inspectorVisible && activeSidePanel === 'inspector'}
+              onClick={() => {
+                if (inspectorVisible && activeSidePanel === 'inspector') {
+                  setInspectorVisible(false);
+                } else {
+                  setInspectorVisible(true);
+                  setActiveSidePanel('inspector');
+                  setPanel('effects');
+                }
+              }}
+            >
+              Inspector
+            </Button>
           )}
-          <Button variant="primary" onClick={() => { setPlaying(false); useSession.getState().setRoute('export'); }}>Export ↗</Button>
+          <Button size="sm" variant="primary" onClick={() => { setPlaying(false); useSession.getState().setRoute('export'); }}>Export ↗</Button>
         </div>
       </header>
       {!focusMode && (
@@ -512,7 +464,6 @@ export function EditPage() {
                   return;
                 }
                 setTool(nextTool);
-                syncWorkspaceForTool(nextTool);
                 setDrawerOpen(true);
                 setActiveSidePanel('tools');
                 if (item.id === 'captions') setPanel('captions');

@@ -344,8 +344,10 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
    * Live camera preview so the bubble shape, position and effects can be
    * judged before recording. Local only: nothing from this stream is written.
    */
-  const startCameraPreview = async () => {
-    if (cameraPreviewStream.current || previewStarting.current) return;
+  const startCameraPreview = async (): Promise<MediaStream | null> => {
+    if (cameraPreviewStream.current) return cameraPreviewStream.current;
+    if (cameraStream.current) return cameraStream.current;
+    if (previewStarting.current) return null;
     previewStarting.current = true;
     setError(null);
     try {
@@ -354,17 +356,21 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       // switched off; a stream nobody owns would keep the camera light on.
       if (!mountedRef.current || !cameraOnRef.current) {
         stopStream(stream);
-        return;
+        return null;
       }
       cameraPreviewStream.current = stream;
       setCameraPreviewOn(true);
+      floatingCameraRef.current?.updateStream(stream);
+      if (selfViewRef.current) {
+        selfViewRef.current.srcObject = stream;
+        void selfViewRef.current.play().catch(() => undefined);
+      }
       const element = cameraPreviewRef.current;
       if (!element) {
-        addWarning('The camera preview element is not mounted; the stream is live but not shown.');
-        return;
+        if (mountedRef.current) setCameraReady(true);
+        return stream;
       }
       element.srcObject = stream;
-      if (selfViewRef.current) selfViewRef.current.srcObject = stream;
       try {
         // Ready only after the frame actually plays: a dead camera must not
         // render as a frozen "live" picture.
@@ -374,8 +380,10 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         setCameraReady(false);
         addWarning(`Camera preview could not start playing: ${(err as Error).message}`);
       }
+      return stream;
     } catch (err) {
       setError(`Camera preview unavailable: ${(err as Error).message}`);
+      return null;
     } finally {
       previewStarting.current = false;
     }
@@ -412,17 +420,13 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       return;
     }
     try {
-      let stream = cameraStream.current ?? cameraPreviewStream.current;
-      if (!stream) {
-        await startCameraPreview();
-        stream = cameraPreviewStream.current;
-      }
-      if (!stream) {
-        setError('Camera stream is not available.');
-        return;
-      }
+      const existingStream = cameraStream.current ?? cameraPreviewStream.current;
+      // CRITICAL: Call openFloatingCamera synchronously on the click gesture BEFORE awaiting
+      // getUserMedia so Chrome's transient user activation is still active for requestWindow().
+      const streamPromise = existingStream ? undefined : startCameraPreview();
       const pipSession = await openFloatingCamera({
-        stream,
+        stream: existingStream,
+        streamPromise,
         videoElement: selfViewRef.current ?? cameraPreviewRef.current,
         presenter,
         initialControlState: {
@@ -433,6 +437,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         onTogglePause: () => togglePause(),
         onStop: () => void stopTake(),
         onToggleHidePreview: () => setHideFloatingPreview((prev) => !prev),
+        onUpdatePresenter: (patch) => setPresenter((prev) => ({ ...prev, ...patch })),
         onClose: () => {
           floatingCameraRef.current = null;
           if (mountedRef.current) {
@@ -455,16 +460,40 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     if (!cameraOn && cameraPreviewStream.current) stopCameraPreview();
   }, [cameraOn]);
 
-  // The floating self-view mounts when a take starts, after the camera stream
-  // already exists, so hand it the live stream on the first render it exists.
+  // Register MediaSession enterpictureinpicture handler so Chrome can auto-float the camera when switching tabs.
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator) || !navigator.mediaSession?.setActionHandler) {
+      return;
+    }
+    try {
+      navigator.mediaSession.setActionHandler('enterpictureinpicture' as MediaSessionAction, () => {
+        if (!floatingCameraRef.current && cameraOnRef.current) {
+          void toggleFloatingCamera();
+        }
+      });
+    } catch {
+      // Action not supported in this browser version
+    }
+    return () => {
+      try {
+        navigator.mediaSession.setActionHandler('enterpictureinpicture' as MediaSessionAction, null);
+      } catch {
+        // Ignore
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // The floating self-view mounts when camera preview or a take starts, so hand it the live stream.
   useEffect(() => {
     const element = selfViewRef.current;
     if (!element) return;
+    (element as HTMLVideoElement & { autoPictureInPicture?: boolean }).autoPictureInPicture = true;
     const stream = cameraStream.current ?? cameraPreviewStream.current;
     if (!stream || element.srcObject === stream) return;
     element.srcObject = stream;
     void element.play().catch(() => undefined);
-  }, [stage]);
+  }, [stage, cameraPreviewOn]);
 
   const acquireSources = async (): Promise<CaptureAssetSpec[]> => {
     const specs: CaptureAssetSpec[] = [];
@@ -537,10 +566,14 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       }
       cameraStream.current = stream;
       setCameraTracks([...stream.getVideoTracks()]);
+      floatingCameraRef.current?.updateStream(stream);
+      if (selfViewRef.current) {
+        selfViewRef.current.srcObject = stream;
+        void selfViewRef.current.play().catch(() => undefined);
+      }
       const cameraElement = cameraPreviewRef.current;
       if (cameraElement) {
         cameraElement.srcObject = stream;
-        if (selfViewRef.current) selfViewRef.current.srcObject = stream;
         try {
           await cameraElement.play();
           if (mountedRef.current) setCameraReady(true);
@@ -652,10 +685,10 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     }
     setStage('selecting');
     try {
+      const specs = await acquireSources();
       const oneMinuteBytes = (recordingBitrate(dimensions.width, dimensions.height, frameRate) / 8) * 60;
       const headroom = await checkStorageHeadroom(oneMinuteBytes);
       if (!headroom.enough) addWarning(headroom.message);
-      const specs = await acquireSources();
       if (!mountedRef.current) {
         for (const spec of specs) stopStream(spec.stream);
         return;
@@ -717,6 +750,18 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       startingRef.current = false;
       return;
     }
+    // When starting from Ready state (or Camera-only mode where getDisplayMedia is not needed),
+    // use this click's transient user activation to auto-pop the cross-tab floating PiP camera bubble.
+    if (
+      cameraOn &&
+      !hideFloatingPreview &&
+      !floatingCameraRef.current &&
+      !floatingClosedDuringTake &&
+      floatingSupport.mode === 'document-pip' &&
+      (Boolean(preparedSpecsRef.current) || !screenOn)
+    ) {
+      void toggleFloatingCamera().catch(() => undefined);
+    }
     // Take one's numbers must never show on take two's bar before the first commit.
     setStats(null);
     sessionStats.current = null;
@@ -725,10 +770,10 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       let specs = preparedSpecsRef.current;
       if (!specs) {
         setStage('selecting');
+        specs = await acquireSources();
         const oneMinuteBytes = (recordingBitrate(dimensions.width, dimensions.height, frameRate) / 8) * 60;
         const headroom = await checkStorageHeadroom(oneMinuteBytes);
         if (!headroom.enough) addWarning(headroom.message);
-        specs = await acquireSources();
         if (!mountedRef.current) {
           for (const spec of specs) stopStream(spec.stream);
           return;
@@ -1447,37 +1492,97 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       </>
       )}
       {/* The same camera stream the monitor shows, pinned to the viewport for
-          the whole take: the monitor can scroll away, this cannot. Hidden when
-          hideFloatingPreview is enabled so Entire screen capture never records a double bubble. */}
-      {cameraOn && !hideFloatingPreview && (stage === 'countdown' || stage === 'recording' || stage === 'paused' || stage === 'finishing') && (
-        <div
-          ref={selfViewBox}
-          className="rec-selfview"
-          aria-label="Live camera self-view"
-          title="Drag to move. Double-click to reset."
-          onDoubleClick={resetSelfView}
-          onPointerDown={onSelfViewPointerDown}
-          onPointerMove={onSelfViewPointerMove}
-          onPointerUp={onSelfViewPointerUp}
-          onPointerCancel={onSelfViewPointerUp}
-          style={{
-            ...(selfViewPos ? { left: selfViewPos.x, top: selfViewPos.y, right: 'auto', bottom: 'auto' } : {}),
-            borderRadius:
-              presenter.shape === 'circle'
-                ? '50%'
-                : `${(bubble.radius / bubble.width) * 100}% / ${(bubble.radius / bubble.height) * 100}%`,
-            outline: presenter.border > 0 ? `2px solid ${presenter.borderColor}` : 'none',
-          }}
-        >
-          <video
-            ref={selfViewRef}
-            muted
-            playsInline
-            autoPlay
-            style={{ transform: presenter.mirror ? 'scaleX(-1)' : 'none' }}
-          />
-        </div>
-      )}
+          preview, ready, and the whole take. Hidden when hideFloatingPreview is
+          enabled so Entire screen capture never records a double bubble. */}
+      {cameraOn &&
+        !hideFloatingPreview &&
+        (cameraPreviewOn ||
+          stage === 'ready' ||
+          stage === 'countdown' ||
+          stage === 'recording' ||
+          stage === 'paused' ||
+          stage === 'finishing') && (
+          <div
+            ref={selfViewBox}
+            className={`rec-selfview${stage === 'recording' ? ' is-recording' : ''}`}
+            data-shape={presenter.shape}
+            aria-label="Live camera self-view"
+            title="Drag to move. Double-click to reset."
+            onDoubleClick={resetSelfView}
+            onPointerDown={onSelfViewPointerDown}
+            onPointerMove={onSelfViewPointerMove}
+            onPointerUp={onSelfViewPointerUp}
+            onPointerCancel={onSelfViewPointerUp}
+            style={{
+              ...(selfViewPos ? { left: selfViewPos.x, top: selfViewPos.y, right: 'auto', bottom: 'auto' } : {}),
+              width: presenter.shape === 'pill' ? 228 : presenter.shape === 'portrait' ? 164 : 188,
+              height: presenter.shape === 'pill' ? 156 : presenter.shape === 'portrait' ? 218 : 188,
+              clipPath:
+                presenter.shape === 'hexagon'
+                  ? 'polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%)'
+                  : 'none',
+              borderRadius:
+                presenter.shape === 'circle'
+                  ? '50%'
+                  : presenter.shape === 'pill'
+                    ? '999px'
+                    : presenter.shape === 'rounded'
+                      ? '28px'
+                      : presenter.shape === 'portrait'
+                        ? '22px'
+                        : '14px',
+              outline:
+                presenter.shape === 'hexagon'
+                  ? 'none'
+                  : stage === 'recording'
+                    ? '3px solid #ff5c7c'
+                    : `3px solid ${presenter.borderColor || '#c3adff'}`,
+            }}
+          >
+            <video
+              ref={selfViewRef}
+              muted
+              playsInline
+              autoPlay
+              style={{ transform: presenter.mirror ? 'scaleX(-1)' : 'none' }}
+            />
+            <div
+              className="rec-selfview-controls"
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              {floatingSupport.supported && (
+                <button
+                  type="button"
+                  className="rec-selfview-chip"
+                  onClick={() => void toggleFloatingCamera()}
+                  title="Pop out floating Picture-in-Picture camera across browser tabs"
+                >
+                  {floatingCameraOpen ? '✕ Close PiP' : '⧉ Float PiP'}
+                </button>
+              )}
+              <button
+                type="button"
+                className="rec-selfview-chip"
+                onClick={() => {
+                  const order: Array<PresenterProps['shape']> = [
+                    'circle',
+                    'rounded',
+                    'portrait',
+                    'pill',
+                    'hexagon',
+                    'square',
+                  ];
+                  const idx = order.indexOf(presenter.shape);
+                  const next = order[(idx + 1) % order.length]!;
+                  setPresenter((prev) => ({ ...prev, shape: next }));
+                }}
+                title="Cycle bubble shape"
+              >
+                ○ {presenter.shape}
+              </button>
+            </div>
+          </div>
+        )}
 
       {/* Loom/Cap-style floating control pill. Supports hiding/collapsing into a minimal
           pill during recording while keeping Stop available. */}
@@ -1527,6 +1632,17 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
             ) : (
               <div className="rec-dock-actions">
                 <RecordingActions paused={stage === 'paused'} openEditor={openEditorAfterStop && capMode !== 'instant'} onPause={togglePause} onStop={() => void stopTake()} />
+                {cameraOn && floatingSupport.supported && (
+                  <Button
+                    size="sm"
+                    variant={floatingCameraOpen ? 'primary' : 'ghost'}
+                    aria-pressed={floatingCameraOpen}
+                    onClick={() => void toggleFloatingCamera()}
+                    title="Pop out floating Picture-in-Picture camera & controls across browser tabs"
+                  >
+                    {floatingCameraOpen ? '✕ Close PiP' : '⧉ Float PiP'}
+                  </Button>
+                )}
                 {quietMode === 'full' && (
                   <Button size="sm" variant="ghost" onClick={addMarker} title="Shortcut: M or K">
                     Marker
