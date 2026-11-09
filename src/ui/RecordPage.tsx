@@ -25,7 +25,6 @@ import {
 } from '../capabilities/detect';
 import { CaptureSession, type CaptureStats, type CaptureAssetSpec, type TakeResult } from '../capture/recorder';
 import { checkStorageHeadroom, deleteTake, listTakes } from '../workspace/workspace';
-import { WORKSPACE_LAYOUT } from '../workspace/types';
 import { chooseFolderWorkspace, ensureDraftProject, saveSessionToFolder } from '../app/bootstrap';
 import { downloadBlob, ensureAssetFile } from '../app/actions';
 import {
@@ -1411,18 +1410,14 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
 
       <div className="recorder-entry-actions" role="group" aria-label="Record and edit entry points">
         <span className="recorder-mode-label"><span className="rec-dot still" aria-hidden /> Record</span>
-        <Button disabled={stage !== 'idle'} onClick={() => useSession.getState().setRoute('edit')}>Open editor ↗</Button>
         <ImportMediaButton disabled={stage !== 'idle'} />
-        <Button disabled={stage !== 'idle'} variant="ghost" onClick={() => useSession.getState().setRoute('projects')}>
-          Open project…
-        </Button>
         <Button
           size="sm"
           variant="ghost"
           aria-expanded={settingsOpen}
           onClick={() => setSettingsOpen(!settingsOpen)}
         >
-          ⚙ Settings
+          ⚙ Advanced
         </Button>
       </div>
 
@@ -1444,17 +1439,9 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
             <Badge tone={systemAudio ? 'ok' : 'neutral'}>System audio: {preparedSummary.systemAudioStatus}</Badge>
           </div>
           <div className="row" style={{ gap: 8, flexWrap: 'wrap', justifyContent: 'space-between' }}>
-            <Select
-              label="Recording countdown"
-              value={String(countdownSeconds)}
-              onChange={(value) => setCountdownSeconds(Number(value))}
-              options={[
-                { value: '0', label: 'No countdown' },
-                { value: '3', label: '3s countdown' },
-                { value: '5', label: '5s countdown' },
-                { value: '10', label: '10s countdown' },
-              ]}
-            />
+            <span className="field-hint">
+              Source confirmed. Click Start recording below when ready.
+            </span>
             <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
               <Button variant="ghost" onClick={cancelReadyState}>
                 Cancel
@@ -1470,64 +1457,29 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         </section>
       )}
 
-      {/* The page is taller than the viewport, so the primary action cannot sit
-          at the bottom of the form: a user who has just picked devices should
-          not have to scroll 700 px to start. */}
+      {/* One primary action + one Floating controls entry */}
       {stage === 'idle' && (
-        <div className="start-dock" role="toolbar" aria-label="Cap stealth recording launcher">
+        <div className="start-dock" role="toolbar" aria-label="Recording launcher">
           <Button variant="primary" onClick={start}>
-            <span aria-hidden>●</span> Start recording
+            <span aria-hidden>●</span>{' '}
+            {screenOn && !preparedSummary ? 'Choose what to record · Start recording' : 'Start recording'}
           </Button>
           {floatingSupport.supported && (
             <Button
               variant={floatingCameraOpen ? 'primary' : 'ghost'}
               aria-pressed={floatingCameraOpen}
               onClick={() => void toggleFloatingCamera()}
-              title="Pop out always-on-top Cap Stealth Controller (Record, Pause, Stop, Restart, Discard & Camera Bubble)"
+              title={floatingSupport.detail}
             >
-              {floatingCameraOpen ? '✕ Close Stealth Controller' : '⧉ Cap Stealth Controller'}
+              {floatingCameraOpen ? 'Close floating controls' : 'Floating controls'}
             </Button>
           )}
-          <span className="field-hint">{openEditorAfterStop ? 'Stop → Edit' : 'Stop → Review take'} · {countdownSeconds ? `${countdownSeconds}s countdown` : 'No countdown'}</span>
-        </div>
-      )}
-
-      <details className="record-storage"><summary>{session.storageMode === 'opfs' ? 'Temporary browser session · Save to a folder for a durable copy' : 'Recording locally to your folder'}<span>Storage options</span></summary>
-      <div className={session.storageMode === 'opfs' ? 'warn-card' : 'hint-card'} style={{ marginBottom: 12 }} role="status">
-        {session.storageMode === 'opfs' ? (
-          <>
-            This session lives in <strong>browser storage</strong> ({session.workspace?.info.name ?? 'OPFS'}). The browser
-            can evict it when space is low. Use <strong>Save to a folder…</strong> after recording for a durable copy.
-          </>
-        ) : (
-          <>
-            Recording to <strong>{session.workspace?.info.name}</strong> on this computer
-            {session.projectFolder ? <> · project folder <span className="mono">{session.projectFolder}</span></> : null}. Files
-            stay on your disk.
-          </>
-        )}
-        <div className="field-hint" style={{ marginTop: 6 }}>
-          Raw footage location:{' '}
-          <span className="mono">
-            {session.workspace?.info.name ?? 'workspace'}/projects/{session.projectFolder ?? '<project>'}/
-            {WORKSPACE_LAYOUT.recordings}/&lt;take&gt;/
+          <span className="field-hint">
+            {openEditorAfterStop ? 'Stop → Edit' : 'Stop → Review take'} ·{' '}
+            {countdownSeconds ? `${countdownSeconds}s countdown` : 'No countdown'} · Chrome may still show its own sharing indicator
           </span>
         </div>
-        <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-          {project.assets.length === 0 && takes.length === 0 && takeResult === null && (
-            <Button size="sm" variant="ghost" disabled={stage !== 'idle'} onClick={() => void chooseFolderWorkspace()}>
-              Choose a folder for this session…
-            </Button>
-          )}
-          {session.storageMode === 'opfs' && (
-            <Button size="sm" variant="ghost" disabled={stage !== 'idle'} onClick={() => void saveSessionToFolder()}>
-              Save recordings to a folder…
-            </Button>
-          )}
-        </div>
-      </div>
-
-      </details>
+      )}
       </>
       )}
       {/* The same camera stream the monitor shows, pinned to the viewport for
@@ -1585,46 +1537,10 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
               autoPlay
               style={{ transform: presenter.mirror ? 'scaleX(-1)' : 'none' }}
             />
-            <div
-              className="rec-selfview-controls"
-              onPointerDown={(e) => e.stopPropagation()}
-            >
-              {floatingSupport.supported && (
-                <button
-                  type="button"
-                  className="rec-selfview-chip"
-                  onClick={() => void toggleFloatingCamera()}
-                  title="Pop out floating Picture-in-Picture camera across browser tabs"
-                >
-                  {floatingCameraOpen ? '✕ Close PiP' : '⧉ Float PiP'}
-                </button>
-              )}
-              <button
-                type="button"
-                className="rec-selfview-chip"
-                onClick={() => {
-                  const order: Array<PresenterProps['shape']> = [
-                    'circle',
-                    'rounded',
-                    'portrait',
-                    'pill',
-                    'hexagon',
-                    'square',
-                  ];
-                  const idx = order.indexOf(presenter.shape);
-                  const next = order[(idx + 1) % order.length]!;
-                  setPresenter((prev) => ({ ...prev, shape: next }));
-                }}
-                title="Cycle bubble shape"
-              >
-                ○ {presenter.shape}
-              </button>
-            </div>
           </div>
         )}
 
-      {/* Loom/Cap-style floating control pill. Supports hiding/collapsing into a minimal
-          pill during recording while keeping Stop available. */}
+      {/* Active recording bar: Timer · Pause/Resume · Stop + More (Mute, Hide preview, Restart, Discard) */}
       {(stage === 'countdown' || stage === 'recording' || stage === 'paused' || stage === 'finishing') && (
         <div
           className={`rec-bar rec-dock${stage === 'paused' ? ' paused' : ''}${controlsHidden ? ' rec-dock-collapsed' : ''}`}
@@ -1671,69 +1587,22 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
             ) : (
               <div className="rec-dock-actions">
                 <RecordingActions paused={stage === 'paused'} openEditor={openEditorAfterStop && capMode !== 'instant'} onPause={togglePause} onStop={() => void stopTake()} />
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="rec-restart"
-                  onClick={() => setRestartOpen(true)}
-                  aria-label="Restart take"
-                  title="Restart: discards this take, then counts down again"
-                >
-                  ↻ Restart
-                </Button>
-                {micOn && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={toggleMicMute}
-                    aria-label={micMuted ? 'Unmute the microphone' : 'Mute the microphone'}
-                    title={micMuted ? 'Microphone is muted in the recording' : 'Mute the microphone'}
-                  >
-                    {micMuted ? 'Unmute' : 'Mute'}
-                  </Button>
-                )}
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setDiscardOpen(true)}
-                  title="Abandon this take without keeping it"
-                >
-                  Discard
-                </Button>
-                {floatingSupport.supported && (
-                  <Button
-                    size="sm"
-                    variant={floatingCameraOpen ? 'primary' : 'ghost'}
-                    aria-pressed={floatingCameraOpen}
-                    onClick={() => void toggleFloatingCamera()}
-                    title="Pop out floating Cap Stealth Controller & camera across browser tabs"
-                  >
-                    {floatingCameraOpen ? '✕ Close PiP' : '⧉ Float PiP'}
-                  </Button>
-                )}
-                {quietMode === 'full' && (
-                  <Button size="sm" variant="ghost" onClick={addMarker} title="Shortcut: M or K">
-                    Marker
-                  </Button>
-                )}
                 <details className="rec-more-menu">
                   <summary className="btn btn-ghost btn-sm" aria-label="More recording controls">
                     More
                   </summary>
                   <div className="rec-more-popover" role="group" aria-label="Secondary recording actions">
-                    {quietMode !== 'full' && (
-                      <Button size="sm" variant="ghost" onClick={addMarker} title="Shortcut: M or K">
-                        Marker
+                    {micOn && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={toggleMicMute}
+                        aria-label={micMuted ? 'Unmute the microphone' : 'Mute the microphone'}
+                        title={micMuted ? 'Microphone is muted in the recording' : 'Mute the microphone'}
+                      >
+                        {micMuted ? 'Unmute' : 'Mute'}
                       </Button>
                     )}
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => void stopTake(true)}
-                      title="Stop and open Quick Export / Post-record sheet"
-                    >
-                      Stop &amp; export
-                    </Button>
                     {cameraOn && (
                       <Button
                         size="sm"
@@ -1742,17 +1611,46 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                         onClick={() => setHideFloatingPreview((prev) => !prev)}
                         title="Hide floating camera preview on display while continuing to record camera separately for the editor"
                       >
-                        {hideFloatingPreview ? 'Show floating preview' : 'Hide floating preview'}
+                        {hideFloatingPreview ? 'Show camera preview' : 'Hide camera preview'}
                       </Button>
                     )}
-                    {floatingClosedDuringTake && !floatingCameraOpen && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="rec-restart"
+                      onClick={() => setRestartOpen(true)}
+                      aria-label="Restart take"
+                      title="Restart: discards this take, then counts down again"
+                    >
+                      ↻ Restart
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setDiscardOpen(true)}
+                      title="Abandon this take without keeping it"
+                    >
+                      Discard
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={addMarker} title="Shortcut: M or K">
+                      Marker
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => void stopTake(true)}
+                      title="Stop and open Quick Export / Post-record sheet"
+                    >
+                      Stop &amp; export
+                    </Button>
+                    {floatingSupport.supported && (
                       <Button
                         size="sm"
                         variant="ghost"
                         onClick={() => void toggleFloatingCamera()}
-                        title="Reopen the floating Cap Stealth Controller window"
+                        title={floatingSupport.detail}
                       >
-                        Reopen floating controls
+                        {floatingCameraOpen ? 'Close floating controls' : 'Floating controls'}
                       </Button>
                     )}
                   </div>
@@ -1783,30 +1681,9 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
             }
             bodyClassName="stack"
           >
-            <div className="cap-mode-switcher" role="group" aria-label="Capture mode">
-              {(['instant', 'studio', 'screenshot'] as const).map((m) => {
-                const info = describeCapMode(m);
-                return (
-                  <button
-                    key={m}
-                    type="button"
-                    disabled={stage !== 'idle' && stage !== 'ready'}
-                    aria-pressed={capMode === m}
-                    onClick={() => {
-                      setCapMode(m);
-                      if (m === 'instant') setOpenEditorAfterStop(false);
-                      else if (m === 'studio') setOpenEditorAfterStop(true);
-                    }}
-                  >
-                    <span>{info.label}</span>
-                    <span className="mode-sub">{info.subLabel}</span>
-                  </button>
-                );
-              })}
-            </div>
             <div className="capture-mode-grid" role="group" aria-label="Recording source">
               {([
-                { id: 'screen', iconName: 'screen' as IconName, label: 'Display' },
+                { id: 'screen', iconName: 'screen' as IconName, label: 'Entire screen' },
                 { id: 'window', iconName: 'window' as IconName, label: 'Window' },
                 { id: 'camera', iconName: 'camera' as IconName, label: 'Camera only' },
                 { id: 'audio', iconName: 'mic' as IconName, label: 'Audio only' },
@@ -1841,89 +1718,6 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                 </button>
               ))}
             </div>
-            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <p className="field-hint" style={{ margin: 0, flex: 1 }}>
-                {preparedSummary
-                  ? `Selected: ${preparedSummary.sourceName} (${preparedSummary.dimensions})`
-                  : screenOn
-                    ? 'Cap Stealth Capture: Display or Window with independent camera & mic tracks (no Meet tab-sharing banner).'
-                    : cameraOn
-                      ? 'Camera-only mode — records your camera without screen capture.'
-                      : 'Audio-only mode — records narration from your microphone.'}
-              </p>
-              {stage === 'idle' && (
-                <div className="row" style={{ gap: 6 }}>
-                  <Button size="sm" variant="ghost" onClick={() => void chooseSource()}>
-                    Choose source…
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => useSession.getState().setRoute('edit')}>
-                    New blank edit →
-                  </Button>
-                </div>
-              )}
-            </div>
-
-            <details className="record-details">
-              <summary>Cap Stealth Controller<span>Stealth controls, display &amp; window rules</span></summary>
-            <div className="hint-card stack" style={{ gap: 8, marginTop: 8 }} role="region" aria-label="Across tabs and display capture">
-              <div className="row" style={{ justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-                <strong style={{ fontSize: 12.5 }}>Cap Stealth Controller &amp; capture rules</strong>
-                <Badge tone={actualReturnedSurface.surface ? 'ok' : 'neutral'}>
-                  {actualReturnedSurface.surface ? `Captured: ${actualReturnedSurface.label}` : 'Cap Stealth Ready'}
-                </Badge>
-              </div>
-              <div className="field-hint" style={{ lineHeight: 1.5 }}>
-                • <strong>Display</strong> captures your full workspace across terminals, browsers, and desktop apps without a Meet-style tab-switching banner.
-                <br />
-                • <strong>Window</strong> captures a single application window with a separate movable camera layer in the Studio editor.
-                <br />
-                • <strong>Cap Stealth Controller</strong>: Control <strong>Record, Pause/Resume, Stop &amp; Process, Restart, Discard, Mute, and Bubble Shape</strong> from the floating Cap Stealth Controller pill or Document PiP window.
-              </div>
-              <div className="row" style={{ gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-                <Select
-                  label="Quiet mode"
-                  value={quietMode}
-                  onChange={(v) => {
-                    const next = v as QuietMode;
-                    setQuietMode(next);
-                    setControlsHidden(next === 'controls-only');
-                  }}
-                  options={QUIET_MODES.map((m) => ({ value: m.id, label: m.label }))}
-                />
-                <Toggle
-                  label="Hide floating preview (keep recording camera separately for editor to avoid double bubble)"
-                  checked={hideFloatingPreview}
-                  onChange={setHideFloatingPreview}
-                />
-                <Toggle
-                  label="Hide live screen monitor while recording display (reduce mirror effect)"
-                  checked={hideMonitorDuringDisplay}
-                  onChange={setHideMonitorDuringDisplay}
-                />
-                {cameraOn && screenOn && surface === 'screen' && (
-                  <Select
-                    label="Camera export mode on Display"
-                    value={cameraDuplicationMode}
-                    onChange={(v) => setCameraDuplicationMode(v as CameraDuplicationMode)}
-                    options={[
-                      { value: 'baked-in-screen', label: 'Bubble baked into screen (no duplicate layer in export)' },
-                      { value: 'separate-layer', label: 'Separate camera layer in editor/export' },
-                    ]}
-                  />
-                )}
-                {cameraOn && floatingClosedDuringTake && !floatingCameraOpen && (
-                  <Button size="sm" variant="primary" onClick={() => void toggleFloatingCamera()}>
-                    Reopen floating controls
-                  </Button>
-                )}
-              </div>
-              {cameraOn && (
-                <div className="field-hint">
-                  Camera export rule: <strong>{cameraLayerRule.summary}</strong>
-                </div>
-              )}
-            </div>
-            </details>
 
             <div className="cap-device-rows">
               <div className="cap-device-row">
@@ -1945,16 +1739,6 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                             : [{ value: '', label: 'Default camera' }]
                         }
                       />
-                    )}
-                    {cameraOn && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => void toggleFloatingCamera()}
-                        title={floatingSupport.detail}
-                      >
-                        {floatingCameraOpen ? 'Close floating camera' : 'Open floating camera'}
-                      </Button>
                     )}
                     <Badge tone={cameraOn ? 'ok' : 'neutral'}>{cameraOn ? 'On' : 'Off'}</Badge>
                   </div>
@@ -1996,68 +1780,208 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                 )}
               </div>
 
-              <div className="cap-device-row">
-                <div className="row" style={{ justifyContent: 'space-between', gap: 8 }}>
-                  <Toggle
-                    label="System / tab audio"
-                    checked={systemAudio}
-                    onChange={setSystemAudio}
-                    disabled={stage !== 'idle'}
-                  />
-                  <Badge tone={systemAudio ? 'ok' : 'neutral'}>{systemAudio ? 'On' : 'Off'}</Badge>
+              {screenOn && (
+                <div className="cap-device-row">
+                  <div className="row" style={{ justifyContent: 'space-between', gap: 8 }}>
+                    <Toggle
+                      label="System / tab audio"
+                      checked={systemAudio}
+                      onChange={setSystemAudio}
+                      disabled={stage !== 'idle'}
+                    />
+                    <Badge tone={systemAudio ? 'ok' : 'neutral'}>{systemAudio ? 'On' : 'Off'}</Badge>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
 
-            <div className="recorder-options-row">
-              <Button size="sm" aria-pressed={showMonitor} onClick={() => setShowMonitor(!showMonitor)}>{showMonitor ? 'Hide preview & takes' : 'Preview & takes'}</Button>
-              <Select label="Recording countdown" value={String(countdownSeconds)} disabled={stage !== 'idle' && stage !== 'ready'} onChange={(value) => setCountdownSeconds(Number(value))} options={[{value: '0', label: 'No countdown'}, {value: '3', label: '3s countdown'}, {value: '5', label: '5s countdown'}, {value: '10', label: '10s countdown'}]} />
-            </div>
-            <Toggle label="Open editor when recording stops" checked={openEditorAfterStop} onChange={setOpenEditorAfterStop} disabled={stage !== 'idle' && stage !== 'ready'} />
-            <details className="record-details recorder-advanced" open={settingsOpen} onToggle={(e) => setSettingsOpen((e.currentTarget as HTMLDetailsElement).open)}><summary>Recording options<span>Devices, camera appearance, audio test & quality</span></summary>
-            <div className="stack" style={{ gap: 12, paddingTop: 12 }}>
-            <Toggle label="Screen / window" checked={screenOn} onChange={setScreenOn} disabled={stage !== 'idle'} />
-            <Field label="Camera device">
-              <Select
-                label="Camera device"
-                value={cameraId}
-                onChange={(id) => {
-                  setCameraId(id);
-                  if (cameraPreviewOn) stopCameraPreview();
-                }}
-                disabled={stage !== 'idle' || !cameraOn}
-                options={devices.camera.length > 0 ? devices.camera.map((d) => ({ value: d.deviceId, label: d.label })) : [{ value: '', label: 'No camera found' }]}
-              />
-            </Field>
-            <div className="row" style={{ gap: 10, alignItems: 'center' }}>
-              <Button
-                variant="ghost"
-                onClick={() => (cameraPreviewOn ? stopCameraPreview() : void startCameraPreview())}
-                disabled={stage !== 'idle' || !cameraOn}
-              >
-                {cameraPreviewOn ? 'Stop camera preview' : 'Preview camera'}
-              </Button>
-              <span className="field-hint" style={{ flex: 1 }}>
-                Shows the live camera in the shape and corner below. The preview stays on this machine and is not recorded.
-              </span>
-            </div>
-            <details className="record-details"><summary>Camera appearance<span>Shape, position & background</span></summary>
-            <div className="stack" style={{ gap: 10, paddingTop: 10 }}>
-              <div className="panel-title">Camera style (applied as a presenter layer)</div>
-              <div className="row" style={{ gap: 8 }}>
-                <div style={{ flex: 1 }}>
-                  <Field label="Shape">
+            <details className="record-details recorder-advanced" open={settingsOpen} onToggle={(e) => setSettingsOpen((e.currentTarget as HTMLDetailsElement).open)}>
+              <summary>Advanced<span>Capture modes, Browser tab, quality, countdown, storage &amp; camera appearance</span></summary>
+              <div className="stack" style={{ gap: 12, paddingTop: 12 }}>
+                <div className="cap-mode-switcher" role="group" aria-label="Capture mode">
+                  {(['instant', 'studio', 'screenshot'] as const).map((m) => {
+                    const info = describeCapMode(m);
+                    return (
+                      <button
+                        key={m}
+                        type="button"
+                        disabled={stage !== 'idle' && stage !== 'ready'}
+                        aria-pressed={capMode === m}
+                        onClick={() => {
+                          setCapMode(m);
+                          if (m === 'instant') setOpenEditorAfterStop(false);
+                          else if (m === 'studio') setOpenEditorAfterStop(true);
+                        }}
+                      >
+                        <span>{info.label}</span>
+                        <span className="mode-sub">{info.subLabel}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                    <Button
+                      size="sm"
+                      variant={screenOn && surface === 'tab' ? 'primary' : 'ghost'}
+                      disabled={stage !== 'idle'}
+                      aria-pressed={screenOn && surface === 'tab'}
+                      onClick={() => {
+                        setScreenOn(true);
+                        setSurface('tab');
+                      }}
+                    >
+                      Browser tab source
+                    </Button>
+                    {stage === 'idle' && (
+                      <Button size="sm" variant="ghost" onClick={() => void chooseSource()}>
+                        Choose source…
+                      </Button>
+                    )}
+                  </div>
+                  <Select
+                    label="Recording countdown"
+                    value={String(countdownSeconds)}
+                    disabled={stage !== 'idle' && stage !== 'ready'}
+                    onChange={(value) => setCountdownSeconds(Number(value))}
+                    options={[
+                      { value: '0', label: 'No countdown' },
+                      { value: '3', label: '3s countdown' },
+                      { value: '5', label: '5s countdown' },
+                      { value: '10', label: '10s countdown' },
+                    ]}
+                  />
+                </div>
+
+                <Toggle
+                  label="Open editor when recording stops"
+                  checked={openEditorAfterStop}
+                  onChange={setOpenEditorAfterStop}
+                  disabled={stage !== 'idle' && stage !== 'ready'}
+                />
+
+                <div className="hint-card stack" style={{ gap: 8 }} role="region" aria-label="Across tabs and display capture">
+                  <div className="row" style={{ justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                    <strong style={{ fontSize: 12.5 }}>Floating controls &amp; capture rules</strong>
+                    <Badge tone={actualReturnedSurface.surface ? 'ok' : 'neutral'}>
+                      {actualReturnedSurface.surface ? `Captured: ${actualReturnedSurface.label}` : 'Cap Stealth Ready'}
+                    </Badge>
+                  </div>
+                  <div className="field-hint" style={{ lineHeight: 1.5 }}>
+                    • <strong>Entire screen</strong> captures across terminals, browsers, and desktop apps. Chrome may still show its own native sharing indicator.
+                    <br />
+                    • <strong>Window</strong> captures a single application window with a separate movable camera layer in the Studio editor.
+                    <br />
+                    • <strong>Floating controls</strong>: Keep timer, Pause/Resume, and Stop floating above tabs via Document PiP. Closing the floating window leaves the take running.
+                  </div>
+                  <div className="row" style={{ gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
                     <Select
-                      label="Bubble shape"
-                      value={presenter.shape}
-                      onChange={(value) => setPresenter((current) => ({ ...current, shape: value as PresenterProps['shape'] }))}
-                      disabled={stage !== 'idle' || !cameraOn}
-                      options={[
-                        { value: 'circle', label: 'Round bubble' },
-                        { value: 'rounded', label: 'Rounded square' },
-                        { value: 'square', label: 'Square' },
-                        { value: 'portrait', label: 'Portrait card (3:4)' },
-                        { value: 'pill', label: 'Pill (stadium)' },
+                      label="Quiet mode"
+                      value={quietMode}
+                      onChange={(v) => {
+                        const next = v as QuietMode;
+                        setQuietMode(next);
+                        setControlsHidden(next === 'controls-only');
+                      }}
+                      options={QUIET_MODES.map((m) => ({ value: m.id, label: m.label }))}
+                    />
+                    <Toggle
+                      label="Hide floating preview (keep recording camera separately for editor to avoid double bubble)"
+                      checked={hideFloatingPreview}
+                      onChange={setHideFloatingPreview}
+                    />
+                    <Toggle
+                      label="Hide live screen monitor while recording display (reduce mirror effect)"
+                      checked={hideMonitorDuringDisplay}
+                      onChange={setHideMonitorDuringDisplay}
+                    />
+                    {cameraOn && screenOn && surface === 'screen' && (
+                      <Select
+                        label="Camera export mode on Display"
+                        value={cameraDuplicationMode}
+                        onChange={(v) => setCameraDuplicationMode(v as CameraDuplicationMode)}
+                        options={[
+                          { value: 'baked-in-screen', label: 'Bubble baked into screen (no duplicate layer in export)' },
+                          { value: 'separate-layer', label: 'Separate camera layer in editor/export' },
+                        ]}
+                      />
+                    )}
+                  </div>
+                  {cameraOn && (
+                    <div className="field-hint">
+                      Camera export rule: <strong>{cameraLayerRule.summary}</strong>
+                    </div>
+                  )}
+                </div>
+
+                <div className={session.storageMode === 'opfs' ? 'warn-card' : 'hint-card'} role="status">
+                  {session.storageMode === 'opfs' ? (
+                    <>
+                      This session lives in <strong>browser storage</strong> ({session.workspace?.info.name ?? 'OPFS'}). Use{' '}
+                      <strong>Save to a folder…</strong> after recording for a durable copy.
+                    </>
+                  ) : (
+                    <>
+                      Recording to <strong>{session.workspace?.info.name}</strong> on this computer.
+                    </>
+                  )}
+                  <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                    {project.assets.length === 0 && takes.length === 0 && takeResult === null && (
+                      <Button size="sm" variant="ghost" disabled={stage !== 'idle'} onClick={() => void chooseFolderWorkspace()}>
+                        Choose a folder for this session…
+                      </Button>
+                    )}
+                    {session.storageMode === 'opfs' && (
+                      <Button size="sm" variant="ghost" disabled={stage !== 'idle'} onClick={() => void saveSessionToFolder()}>
+                        Save recordings to a folder…
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                <Toggle label="Screen / window" checked={screenOn} onChange={setScreenOn} disabled={stage !== 'idle'} />
+                <Field label="Camera device">
+                  <Select
+                    label="Camera device"
+                    value={cameraId}
+                    onChange={(id) => {
+                      setCameraId(id);
+                      if (cameraPreviewOn) stopCameraPreview();
+                    }}
+                    disabled={stage !== 'idle' || !cameraOn}
+                    options={devices.camera.length > 0 ? devices.camera.map((d) => ({ value: d.deviceId, label: d.label })) : [{ value: '', label: 'No camera found' }]}
+                  />
+                </Field>
+                <div className="row" style={{ gap: 10, alignItems: 'center' }}>
+                  <Button
+                    variant="ghost"
+                    onClick={() => (cameraPreviewOn ? stopCameraPreview() : void startCameraPreview())}
+                    disabled={stage !== 'idle' || !cameraOn}
+                  >
+                    {cameraPreviewOn ? 'Stop camera preview' : 'Preview camera'}
+                  </Button>
+                  <span className="field-hint" style={{ flex: 1 }}>
+                    Shows the live camera in the shape and corner below. The preview stays on this machine and is not recorded.
+                  </span>
+                </div>
+                <details className="record-details"><summary>Camera appearance<span>Shape, position &amp; background</span></summary>
+                <div className="stack" style={{ gap: 10, paddingTop: 10 }}>
+                  <div className="panel-title">Camera style (applied as a presenter layer)</div>
+                  <div className="row" style={{ gap: 8 }}>
+                    <div style={{ flex: 1 }}>
+                      <Field label="Shape">
+                        <Select
+                          label="Bubble shape"
+                          value={presenter.shape}
+                          onChange={(value) => setPresenter((current) => ({ ...current, shape: value as PresenterProps['shape'] }))}
+                          disabled={stage !== 'idle' || !cameraOn}
+                          options={[
+                            { value: 'circle', label: 'Round bubble' },
+                            { value: 'rounded', label: 'Rounded square' },
+                            { value: 'square', label: 'Square' },
+                            { value: 'portrait', label: 'Portrait card (3:4)' },
+                            { value: 'pill', label: 'Pill (stadium)' },
                         { value: 'hexagon', label: 'Hexagon' },
                       ]}
                     />

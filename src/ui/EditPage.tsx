@@ -34,7 +34,6 @@ export function EditPage() {
   const selectedClipIds = useEditor((state) => state.selectedClipIds);
   const previewScale = useEditor((state) => state.previewScale);
   const showSafeAreas = useEditor((state) => state.showSafeAreas);
-  const panel = useEditor((state) => state.panel);
   const historyLength = useEditor((state) => state.history.length);
   const futureLength = useEditor((state) => state.future.length);
   const lastAction = useEditor((state) => state.lastAction);
@@ -47,10 +46,13 @@ export function EditPage() {
   const [transcribeOpen, setTranscribeOpen] = useState(false);
   const [voiceoverOpen, setVoiceoverOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [projectSettingsOpen, setProjectSettingsOpen] = useState(false);
   const [captionsEnabled, setCaptionsEnabled] = useState(true);
   const [showEndScreenGuide, setShowEndScreenGuide] = useState(false);
   const [muted, setMuted] = useState(true);
   const [tool, setTool] = useState<EditorTool>('media');
+  const [textSubTab, setTextSubTab] = useState<'text' | 'captions'>('text');
+  const [moreSubTab, setMoreSubTab] = useState<'overlays' | 'history' | 'settings'>('overlays');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [toolSearch, setToolSearch] = useState('');
   const [inspectorVisible, setInspectorVisible] = useState(true);
@@ -363,12 +365,14 @@ export function EditPage() {
   }
 
   const timecode = formatTimecode(playhead, project.canvas.fps);
+  const showRightInspector =
+    !focusMode && inspectorVisible && (Boolean(selectedClip) || activeSidePanel === 'inspector' || !drawerOpen);
   const sideModeClass =
     drawerOpen && activeSidePanel === 'tools' ? ' active-side-tools' : ' active-side-inspector';
 
   return (
     <div
-      className={`editor edits-workspace${focusMode ? ' focus-mode' : inspectorVisible ? ' show-inspector' : ' inspector-collapsed'}${!focusMode && !drawerOpen ? ' drawer-collapsed' : ''}${sideModeClass}`}
+      className={`editor edits-workspace${focusMode ? ' focus-mode' : showRightInspector ? ' show-inspector' : ' inspector-collapsed'}${!focusMode && !drawerOpen ? ' drawer-collapsed' : ''}${sideModeClass}`}
       data-focus-mode={focusMode ? 'true' : undefined}
       data-side-panel={activeSidePanel}
     >
@@ -409,6 +413,19 @@ export function EditPage() {
               ].filter((o) => o.value !== `${project.canvas.width}:${project.canvas.height}`),
             ]}
           />
+          <details className="rec-more-menu" data-testid="edit-project-menu">
+            <summary className="btn btn-ghost btn-sm" aria-label="Project menu">
+              Project ▾
+            </summary>
+            <div className="rec-more-popover">
+              <Button size="sm" variant="ghost" onClick={() => setProjectSettingsOpen(true)}>
+                Composition &amp; project settings…
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setShortcutsOpen(true)}>
+                Keyboard shortcuts…
+              </Button>
+            </div>
+          </details>
         </div>
         <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
           <ImportMediaButton size="sm" />
@@ -427,10 +444,10 @@ export function EditPage() {
           {!focusMode && (
             <Button
               size="sm"
-              variant={inspectorVisible && activeSidePanel === 'inspector' ? 'primary' : 'ghost'}
-              aria-pressed={inspectorVisible && activeSidePanel === 'inspector'}
+              variant={showRightInspector ? 'primary' : 'ghost'}
+              aria-pressed={showRightInspector}
               onClick={() => {
-                if (inspectorVisible && activeSidePanel === 'inspector') {
+                if (showRightInspector && activeSidePanel === 'inspector') {
                   setInspectorVisible(false);
                 } else {
                   setInspectorVisible(true);
@@ -453,10 +470,6 @@ export function EditPage() {
               key={item.id}
               aria-pressed={drawerOpen && tool === item.id && activeSidePanel === 'tools'}
               onClick={() => {
-                if (item.id === 'voiceover') {
-                  setVoiceoverOpen(true);
-                  return;
-                }
                 const nextTool = item.id as EditorTool;
                 if (tool === nextTool && drawerOpen && activeSidePanel === 'tools') {
                   setDrawerOpen(false);
@@ -466,8 +479,7 @@ export function EditPage() {
                 setTool(nextTool);
                 setDrawerOpen(true);
                 setActiveSidePanel('tools');
-                if (item.id === 'captions') setPanel('captions');
-                else if (item.id === 'adjust') setPanel('effects');
+                setPanel('effects');
               }}
             >
               <SvgIcon name={item.iconName} size={18} />
@@ -478,7 +490,97 @@ export function EditPage() {
       )}
       {!focusMode && drawerOpen && (
       <aside className="editor-side scroll-thin">
-        {tool === 'media' || tool === 'more' ? <MediaBin key={tool} initialTab={tool === 'more' ? 'add' : 'uploads'} project={project} onOpenVoiceover={() => setVoiceoverOpen(true)} /> : tool === 'captions' ? <CaptionsPanel project={project} onOpenTranscribe={() => setTranscribeOpen(true)} /> : tool === 'planning' ? <PlanningPanel project={project} /> : <EditorToolLibrary key={tool} tool={tool} project={project} clip={selectedClip?.clip ?? null} />}
+        {tool === 'media' ? (
+          <MediaBin key="media" initialTab="uploads" project={project} onOpenVoiceover={() => setVoiceoverOpen(true)} />
+        ) : tool === 'text' ? (
+          <div className="stack" style={{ gap: 10 }}>
+            <div className="row" role="tablist" aria-label="Text and captions" style={{ gap: 4 }}>
+              <Button
+                size="sm"
+                variant={textSubTab === 'text' ? 'primary' : 'ghost'}
+                aria-pressed={textSubTab === 'text'}
+                onClick={() => setTextSubTab('text')}
+              >
+                Text titles
+              </Button>
+              <Button
+                size="sm"
+                variant={textSubTab === 'captions' ? 'primary' : 'ghost'}
+                aria-pressed={textSubTab === 'captions'}
+                onClick={() => setTextSubTab('captions')}
+              >
+                Captions ({project.captions.length})
+              </Button>
+            </div>
+            {textSubTab === 'captions' ? (
+              <CaptionsPanel project={project} onOpenTranscribe={() => setTranscribeOpen(true)} />
+            ) : (
+              <EditorToolLibrary key="text" tool="text" project={project} clip={selectedClip?.clip ?? null} />
+            )}
+          </div>
+        ) : tool === 'more' ? (
+          <div className="stack" style={{ gap: 10 }}>
+            <div className="row" role="tablist" aria-label="More tools" style={{ gap: 4, flexWrap: 'wrap' }}>
+              <Button
+                size="sm"
+                variant={moreSubTab === 'overlays' ? 'primary' : 'ghost'}
+                aria-pressed={moreSubTab === 'overlays'}
+                onClick={() => setMoreSubTab('overlays')}
+              >
+                Overlays
+              </Button>
+              <Button
+                size="sm"
+                variant={moreSubTab === 'history' ? 'primary' : 'ghost'}
+                aria-pressed={moreSubTab === 'history'}
+                onClick={() => setMoreSubTab('history')}
+              >
+                History ({historyLength})
+              </Button>
+              <Button
+                size="sm"
+                variant={moreSubTab === 'settings' ? 'primary' : 'ghost'}
+                aria-pressed={moreSubTab === 'settings'}
+                onClick={() => setMoreSubTab('settings')}
+              >
+                Project settings
+              </Button>
+            </div>
+            {moreSubTab === 'overlays' ? (
+              <MediaBin key="more-overlays" initialTab="add" project={project} onOpenVoiceover={() => setVoiceoverOpen(true)} />
+            ) : moreSubTab === 'history' ? (
+              <div className="panel" style={{ boxShadow: 'none' }}>
+                <div className="panel-body stack" style={{ gap: 8 }}>
+                  <div className="row" style={{ justifyContent: 'space-between' }}>
+                    <strong>Edit history</strong>
+                    <Badge>{historyLength} step{historyLength === 1 ? '' : 's'}</Badge>
+                  </div>
+                  <div className="field-hint">Latest action: {lastAction ?? 'No edits yet'}</div>
+                  <div className="row" style={{ gap: 6 }}>
+                    <Button size="sm" onClick={() => useEditor.getState().undo()} disabled={historyLength === 0}>
+                      ↶ Undo
+                    </Button>
+                    <Button size="sm" onClick={() => useEditor.getState().redo()} disabled={futureLength === 0}>
+                      ↷ Redo
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <ProjectSettingsPanel project={project} />
+            )}
+          </div>
+        ) : tool === 'planning' ? (
+          <PlanningPanel project={project} />
+        ) : (
+          <EditorToolLibrary
+            key={tool}
+            tool={tool}
+            project={project}
+            clip={selectedClip?.clip ?? null}
+            onOpenVoiceover={() => setVoiceoverOpen(true)}
+          />
+        )}
       </aside>
       )}
 
@@ -625,37 +727,26 @@ export function EditPage() {
         </div>
       </div>
 
-      {!focusMode && inspectorVisible && (
+      {showRightInspector && (
       <aside className="editor-side editor-right scroll-thin">
-        {panel === 'captions' && tool !== 'captions' ? (
-          <CaptionsPanel project={project} onOpenTranscribe={() => setTranscribeOpen(true)} />
+        {selectedClip ? (
+          <Inspector
+            key={`${selectedClip.clip.id}-${tool}`}
+            clip={selectedClip.clip}
+            trackKind={selectedClip.track.kind}
+            initialSection={
+              tool === 'audio'
+                ? 'Audio'
+                : tool === 'presenter'
+                  ? 'Presenter layout'
+                  : tool === 'text'
+                    ? 'Text'
+                    : 'All'
+            }
+          />
         ) : (
-          selectedClip ? <Inspector clip={selectedClip.clip} trackKind={selectedClip.track.kind} /> : <NoSelection project={project} />
+          <NoSelection project={project} />
         )}
-        <details className="record-details">
-          <summary>
-            History<span>{historyLength} step{historyLength === 1 ? '' : 's'} · {lastAction ?? 'No edits yet'}</span>
-          </summary>
-          <div className="row" style={{ justifyContent: 'space-between', marginTop: 8 }}>
-            <Badge>{historyLength} steps</Badge>
-            <div className="row" style={{ gap: 4 }}>
-              <Button size="sm" variant="ghost" onClick={() => useEditor.getState().undo()} disabled={historyLength === 0}>
-                Undo
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => useEditor.getState().redo()} disabled={futureLength === 0}>
-                Redo
-              </Button>
-            </div>
-          </div>
-        </details>
-        <details className="record-details">
-          <summary>
-            Project settings<span>Canvas, background &amp; project actions</span>
-          </summary>
-          <div style={{ marginTop: 8 }}>
-            <ProjectSettingsPanel project={project} />
-          </div>
-        </details>
       </aside>
       )}
 
@@ -665,6 +756,9 @@ export function EditPage() {
       <VoiceoverDialog open={voiceoverOpen} onClose={() => setVoiceoverOpen(false)} player={player} />
       <Dialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} title="Keyboard shortcuts">
         <ShortcutTable />
+      </Dialog>
+      <Dialog open={projectSettingsOpen} onClose={() => setProjectSettingsOpen(false)} title="Composition &amp; project settings">
+        <ProjectSettingsPanel project={project} />
       </Dialog>
       <div style={{ display: 'none' }}>
         <span>{selectedClipIds.length}</span>

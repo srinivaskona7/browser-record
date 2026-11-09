@@ -195,15 +195,6 @@ function applyPresenterStyleToDocPip(
   video.style.transform = presenter.mirror ? 'scaleX(-1)' : 'none';
 }
 
-const PIP_SHAPE_ORDER: Array<PresenterProps['shape']> = [
-  'circle',
-  'rounded',
-  'portrait',
-  'pill',
-  'hexagon',
-  'square',
-];
-
 /**
  * Opens an always-on-top Cap Stealth Controller & Camera window from an explicit user click,
  * requesting the PiP window synchronously on the user gesture before awaiting any
@@ -242,7 +233,7 @@ export async function openFloatingCamera(options: {
     if (typeof document !== 'undefined') {
       copyStylesToPipDocument(document, doc);
     }
-    doc.title = 'Cap Stealth Controller — Browser 4K Studio';
+    doc.title = 'Floating controls — Browser 4K Studio';
     doc.body.style.margin = '0';
     doc.body.style.width = '100vw';
     doc.body.style.height = '100vh';
@@ -313,10 +304,10 @@ export async function openFloatingCamera(options: {
     stageWrap.appendChild(badge);
     stageWrap.appendChild(hiddenNotice);
 
-    // Cap Stealth Controller bar inside Document PiP (Record / Pause / Stop / Restart / Discard / Mic / Shape / Stealth)
+    // Floating controls bar inside Document PiP: Timer · Pause/Resume · Stop + More (Mute, Hide preview, Restart, Discard)
     const bar = doc.createElement('div');
     bar.setAttribute('role', 'toolbar');
-    bar.setAttribute('aria-label', 'Cap stealth recording controls');
+    bar.setAttribute('aria-label', 'Floating controls');
     bar.style.display = 'flex';
     bar.style.alignItems = 'center';
     bar.style.justifyContent = 'space-between';
@@ -335,6 +326,7 @@ export async function openFloatingCamera(options: {
 
     const btnWrap = doc.createElement('div');
     btnWrap.style.display = 'flex';
+    btnWrap.style.alignItems = 'center';
     btnWrap.style.flexWrap = 'wrap';
     btnWrap.style.gap = '4px';
 
@@ -356,7 +348,7 @@ export async function openFloatingCamera(options: {
     const recordBtn = doc.createElement('button');
     styleBtn(recordBtn, 'danger');
     recordBtn.textContent = '● Record';
-    recordBtn.title = 'Start recording from Cap Stealth Controller';
+    recordBtn.title = 'Start recording from Floating controls';
     recordBtn.addEventListener('click', () => options.onStartRecord?.());
 
     const pauseBtn = doc.createElement('button');
@@ -366,8 +358,45 @@ export async function openFloatingCamera(options: {
     const stopBtn = doc.createElement('button');
     styleBtn(stopBtn, 'danger');
     stopBtn.textContent = 'Stop';
-    stopBtn.title = 'Stop recording and process take into Studio';
+    stopBtn.title = 'Stop recording and open take in Studio';
     stopBtn.addEventListener('click', () => options.onStop?.());
+
+    const moreDetails = doc.createElement('details');
+    moreDetails.style.position = 'relative';
+    const moreSummary = doc.createElement('summary');
+    moreSummary.textContent = 'More';
+    moreSummary.style.listStyle = 'none';
+    moreSummary.style.minHeight = '26px';
+    moreSummary.style.padding = '3px 7px';
+    moreSummary.style.borderRadius = '7px';
+    moreSummary.style.border = '1px solid #322d41';
+    moreSummary.style.background = '#1c1927';
+    moreSummary.style.color = '#f5f2ff';
+    moreSummary.style.fontSize = '11px';
+    moreSummary.style.fontWeight = '600';
+    moreSummary.style.cursor = 'pointer';
+    moreSummary.style.display = 'inline-flex';
+    moreSummary.style.alignItems = 'center';
+
+    const moreMenu = doc.createElement('div');
+    moreMenu.setAttribute('role', 'group');
+    moreMenu.setAttribute('aria-label', 'More floating controls');
+    moreMenu.style.display = 'flex';
+    moreMenu.style.flexWrap = 'wrap';
+    moreMenu.style.gap = '4px';
+    moreMenu.style.marginTop = '4px';
+
+    const micBtn = doc.createElement('button');
+    styleBtn(micBtn, 'default');
+    micBtn.textContent = 'Mute';
+    micBtn.title = 'Mute or unmute microphone';
+    micBtn.addEventListener('click', () => options.onToggleMic?.());
+
+    const hidePreviewBtn = doc.createElement('button');
+    styleBtn(hidePreviewBtn, 'default');
+    hidePreviewBtn.textContent = 'Hide preview';
+    hidePreviewBtn.title = 'Hide floating camera preview while continuing to record the camera separately for the editor';
+    hidePreviewBtn.addEventListener('click', () => options.onToggleHidePreview?.());
 
     const restartBtn = doc.createElement('button');
     styleBtn(restartBtn, 'default');
@@ -381,12 +410,6 @@ export async function openFloatingCamera(options: {
     discardBtn.title = 'Cancel and discard this take';
     discardBtn.addEventListener('click', () => options.onDiscard?.());
 
-    const micBtn = doc.createElement('button');
-    styleBtn(micBtn, 'default');
-    micBtn.textContent = 'Mute';
-    micBtn.title = 'Mute or unmute microphone';
-    micBtn.addEventListener('click', () => options.onToggleMic?.());
-
     let currentPresenter = options.presenter;
     let currentState: FloatingRecordingControlState = options.initialControlState ?? {
       stage: 'idle',
@@ -396,34 +419,17 @@ export async function openFloatingCamera(options: {
       hasCamera: true,
     };
 
-    const shapeBtn = doc.createElement('button');
-    styleBtn(shapeBtn, 'default');
-    shapeBtn.textContent = `Shape: ${currentPresenter.shape}`;
-    shapeBtn.title = 'Cycle presenter bubble shape across tabs';
-    shapeBtn.addEventListener('click', () => {
-      const idx = PIP_SHAPE_ORDER.indexOf(currentPresenter.shape);
-      const nextShape = PIP_SHAPE_ORDER[(idx + 1) % PIP_SHAPE_ORDER.length]!;
-      currentPresenter = { ...currentPresenter, shape: nextShape };
-      shapeBtn.textContent = `Shape: ${nextShape}`;
-      applyPresenterStyleToDocPip(frame, video, currentPresenter, currentState.stage);
-      applyLayout();
-      options.onUpdatePresenter?.({ shape: nextShape });
-    });
-
-    const hidePreviewBtn = doc.createElement('button');
-    styleBtn(hidePreviewBtn, 'default');
-    hidePreviewBtn.textContent = 'Hide preview';
-    hidePreviewBtn.title = 'Switch to stealth controller bar (hide camera preview while keeping camera track recording)';
-    hidePreviewBtn.addEventListener('click', () => options.onToggleHidePreview?.());
+    moreMenu.appendChild(micBtn);
+    moreMenu.appendChild(hidePreviewBtn);
+    moreMenu.appendChild(restartBtn);
+    moreMenu.appendChild(discardBtn);
+    moreDetails.appendChild(moreSummary);
+    moreDetails.appendChild(moreMenu);
 
     btnWrap.appendChild(recordBtn);
     btnWrap.appendChild(pauseBtn);
     btnWrap.appendChild(stopBtn);
-    btnWrap.appendChild(restartBtn);
-    btnWrap.appendChild(discardBtn);
-    btnWrap.appendChild(micBtn);
-    btnWrap.appendChild(shapeBtn);
-    btnWrap.appendChild(hidePreviewBtn);
+    btnWrap.appendChild(moreDetails);
     bar.appendChild(statusSpan);
     bar.appendChild(btnWrap);
 
@@ -510,7 +516,6 @@ export async function openFloatingCamera(options: {
       mode: 'document-pip',
       updatePresenter: (nextPresenter) => {
         currentPresenter = nextPresenter;
-        shapeBtn.textContent = `Shape: ${nextPresenter.shape}`;
         if (!closed) {
           applyPresenterStyleToDocPip(frame, video, nextPresenter, currentState.stage);
           applyLayout();

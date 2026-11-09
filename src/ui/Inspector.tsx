@@ -28,7 +28,15 @@ import { ColorWheelsPanel, HslBandsPanel, ToneCurvePanel } from './ColorGrading'
 
 const InspectorFocus = createContext<{ section: string; query: string }>({ section: 'All', query: '' });
 
-export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }) {
+export function Inspector({
+  clip,
+  trackKind,
+  initialSection = 'All',
+}: {
+  clip: Clip;
+  trackKind: string;
+  initialSection?: string;
+}) {
   const apply = useEditor((state) => state.apply);
   const beginGesture = useEditor((state) => state.beginGesture);
   const updateGesture = useEditor((state) => state.updateGesture);
@@ -44,7 +52,10 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
   const playhead = useEditor((state) => state.playheadTicks);
   const project = useEditor((state) => state.project);
   const selection = useEditor((state) => state.selection);
-  const [section, setSection] = useState('All');
+  const isPresenter = Boolean(clip.presenter);
+  const [section, setSection] = useState(
+    initialSection === 'Presenter layout' && !isPresenter ? 'Transform' : initialSection,
+  );
   const [query, setQuery] = useState('');
   const localTicks = Math.max(0, playhead - clip.startTicks);
 
@@ -64,7 +75,6 @@ export function Inspector({ clip, trackKind }: { clip: Clip; trackKind: string }
   };
 
   const hasVideo = trackKind === 'video';
-  const isPresenter = Boolean(clip.presenter);
   const keyframes = useMemo(
     () => Object.fromEntries(clip.keyframes.map((group) => [group.target, group.keyframes.length])) as Record<string, number>,
     [clip.keyframes],
@@ -1019,10 +1029,9 @@ export function NoSelection({ project }: { project: Project }) {
     <Panel title="Inspector">
       <div className="stack" style={{ gap: 10 }}>
         <div className="field-hint">
-          Select a clip on the timeline to edit its transform, colour, audio and masks. With nothing selected, this
-          panel edits project-level settings.
+          Select a clip on the timeline to inspect and adjust its transform, timing, colour, audio, or masks for{' '}
+          <strong>{project.name}</strong>. Composition settings and project deletion live under the <strong>Project ▾</strong> menu or <strong>More</strong> tool.
         </div>
-        <ProjectSettingsPanel project={project} />
       </div>
     </Panel>
   );

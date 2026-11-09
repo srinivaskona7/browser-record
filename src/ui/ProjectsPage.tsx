@@ -158,32 +158,34 @@ export function ProjectsPage() {
         }
       }}
     >
-      {/* Quick-action Hero Row */}
+      {/* Quick-action Hero Row: Visible by default: New recording, Import video */}
       <Panel
-        title="Projects & Media Studio"
-        subtitle="Record screen & camera, import local 4K media, organize storyboards, or restore project settings & edits — 100% locally in your browser."
+        title="Projects"
+        subtitle="Start a new recording, import video, or open a recent project and saved takes."
         actions={
           <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
             <Button variant="primary" onClick={() => setRoute('record')}>
-              ● New Recording
+              ● New recording
             </Button>
-            <ImportMediaButton label="Import Media" navigateToEdit />
-            <Button onClick={() => setCreateOpen(true)}>+ Blank Project</Button>
+            <ImportMediaButton label="Import video" navigateToEdit />
             <details className="rec-more-menu">
-              <summary className="btn btn-ghost btn-md" aria-label="Project menu">
-                Project menu ▾
+              <summary className="btn btn-ghost btn-md" aria-label="More project actions">
+                More ▾
               </summary>
               <div className="rec-more-popover">
+                <Button size="sm" variant="ghost" onClick={() => setCreateOpen(true)}>
+                  + Blank project…
+                </Button>
                 <Button
                   size="sm"
                   variant="ghost"
                   onClick={() => void loadSampleKubernetesLesson('edit')}
                   data-testid="load-sample-kubernetes-btn"
                 >
-                  Load Sample Kubernetes Lesson
+                  Load sample lesson
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => backupInput.current?.click()}>
-                  Restore settings &amp; edits (.json)…
+                  Restore backup (.json)…
                 </Button>
               </div>
             </details>
@@ -201,168 +203,158 @@ export function ProjectsPage() {
           </div>
         }
       >
-        <div className="grid-3">
-          <Stat
-            label="Storage mode"
-            value={
-              workspace?.info.mode === 'fsa'
-                ? 'Disk folder'
-                : workspace?.info.mode === 'opfs'
-                  ? 'Browser OPFS'
-                  : 'In-memory'
-            }
-            sub={
-              workspace?.info.persistent
-                ? `Folder: ${workspace.info.name}`
-                : 'Temporary browser storage — pick a folder on disk for 30–60 min recordings'
-            }
-          />
-          <Stat
-            label="Browser quota"
-            value={quota && quota.quota > 0 ? `${formatBytes(quota.usage)} / ${formatBytes(quota.quota)}` : 'Unbounded / native'}
-            sub={
-              quota && quota.quota > 0
-                ? `${Math.round((quota.usage / quota.quota) * 100)}% used`
-                : 'Managed by your operating system'
-            }
-          />
-          <div className="stack" style={{ justifyContent: 'center', gap: 8 }}>
-            {fsAccessSupported ? (
-              <Button onClick={() => void chooseFolderWorkspace().then(() => refresh())}>
-                {workspace?.info.mode === 'fsa' ? 'Switch workspace folder…' : 'Choose workspace folder on disk…'}
-              </Button>
-            ) : (
-              <div className="warn-card">
-                This browser does not expose the File System Access directory picker. Projects are stored in origin-private
-                storage (OPFS); export a backup JSON from the Export tab to keep a copy on disk.
+        <details className="record-details">
+          <summary>
+            Storage, backup &amp; storyboard<span>Blank project, sample lesson, folder storage &amp; shot list</span>
+          </summary>
+          <div className="stack" style={{ gap: 14, paddingTop: 12 }}>
+            <div className="grid-3">
+              <Stat
+                label="Storage mode"
+                value={
+                  workspace?.info.mode === 'fsa'
+                    ? 'Disk folder'
+                    : workspace?.info.mode === 'opfs'
+                      ? 'Browser OPFS'
+                      : 'In-memory'
+                }
+                sub={
+                  workspace?.info.persistent
+                    ? `Folder: ${workspace.info.name}`
+                    : 'Temporary browser storage — pick a folder on disk for 30–60 min recordings'
+                }
+              />
+              <Stat
+                label="Browser quota"
+                value={quota && quota.quota > 0 ? `${formatBytes(quota.usage)} / ${formatBytes(quota.quota)}` : 'Unbounded / native'}
+                sub={
+                  quota && quota.quota > 0
+                    ? `${Math.round((quota.usage / quota.quota) * 100)}% used`
+                    : 'Managed by your operating system'
+                }
+              />
+              <div className="stack" style={{ justifyContent: 'center', gap: 8 }}>
+                {fsAccessSupported ? (
+                  <Button onClick={() => void chooseFolderWorkspace().then(() => refresh())}>
+                    {workspace?.info.mode === 'fsa' ? 'Switch workspace folder…' : 'Choose workspace folder on disk…'}
+                  </Button>
+                ) : (
+                  <div className="warn-card">
+                    This browser does not expose the File System Access directory picker. Projects are stored in origin-private
+                    storage (OPFS); export a backup JSON from the Export tab to keep a copy on disk.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {currentProject && (
+              <div className="grid-2">
+                <Panel
+                  title={`Active session: ${currentProject.name}`}
+                  subtitle={`${currentProject.canvas.width}×${currentProject.canvas.height} · ${(currentProject.canvas.fps.num / currentProject.canvas.fps.den).toFixed(0)} fps · ${formatClock(currentProject.durationTicks)}`}
+                  actions={
+                    <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                      <Button size="sm" variant="primary" onClick={() => setRoute('edit')}>
+                        Resume in Editor →
+                      </Button>
+                      <Button size="sm" onClick={() => setRoute('record')}>
+                        Record into project
+                      </Button>
+                      <ImportMediaButton label="+ Add media" size="sm" variant="ghost" />
+                    </div>
+                  }
+                >
+                  <div className="stack" style={{ gap: 10 }}>
+                    <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                      <Badge tone="ok">{currentProject.assets.length} media assets</Badge>
+                      <Badge>{currentProject.tracks.reduce((sum, t) => sum + t.clips.length, 0)} timeline clips</Badge>
+                      <Badge>{currentProject.captions.length} caption cues</Badge>
+                      <Badge>{currentProject.markers.length} chapter markers</Badge>
+                    </div>
+                    <Field label="Project notes">
+                      <textarea
+                        className="textarea"
+                        aria-label="Project notes"
+                        placeholder="Session notes, shot context, or technical checklist…"
+                        value={currentProject.notes}
+                        onChange={(e) => softUpdate((p) => ops.setProjectNotes(p, e.target.value))}
+                      />
+                    </Field>
+                  </div>
+                </Panel>
+
+                <Panel
+                  title="Compact Storyboard & Shot List"
+                  subtitle="Plan shots and verify completion before final export."
+                  actions={
+                    <Badge>
+                      {(currentProject.storyboard ?? []).filter((s) => s.done).length}/
+                      {(currentProject.storyboard ?? []).length} shots done
+                    </Badge>
+                  }
+                >
+                  <div className="stack" style={{ gap: 8 }}>
+                    <div className="row" style={{ gap: 6 }}>
+                      <input
+                        className="input"
+                        placeholder="Add shot (e.g. 01 Terminal preflight check)…"
+                        aria-label="New storyboard shot title"
+                        value={shotDraft}
+                        onChange={(e) => setShotDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && shotDraft.trim()) {
+                            apply('Add storyboard shot', (p) => ops.addStoryboardItem(p, { title: shotDraft }));
+                            setShotDraft('');
+                          }
+                        }}
+                      />
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          if (!shotDraft.trim()) return;
+                          apply('Add storyboard shot', (p) => ops.addStoryboardItem(p, { title: shotDraft }));
+                          setShotDraft('');
+                        }}
+                      >
+                        + Add shot
+                      </Button>
+                    </div>
+                    {(currentProject.storyboard ?? []).length === 0 ? (
+                      <div className="field-hint">
+                        No storyboard shots yet. Add shots above or load the Sample Kubernetes Lesson to inspect a structured 4-shot lesson.
+                      </div>
+                    ) : (
+                      <div className="storyboard-list">
+                        {(currentProject.storyboard ?? []).map((shot) => (
+                          <div key={shot.id} className={`storyboard-item ${shot.done ? 'done' : ''}`}>
+                            <input
+                              type="checkbox"
+                              checked={shot.done}
+                              aria-label={`Mark ${shot.title} complete`}
+                              onChange={() => apply('Toggle storyboard shot', (p) => ops.toggleStoryboardItem(p, shot.id))}
+                            />
+                            <span className="storyboard-text" style={{ flex: 1 }}>
+                              {shot.title}
+                            </span>
+                            {shot.durationSeconds && <Badge>{shot.durationSeconds}s</Badge>}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => apply('Remove storyboard shot', (p) => ops.removeStoryboardItem(p, shot.id))}
+                            >
+                              ×
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </Panel>
               </div>
             )}
           </div>
-        </div>
+        </details>
       </Panel>
-
-      {/* Active Session + Storyboard & Notes */}
-      {currentProject && (
-        <div className="grid-2">
-          <Panel
-            title={`Active session: ${currentProject.name}`}
-            subtitle={`${currentProject.canvas.width}×${currentProject.canvas.height} · ${(currentProject.canvas.fps.num / currentProject.canvas.fps.den).toFixed(0)} fps · ${formatClock(currentProject.durationTicks)}`}
-            actions={
-              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                <Button size="sm" variant="primary" onClick={() => setRoute('edit')}>
-                  Resume in Editor →
-                </Button>
-                <Button size="sm" onClick={() => setRoute('record')}>
-                  Record into project
-                </Button>
-                <ImportMediaButton label="+ Add media" size="sm" variant="ghost" />
-              </div>
-            }
-          >
-            <div className="stack" style={{ gap: 10 }}>
-              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                <Badge tone="ok">{currentProject.assets.length} media assets</Badge>
-                <Badge>{currentProject.tracks.reduce((sum, t) => sum + t.clips.length, 0)} timeline clips</Badge>
-                <Badge>{currentProject.captions.length} caption cues</Badge>
-                <Badge>{currentProject.markers.length} chapter markers</Badge>
-              </div>
-              {currentProject.assets.length > 0 && (
-                <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-                  {currentProject.assets.slice(0, 6).map((asset) => (
-                    <span key={asset.id} className="pill" title={asset.path}>
-                      <Badge
-                        tone={
-                          asset.kind === 'video' ? 'accent' : asset.kind === 'audio' ? 'ok' : 'default'
-                        }
-                      >
-                        {asset.kind}
-                      </Badge>{' '}
-                      {asset.name}
-                    </span>
-                  ))}
-                </div>
-              )}
-              <Field label="Project notes">
-                <textarea
-                  className="textarea"
-                  aria-label="Project notes"
-                  placeholder="Session notes, shot context, or technical checklist…"
-                  value={currentProject.notes}
-                  onChange={(e) => softUpdate((p) => ops.setProjectNotes(p, e.target.value))}
-                />
-              </Field>
-            </div>
-          </Panel>
-
-          <Panel
-            title="Compact Storyboard & Shot List"
-            subtitle="Plan shots and verify completion before final export."
-            actions={
-              <Badge>
-                {(currentProject.storyboard ?? []).filter((s) => s.done).length}/
-                {(currentProject.storyboard ?? []).length} shots done
-              </Badge>
-            }
-          >
-            <div className="stack" style={{ gap: 8 }}>
-              <div className="row" style={{ gap: 6 }}>
-                <input
-                  className="input"
-                  placeholder="Add shot (e.g. 01 Terminal preflight check)…"
-                  aria-label="New storyboard shot title"
-                  value={shotDraft}
-                  onChange={(e) => setShotDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && shotDraft.trim()) {
-                      apply('Add storyboard shot', (p) => ops.addStoryboardItem(p, { title: shotDraft }));
-                      setShotDraft('');
-                    }
-                  }}
-                />
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    if (!shotDraft.trim()) return;
-                    apply('Add storyboard shot', (p) => ops.addStoryboardItem(p, { title: shotDraft }));
-                    setShotDraft('');
-                  }}
-                >
-                  + Add shot
-                </Button>
-              </div>
-              {(currentProject.storyboard ?? []).length === 0 ? (
-                <div className="field-hint">
-                  No storyboard shots yet. Add shots above or load the Sample Kubernetes Lesson to inspect a structured 4-shot lesson.
-                </div>
-              ) : (
-                <div className="storyboard-list">
-                  {(currentProject.storyboard ?? []).map((shot) => (
-                    <div key={shot.id} className={`storyboard-item ${shot.done ? 'done' : ''}`}>
-                      <input
-                        type="checkbox"
-                        checked={shot.done}
-                        aria-label={`Mark ${shot.title} complete`}
-                        onChange={() => apply('Toggle storyboard shot', (p) => ops.toggleStoryboardItem(p, shot.id))}
-                      />
-                      <span className="storyboard-text" style={{ flex: 1 }}>
-                        {shot.title}
-                      </span>
-                      {shot.durationSeconds && <Badge>{shot.durationSeconds}s</Badge>}
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => apply('Remove storyboard shot', (p) => ops.removeStoryboardItem(p, shot.id))}
-                      >
-                        ×
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </Panel>
-        </div>
-      )}
 
       {/* Projects Grid with Search, Sort, Rename, Open, Delete */}
       <Panel

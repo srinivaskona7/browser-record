@@ -709,59 +709,39 @@ export function ExportPage() {
       <div className="split-grid">
         <div className="stack" style={{ gap: 14 }}>
           <Panel title="Delivery preset" bodyClassName="stack">
-            <div className="stack" style={{ gap: 6 }}>
-              {PRESETS.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className="panel"
-                  style={{
-                    textAlign: 'left',
-                    padding: 12,
-                    cursor: 'pointer',
-                    borderColor: presetId === item.id ? 'var(--accent)' : 'var(--line)',
-                  }}
-                  onClick={() => setPresetId(item.id)}
-                >
-                  <div className="row" style={{ justifyContent: 'space-between' }}>
-                    <strong style={{ fontSize: 13 }}>{item.label}</strong>
-                    <span className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
-                      {item.width}×{item.height}
-                      {item.fps ? ` · ${item.fps} fps` : ''} · {(item.videoBitrate / 1e6).toFixed(0)} Mbps
-                    </span>
-                  </div>
-                  <div className="field-hint" style={{ marginTop: 4 }}>
-                    {item.description}
-                  </div>
-                </button>
-              ))}
-              <button
-                type="button"
-                className="panel"
-                style={{ textAlign: 'left', padding: 12, cursor: 'pointer', borderColor: presetId === CUSTOM_ID ? 'var(--accent)' : 'var(--line)' }}
-                onClick={() => setPresetId(CUSTOM_ID)}
-              >
-                <strong style={{ fontSize: 13 }}>Custom</strong>
-                <div className="field-hint" style={{ marginTop: 4 }}>
-                  Set size, frame rate, bitrate or a target file size. The budget calculator explains what that actually buys.
-                </div>
-              </button>
+            <div className="stack" style={{ gap: 6 }} role="group" aria-label="Recommended delivery presets">
+              {(['youtube-1080p30', '4k-balanced', 'shorts-vertical'] as const)
+                .map((id) => PRESETS.find((p) => p.id === id))
+                .filter((item): item is NonNullable<typeof item> => Boolean(item))
+                .map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className="panel"
+                    style={{
+                      textAlign: 'left',
+                      padding: 12,
+                      cursor: 'pointer',
+                      borderColor: presetId === item.id ? 'var(--accent)' : 'var(--line)',
+                    }}
+                    onClick={() => setPresetId(item.id)}
+                  >
+                    <div className="row" style={{ justifyContent: 'space-between' }}>
+                      <strong style={{ fontSize: 13 }}>{item.label}</strong>
+                      <span className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
+                        {item.width}×{item.height}
+                        {item.fps ? ` · ${item.fps} fps` : ''} · {Number((item.videoBitrate / 1e6).toFixed(1))} Mbps
+                      </span>
+                    </div>
+                    <div className="field-hint" style={{ marginTop: 4 }}>
+                      {item.description}
+                    </div>
+                  </button>
+                ))}
             </div>
 
             <div className="grid-2" style={{ gap: 10, borderTop: '1px solid var(--line)', paddingTop: 12 }}>
-              <Field label="Output frame rate (FPS)" hint="Applied to codec probing, 6s sample encode, and final file.">
-                <Select
-                  aria-label="Output frame rate"
-                  value={String(outputFps)}
-                  onChange={(v) => setOutputFps(Number(v))}
-                  options={[
-                    { value: '24', label: '24 fps · Cinematic' },
-                    { value: '30', label: '30 fps · Standard' },
-                    { value: '60', label: '60 fps · Smooth terminal & UI motion' },
-                  ]}
-                />
-              </Field>
-              <Field label="Timeline range (Full timeline / Chapter)" hint="Export the full lesson or a marker chapter.">
+              <Field label="Timeline range (Full lesson / Chapter)" hint="Export the full lesson or a marker chapter.">
                 <Select
                   aria-label="Timeline export range"
                   value={segmentId}
@@ -775,79 +755,137 @@ export function ExportPage() {
                   ]}
                 />
               </Field>
+              <Field label="Burned-in captions" hint="Render subtitle cues directly into the video frames.">
+                <Toggle label="Include captions in the picture" checked={includeCaptions} onChange={setIncludeCaptions} />
+              </Field>
             </div>
 
-            {presetId === CUSTOM_ID && (
-              <div className="stack" style={{ gap: 10, borderTop: '1px solid var(--line)', paddingTop: 12 }}>
-                <div className="row" style={{ gap: 8 }}>
-                  <NumberField label="Width" value={width} min={320} max={7680} step={2} onChange={setWidth} />
-                  <NumberField label="Height" value={height} min={180} max={4320} step={2} onChange={setHeight} />
+            <details className="record-details">
+              <summary>
+                More presets &amp; advanced settings
+                <span>1080p60, 4K Ultra-Compact, Custom FPS/bitrate, sidecar captions &amp; budget</span>
+              </summary>
+              <div className="stack" style={{ gap: 12, paddingTop: 12 }}>
+                <div className="stack" style={{ gap: 6 }} role="group" aria-label="Additional delivery presets">
+                  {PRESETS.filter(
+                    (item) => !(['youtube-1080p30', '4k-balanced', 'shorts-vertical'] as readonly string[]).includes(item.id),
+                  ).map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className="panel"
+                      style={{
+                        textAlign: 'left',
+                        padding: 10,
+                        cursor: 'pointer',
+                        borderColor: presetId === item.id ? 'var(--accent)' : 'var(--line)',
+                      }}
+                      onClick={() => setPresetId(item.id)}
+                    >
+                      <div className="row" style={{ justifyContent: 'space-between' }}>
+                        <strong style={{ fontSize: 12.5 }}>{item.label}</strong>
+                        <span className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
+                          {item.width}×{item.height}
+                          {item.fps ? ` · ${item.fps} fps` : ''} · {Number((item.videoBitrate / 1e6).toFixed(1))} Mbps
+                        </span>
+                      </div>
+                      <div className="field-hint" style={{ marginTop: 3 }}>
+                        {item.description}
+                      </div>
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    className="panel"
+                    style={{
+                      textAlign: 'left',
+                      padding: 10,
+                      cursor: 'pointer',
+                      borderColor: presetId === CUSTOM_ID ? 'var(--accent)' : 'var(--line)',
+                    }}
+                    onClick={() => setPresetId(CUSTOM_ID)}
+                  >
+                    <strong style={{ fontSize: 12.5 }}>Custom</strong>
+                    <div className="field-hint" style={{ marginTop: 3 }}>
+                      Set size, frame rate, bitrate or a target file size. The budget calculator explains what that actually buys.
+                    </div>
+                  </button>
                 </div>
-                <div className="row" style={{ gap: 8 }}>
-                  <NumberField label="Video Mbps" value={videoMbps} min={0.5} max={100} step={0.5} onChange={setVideoMbps} />
-                  <NumberField label="Audio kbps" value={audioKbps} min={64} max={320} step={16} onChange={setAudioKbps} />
-                </div>
-                <Field label="Or target file size (decimal GB)" hint="Leave blank to use the bitrate above.">
-                  <input
-                    className="input"
-                    value={targetGb}
-                    onChange={(event) => setTargetGb(event.target.value.replace(/[^\d.]/g, ''))}
-                    placeholder="e.g. 1.8"
-                    inputMode="decimal"
+
+                <Field label="Output frame rate (FPS)" hint="Applied to codec probing, 6s test encode, and final file.">
+                  <Select
+                    aria-label="Output frame rate"
+                    value={String(outputFps)}
+                    onChange={(v) => setOutputFps(Number(v))}
+                    options={[
+                      { value: '24', label: '24 fps · Cinematic' },
+                      { value: '30', label: '30 fps · Standard' },
+                      { value: '60', label: '60 fps · Smooth terminal & UI motion' },
+                    ]}
                   />
                 </Field>
-              </div>
-            )}
 
-            <Toggle label="Include captions in the picture" checked={includeCaptions} onChange={setIncludeCaptions} />
-            <Field
-              label="Subtitle sidecar file (independent of burned-in captions)"
-              hint="Choose whether to also download an editable .SRT or .VTT sidecar alongside the video."
-            >
-              <Select
-                aria-label="Subtitle sidecar format"
-                value={sidecarFormat}
-                onChange={(v) => setSidecarFormat(v)}
-                options={[
-                  { value: 'none', label: 'No sidecar file' },
-                  { value: 'srt', label: 'Download .SRT sidecar' },
-                  { value: 'vtt', label: 'Download .VTT sidecar' },
-                  { value: 'both', label: 'Download both .SRT and .VTT' },
-                ]}
-              />
-            </Field>
-            <div className="field-hint">
-              Burned-in captions are part of the frame; standalone PNG, WAV, SRT/VTT, and project JSON downloads live in the{' '}
-              <strong>Standalone downloads</strong> tab above.
-            </div>
-          </Panel>
-
-          <Panel title="Budget" bodyClassName="stack">
-            {budget ? (
-              <>
-                <div className="row" style={{ gap: 20, flexWrap: 'wrap' }}>
-                  <Stat label="Duration" value={`${durationSeconds.toFixed(1)}s`} />
-                  <Stat label="Frame rate" value={`${resolvedOutput.fps} fps`} />
-                  <Stat label="Video" value={`${budget.videoMbps.toFixed(2)} Mbps`} />
-                  <Stat label="Audio" value={`${budget.audioMbps.toFixed(2)} Mbps`} />
-                  <Stat label="Estimated size" value={formatBytes(budget.estimatedBytes)} hint="VBR lands near, not on, the target" />
-                  <Stat label="Bits/pixel" value={budget.bitsPerPixel.toFixed(3)} />
-                </div>
-                <div className="field-hint mono">
-                  {budget.totalMbps.toFixed(2)} Mbps × {durationSeconds.toFixed(0)}s ÷ 8 ÷ 1000 ≈ {formatBytes(budget.estimatedBytes)} (decimal GB = Mbps × s / 8000)
-                </div>
-                {budget.warnings.map((warning, index) => (
-                  <div key={index} className="warn-card">
-                    {warning}
+                {presetId === CUSTOM_ID && (
+                  <div className="stack" style={{ gap: 10, borderTop: '1px solid var(--line)', paddingTop: 12 }}>
+                    <div className="row" style={{ gap: 8 }}>
+                      <NumberField label="Width" value={width} min={320} max={7680} step={2} onChange={setWidth} />
+                      <NumberField label="Height" value={height} min={180} max={4320} step={2} onChange={setHeight} />
+                    </div>
+                    <div className="row" style={{ gap: 8 }}>
+                      <NumberField label="Video Mbps" value={videoMbps} min={0.5} max={100} step={0.5} onChange={setVideoMbps} />
+                      <NumberField label="Audio kbps" value={audioKbps} min={64} max={320} step={16} onChange={setAudioKbps} />
+                    </div>
+                    <Field label="Or target file size (decimal GB)" hint="Leave blank to use the bitrate above.">
+                      <input
+                        className="input"
+                        value={targetGb}
+                        onChange={(event) => setTargetGb(event.target.value.replace(/[^\d.]/g, ''))}
+                        placeholder="e.g. 1.8"
+                        inputMode="decimal"
+                      />
+                    </Field>
                   </div>
-                ))}
-                {budget.plausible && <Badge tone="ok">No budget warnings</Badge>}
-              </>
-            ) : null}
-            <div className="field-hint">
-              The 4–12 Mbps range is a starting point for 4K talking-head/terminal content, not a guarantee. Check a
-              sample before exporting a long lesson.
-            </div>
+                )}
+
+                <Field
+                  label="Subtitle sidecar file (independent of burned-in captions)"
+                  hint="Choose whether to also download an editable .SRT or .VTT sidecar alongside the video."
+                >
+                  <Select
+                    aria-label="Subtitle sidecar format"
+                    value={sidecarFormat}
+                    onChange={(v) => setSidecarFormat(v)}
+                    options={[
+                      { value: 'none', label: 'No sidecar file' },
+                      { value: 'srt', label: 'Download .SRT sidecar' },
+                      { value: 'vtt', label: 'Download .VTT sidecar' },
+                      { value: 'both', label: 'Download both .SRT and .VTT' },
+                    ]}
+                  />
+                </Field>
+
+                {budget ? (
+                  <div className="hint-card stack" style={{ gap: 8 }}>
+                    <div className="row" style={{ gap: 16, flexWrap: 'wrap' }}>
+                      <Stat label="Duration" value={`${durationSeconds.toFixed(1)}s`} />
+                      <Stat label="Frame rate" value={`${resolvedOutput.fps} fps`} />
+                      <Stat label="Video" value={`${Number(budget.videoMbps.toFixed(2))} Mbps`} />
+                      <Stat label="Audio" value={`${Number(budget.audioMbps.toFixed(2))} Mbps`} />
+                      <Stat label="Estimated size" value={`~${formatBytes(budget.estimatedBytes)}`} hint="VBR estimate" />
+                      <Stat label="Bits/pixel" value={budget.bitsPerPixel.toFixed(3)} />
+                    </div>
+                    <div className="field-hint mono">
+                      {budget.totalMbps.toFixed(2)} Mbps × {durationSeconds.toFixed(0)}s ÷ 8 ÷ 1000 ≈ {formatBytes(budget.estimatedBytes)} (estimated size)
+                    </div>
+                    {budget.warnings.map((warning, index) => (
+                      <div key={index} className="warn-card">
+                        {warning}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </details>
           </Panel>
         </div>
 
@@ -859,8 +897,8 @@ export function ExportPage() {
               data-testid="export-output-summary"
             >
               {resolvedOutput.height}p ({resolvedOutput.width}×{resolvedOutput.height}) · {resolvedOutput.fps} fps ·{' '}
-              {resolvedOutput.container.toUpperCase()} · {formatDuration(durationSeconds)} · ~
-              {formatBytes(budget?.estimatedBytes ?? 0)}
+              {Number((resolvedOutput.videoBitrate / 1e6).toFixed(1))} Mbps · {resolvedOutput.container.toUpperCase()} ·{' '}
+              {formatDuration(durationSeconds)} · Estimated size: ~{formatBytes(budget?.estimatedBytes ?? 0)}
               {activeSegment ? ` · Chapter: ${activeSegment.label}` : ' · Full timeline'}
               {resolvedOutput.width < resolvedOutput.height ? ' · Vertical 9:16' : ' · Landscape'}
             </div>
@@ -939,6 +977,9 @@ export function ExportPage() {
                   <Button size="sm" variant="ghost" onClick={() => session.setRoute('edit')}>
                     Open the editor
                   </Button>
+                  <Button size="sm" variant="ghost" disabled title="Add a clip first to encode a 6-second test sample">
+                    Test 6 seconds
+                  </Button>
                 </div>
                 <input
                   ref={timelineImport}
@@ -966,10 +1007,15 @@ export function ExportPage() {
                   onClick={() => void runExport()}
                   disabled={!session.workspace}
                 >
-                  Export {resolvedOutput.width}×{resolvedOutput.height} · {resolvedOutput.fps} fps · {resolvedOutput.container.toUpperCase()}
+                  Export video ({resolvedOutput.width}×{resolvedOutput.height} · {resolvedOutput.fps} fps)
                 </Button>
-                <Button size="sm" onClick={() => void runSample()} disabled={sampleBusy}>
-                  {sampleBusy ? 'Encoding 6s sample…' : 'Encode a 6s sample'}
+                <Button
+                  size="sm"
+                  onClick={() => void runSample()}
+                  disabled={sampleBusy}
+                  title="Encode a 6-second sample at the selected resolution and bitrate to inspect terminal text sharpness"
+                >
+                  {sampleBusy ? 'Encoding 6s test…' : 'Test 6 seconds'}
                 </Button>
               </div>
             )}

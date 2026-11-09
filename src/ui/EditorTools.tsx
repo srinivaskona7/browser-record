@@ -27,17 +27,11 @@ import { SvgIcon, type IconName } from './icons';
 
 export const EDITOR_TOOLS: ReadonlyArray<{ id: string; label: string; iconName: IconName }> = [
   { id: 'media', label: 'Media', iconName: 'uploads' },
-  { id: 'text', label: 'Text', iconName: 'text' },
-  { id: 'captions', label: 'Captions', iconName: 'captions' },
+  { id: 'text', label: 'Text & captions', iconName: 'text' },
   { id: 'audio', label: 'Audio', iconName: 'audio' },
-  { id: 'voiceover', label: 'Voiceover', iconName: 'mic' },
-  { id: 'presenter', label: 'Bubble', iconName: 'camera' },
-  { id: 'adjust', label: 'Adjust', iconName: 'adjust' },
-  { id: 'filters', label: 'Filters', iconName: 'filters' },
+  { id: 'presenter', label: 'Camera', iconName: 'camera' },
   { id: 'effects', label: 'Effects', iconName: 'effects' },
-  { id: 'transitions', label: 'Transitions', iconName: 'transitions' },
-  { id: 'sfx', label: 'Sound FX', iconName: 'sound' },
-  { id: 'more', label: 'Overlays', iconName: 'more' },
+  { id: 'more', label: 'More', iconName: 'more' },
 ] as const;
 
 export type EditorTool =
@@ -182,16 +176,44 @@ function renderCatalogPreview(
   );
 }
 
-export function EditorToolLibrary({ tool, project, clip }: { tool: EditorTool; project: Project; clip: Clip | null }) {
+export function EditorToolLibrary({
+  tool: propTool,
+  project,
+  clip,
+  onOpenVoiceover,
+}: {
+  tool: EditorTool;
+  project: Project;
+  clip: Clip | null;
+  onOpenVoiceover?: () => void;
+}) {
   const [query, setQuery] = useState('');
   const [fontErr, setFontErr] = useState<string | null>(null);
+  const [effectsSubTab, setEffectsSubTab] = useState<'effects' | 'filters' | 'transitions' | 'adjust'>('effects');
+  const [audioSubTab, setAudioSubTab] = useState<'audio' | 'sfx'>('audio');
+  const tool: EditorTool =
+    propTool === 'effects'
+      ? effectsSubTab
+      : propTool === 'audio'
+        ? audioSubTab
+        : propTool;
   const apply = useEditor((s) => s.apply);
   const playhead = useEditor((s) => s.playheadTicks);
   const showSafeAreas = useEditor((s) => s.showSafeAreas);
   const setShowSafeAreas = useEditor((s) => s.setShowSafeAreas);
   const compareOriginal = useEditor((s) => s.compareOriginal);
   const setCompareOriginal = useEditor((s) => s.setCompareOriginal);
-  const title = EDITOR_TOOLS.find((t) => t.id === tool)?.label ?? 'Tools';
+  const title =
+    EDITOR_TOOLS.find((t) => t.id === propTool)?.label ??
+    (tool === 'filters'
+      ? 'Filters'
+      : tool === 'transitions'
+        ? 'Transitions'
+        : tool === 'adjust'
+          ? 'Adjust'
+          : tool === 'sfx'
+            ? 'Sound FX'
+            : 'Tools');
   const catalog =
     tool === 'effects'
       ? VIDEO_EFFECTS
@@ -398,56 +420,9 @@ export function EditorToolLibrary({ tool, project, clip }: { tool: EditorTool; p
           {fontErr && <div className="warn-card">{fontErr}</div>}
         </div>
       )}
-      {tool === 'effects' && (
+      {(propTool === 'effects' || tool === 'effects' || tool === 'filters' || tool === 'transitions' || tool === 'adjust') && (
         <div className="stack" style={{ gap: 8 }}>
-          <span className="field-label">1 · Terminal Zoom / Pan</span>
-          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-            <Button
-              size="sm"
-              disabled={!clip}
-              onClick={() =>
-                clip &&
-                apply('Zoom 1.5x at playhead', (p) =>
-                  ops.updateClipDeep(ops.addZoomHighlight(p, clip.id, playhead, 3 * TICKS_PER_SECOND, 1.5), clip.id, {
-                    transform: { scale: 1.5 },
-                  }),
-                )
-              }
-            >
-              + Zoom 1.5×
-            </Button>
-            <Button
-              size="sm"
-              disabled={!clip}
-              onClick={() =>
-                clip &&
-                apply('Zoom 2.0x at playhead', (p) =>
-                  ops.updateClipDeep(ops.addZoomHighlight(p, clip.id, playhead, 3 * TICKS_PER_SECOND, 2.0), clip.id, {
-                    transform: { scale: 2.0 },
-                  }),
-                )
-              }
-            >
-              + Zoom 2.0×
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={!clip}
-              onClick={() =>
-                clip &&
-                apply('Reset zoom', (p) =>
-                  ops.updateClip(p, clip.id, {
-                    transform: { ...clip.transform, scale: 1, x: 0.5, y: 0.5 },
-                    keyframes: clip.keyframes.filter((k) => k.target !== 'zoom'),
-                  }),
-                )
-              }
-            >
-              Reset 1.0×
-            </Button>
-          </div>
-          <span className="field-label">2 · Privacy Mask (secrets &amp; tokens)</span>
+          <span className="field-label">1 · Privacy Mask (secrets &amp; tokens)</span>
           <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
             <Button
               size="sm"
@@ -495,8 +470,52 @@ export function EditorToolLibrary({ tool, project, clip }: { tool: EditorTool; p
               + Solid cover
             </Button>
           </div>
-          <span className="field-label">3 · Callout &amp; Arrow</span>
+          <span className="field-label">2 · Terminal Zoom / Pan &amp; Callouts</span>
           <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+            <Button
+              size="sm"
+              disabled={!clip}
+              onClick={() =>
+                clip &&
+                apply('Zoom 1.5x at playhead', (p) =>
+                  ops.updateClipDeep(ops.addZoomHighlight(p, clip.id, playhead, 3 * TICKS_PER_SECOND, 1.5), clip.id, {
+                    transform: { scale: 1.5 },
+                  }),
+                )
+              }
+            >
+              + Zoom 1.5×
+            </Button>
+            <Button
+              size="sm"
+              disabled={!clip}
+              onClick={() =>
+                clip &&
+                apply('Zoom 2.0x at playhead', (p) =>
+                  ops.updateClipDeep(ops.addZoomHighlight(p, clip.id, playhead, 3 * TICKS_PER_SECOND, 2.0), clip.id, {
+                    transform: { scale: 2.0 },
+                  }),
+                )
+              }
+            >
+              + Zoom 2.0×
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={!clip}
+              onClick={() =>
+                clip &&
+                apply('Reset zoom', (p) =>
+                  ops.updateClip(p, clip.id, {
+                    transform: { ...clip.transform, scale: 1, x: 0.5, y: 0.5 },
+                    keyframes: clip.keyframes.filter((k) => k.target !== 'zoom'),
+                  }),
+                )
+              }
+            >
+              Reset 1.0×
+            </Button>
             <Button
               size="sm"
               onClick={() => {
@@ -530,7 +549,53 @@ export function EditorToolLibrary({ tool, project, clip }: { tool: EditorTool; p
               + Arrow
             </Button>
           </div>
-          <span className="field-label" style={{ marginTop: 4 }}>Video effects catalog</span>
+          {propTool === 'effects' && (
+            <div className="row" role="tablist" aria-label="Effects category" style={{ gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+              {(
+                [
+                  ['effects', 'Effects'],
+                  ['filters', 'Filters'],
+                  ['transitions', 'Transitions'],
+                  ['adjust', 'Color & LUTs'],
+                ] as const
+              ).map(([id, label]) => (
+                <Button
+                  key={id}
+                  size="sm"
+                  variant={effectsSubTab === id ? 'primary' : 'ghost'}
+                  aria-pressed={effectsSubTab === id}
+                  onClick={() => setEffectsSubTab(id)}
+                >
+                  {label}
+                </Button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {propTool === 'audio' && (
+        <div className="row" role="tablist" aria-label="Audio category" style={{ gap: 4, flexWrap: 'wrap' }}>
+          <Button
+            size="sm"
+            variant={audioSubTab === 'audio' ? 'primary' : 'ghost'}
+            aria-pressed={audioSubTab === 'audio'}
+            onClick={() => setAudioSubTab('audio')}
+          >
+            Audio &amp; Voice
+          </Button>
+          <Button
+            size="sm"
+            variant={audioSubTab === 'sfx' ? 'primary' : 'ghost'}
+            aria-pressed={audioSubTab === 'sfx'}
+            onClick={() => setAudioSubTab('sfx')}
+          >
+            Sound FX
+          </Button>
+          {onOpenVoiceover && (
+            <Button size="sm" variant="primary" onClick={onOpenVoiceover}>
+              🎙 Record voiceover…
+            </Button>
+          )}
         </div>
       )}
       {tool === 'audio' ? (

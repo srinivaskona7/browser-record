@@ -273,12 +273,12 @@ it('opens Document Picture-in-Picture with camera + controls, toggles Hide previ
   const delayedStreamPromise = new Promise<MediaStream>((r) => {
     resolveDelayedStream = r;
   });
-  let updatedShape: string | undefined;
+  let micToggled = 0;
   const asyncSession = await openFloatingCamera({
     streamPromise: delayedStreamPromise,
     presenter: defaultPresenter(),
-    onUpdatePresenter: (patch) => {
-      updatedShape = patch.shape;
+    onToggleMic: () => {
+      micToggled += 1;
     },
   });
   expect(requestWindowCalledWhileStreamPending).toBe(true);
@@ -289,11 +289,13 @@ it('opens Document Picture-in-Picture with camera + controls, toggles Hide previ
   const pipVideo = pipDoc.querySelector('video') as HTMLVideoElement;
   expect(pipVideo.srcObject).toBe(delayedStream);
 
-  // Cycle bubble shape inside floating PiP window
-  const shapeBtn = [...pipDoc.querySelectorAll('button')].find((b) => b.textContent?.startsWith('Shape:'));
-  expect(shapeBtn).toBeDefined();
-  shapeBtn!.click();
-  expect(updatedShape).toBe('rounded');
+  // Verify Mute, Hide preview, Restart, and Discard live inside the More menu
+  const moreGroup = pipDoc.querySelector('[aria-label="More floating controls"]');
+  expect(moreGroup).not.toBeNull();
+  const moreButtons = [...moreGroup!.querySelectorAll('button')].map((b) => b.textContent);
+  expect(moreButtons).toEqual(['Mute', 'Hide preview', '↻ Restart', 'Discard']);
+  ([...moreGroup!.querySelectorAll('button')].find((b) => b.textContent === 'Mute') as HTMLButtonElement).click();
+  expect(micToggled).toBe(1);
   await asyncSession.close();
 
   delete window.documentPictureInPicture;

@@ -106,7 +106,7 @@ export function App() {
           <span>Browser 4K Studio</span>
         </div>
         <nav className="nav-tabs" aria-label="Main">
-          {ROUTES.map((item) => (
+          {ROUTES.filter((item) => item.id !== 'diagnostics').map((item) => (
             <button
               key={item.id}
               type="button"
@@ -132,22 +132,47 @@ export function App() {
           <Button size="sm" variant="ghost" onClick={() => void saveNow()} disabled={!project || !dirty}>
             Save
           </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => void performHardRefresh()}
-            aria-label="Hard refresh and clear cache"
-            title={`Clear cached assets and reload (${APP_BUILD_ID})`}
-            data-testid="hard-refresh-btn"
-          >
-            ↻ Refresh
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => setAboutOpen(true)} aria-label="About and walkthrough" title="Features and walkthrough">
-            i
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label="Toggle colour theme">
-            {theme === 'dark' ? '☾ Dark' : '☀ Light'}
-          </Button>
+          <details className="rec-more-menu" data-testid="app-menu">
+            <summary className="btn btn-ghost btn-sm" aria-label="App menu">
+              Menu ▾
+            </summary>
+            <div className="rec-more-popover" role="menu" aria-label="Application menu">
+              <Button
+                size="sm"
+                variant={route === 'diagnostics' ? 'primary' : 'ghost'}
+                onClick={() => setRoute('diagnostics')}
+              >
+                Diagnostics
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => void performHardRefresh()}
+                aria-label="Hard refresh and clear cache"
+                title={`Clear cached assets and reload (${APP_BUILD_ID})`}
+                data-testid="hard-refresh-btn"
+              >
+                ↻ Refresh cache
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setAboutOpen(true)}
+                aria-label="About and walkthrough"
+                title="Features and walkthrough"
+              >
+                About &amp; walkthrough
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                aria-label="Toggle colour theme"
+              >
+                {theme === 'dark' ? '☾ Dark theme' : '☀ Light theme'}
+              </Button>
+            </div>
+          </details>
         </div>
       </header>
       <AboutDialog open={aboutOpen} onClose={() => setAboutOpen(false)} />
