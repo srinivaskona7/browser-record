@@ -25,6 +25,11 @@ import {
 import { Badge, Button, Field, Panel, Select, Slider, Toggle } from './components';
 import { DeleteProjectDialog } from './DeleteProjectDialog';
 import { ColorWheelsPanel, HslBandsPanel, ToneCurvePanel } from './ColorGrading';
+import {
+  PRESENTER_BUBBLE_EFFECTS,
+  PRESENTER_BUBBLE_SHAPES,
+  cornerFromNormalizedCenter,
+} from '../render/layout';
 
 const InspectorFocus = createContext<{ section: string; query: string }>({ section: 'All', query: '' });
 
@@ -355,6 +360,26 @@ export function Inspector({
               ]}
             />
           </Field>
+          <Field label="Shape">
+            <Select
+              aria-label="Presenter bubble shape"
+              value={clip.presenter!.shape}
+              onChange={(value) => patch('Bubble shape', { presenter: { shape: value } })}
+              options={PRESENTER_BUBBLE_SHAPES.map((s) => ({ value: s.id, label: s.label }))}
+            />
+          </Field>
+          <Field label="Bubble effect">
+            <Select
+              aria-label="Presenter bubble effect"
+              value={clip.presenter!.effect ?? 'none'}
+              onChange={(value) =>
+                patch('Bubble effect', {
+                  presenter: { effect: value as NonNullable<NonNullable<Clip['presenter']>['effect']> },
+                })
+              }
+              options={PRESENTER_BUBBLE_EFFECTS.map((fx) => ({ value: fx.id, label: fx.label }))}
+            />
+          </Field>
           <Field label="Corner">
             <Select
               value={clip.presenter!.corner}
@@ -367,21 +392,104 @@ export function Inspector({
               ]}
             />
           </Field>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }} role="group" aria-label="Presenter quick placement">
+            {(
+              [
+                { id: 'top-left', label: '↖ Top-L' },
+                { id: 'top-right', label: '↗ Top-R' },
+                { id: 'bottom-left', label: '↙ Bot-L' },
+                { id: 'bottom-right', label: '↘ Bot-R' },
+              ] as const
+            ).map((place) => (
+              <Button
+                key={place.id}
+                size="sm"
+                variant={
+                  clip.presenter!.corner === place.id &&
+                  typeof clip.presenter!.x !== 'number' &&
+                  typeof clip.presenter!.y !== 'number'
+                    ? 'primary'
+                    : 'ghost'
+                }
+                onClick={() => patch('Bubble corner', { presenter: { corner: place.id, x: undefined, y: undefined } })}
+              >
+                {place.label}
+              </Button>
+            ))}
+            <Button
+              size="sm"
+              variant={
+                typeof clip.presenter!.x === 'number' &&
+                Math.abs(clip.presenter!.x - 0.5) < 0.03 &&
+                typeof clip.presenter!.y === 'number' &&
+                Math.abs(clip.presenter!.y - 0.5) < 0.03
+                  ? 'primary'
+                  : 'ghost'
+              }
+              onClick={() => patch('Center presenter bubble', { presenter: { x: 0.5, y: 0.5 } })}
+            >
+              ⊕ Center
+            </Button>
+          </div>
+          <Slider
+            label="Position X"
+            min={0.05}
+            max={0.95}
+            step={0.01}
+            value={
+              typeof clip.presenter!.x === 'number'
+                ? clip.presenter!.x
+                : clip.presenter!.corner === 'top-left' || clip.presenter!.corner === 'bottom-left'
+                  ? 0.16
+                  : 0.84
+            }
+            format={(v) => `${Math.round(v * 100)}%`}
+            onChange={(value) => {
+              const curY =
+                typeof clip.presenter!.y === 'number'
+                  ? clip.presenter!.y
+                  : clip.presenter!.corner === 'top-left' || clip.presenter!.corner === 'top-right'
+                    ? 0.18
+                    : 0.82;
+              patch('Bubble position X', {
+                presenter: {
+                  x: value,
+                  y: curY,
+                  corner: cornerFromNormalizedCenter(value, curY),
+                },
+              });
+            }}
+          />
+          <Slider
+            label="Position Y"
+            min={0.05}
+            max={0.95}
+            step={0.01}
+            value={
+              typeof clip.presenter!.y === 'number'
+                ? clip.presenter!.y
+                : clip.presenter!.corner === 'top-left' || clip.presenter!.corner === 'top-right'
+                  ? 0.18
+                  : 0.82
+            }
+            format={(v) => `${Math.round(v * 100)}%`}
+            onChange={(value) => {
+              const curX =
+                typeof clip.presenter!.x === 'number'
+                  ? clip.presenter!.x
+                  : clip.presenter!.corner === 'top-left' || clip.presenter!.corner === 'bottom-left'
+                    ? 0.16
+                    : 0.84;
+              patch('Bubble position Y', {
+                presenter: {
+                  x: curX,
+                  y: value,
+                  corner: cornerFromNormalizedCenter(curX, value),
+                },
+              });
+            }}
+          />
           <Slider label="Bubble size" min={0.1} max={0.7} step={0.01} value={clip.presenter!.size} format={(v) => `${Math.round(v * 100)}%`} onChange={(value) => patch('Bubble size', { presenter: { size: value } })} />
-          <Field label="Shape">
-            <Select
-              value={clip.presenter!.shape}
-              onChange={(value) => patch('Bubble shape', { presenter: { shape: value } })}
-              options={[
-                { value: 'circle', label: 'Circle' },
-                { value: 'rounded', label: 'Rounded rectangle' },
-                { value: 'square', label: 'Square' },
-                { value: 'portrait', label: 'Portrait card (3:4)' },
-                { value: 'pill', label: 'Pill (stadium)' },
-                { value: 'hexagon', label: 'Hexagon' },
-              ]}
-            />
-          </Field>
           <Slider label="Shadow" min={0} max={60} step={1} value={clip.presenter!.shadow} format={(v) => (v === 0 ? 'none' : `${v}px`)} onChange={(value) => patch('Bubble shadow', { presenter: { shadow: value } })} />
           <Slider label="Outline" min={0} max={24} step={1} value={clip.presenter!.border} format={(v) => (v === 0 ? 'none' : `${v}px`)} onChange={(value) => patch('Bubble outline', { presenter: { border: value } })} />
           {clip.presenter!.border > 0 && (

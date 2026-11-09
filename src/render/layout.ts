@@ -1,4 +1,54 @@
-import type { PresenterProps, Transform } from '../project/types';
+import type { PresenterBubbleEffect, PresenterProps, Transform } from '../project/types';
+
+export const PRESENTER_BUBBLE_SHAPES: ReadonlyArray<{
+  id: PresenterProps['shape'];
+  label: string;
+  shortLabel: string;
+}> = [
+  { id: 'circle', label: 'Circle', shortLabel: 'Circle' },
+  { id: 'square', label: 'Square', shortLabel: 'Square' },
+  { id: 'rounded', label: 'Rounded rectangle', shortLabel: 'Rounded' },
+  { id: 'portrait', label: 'Portrait card (3:4)', shortLabel: 'Portrait' },
+  { id: 'pill', label: 'Pill (stadium)', shortLabel: 'Pill' },
+  { id: 'hexagon', label: 'Hexagon', shortLabel: 'Hex' },
+];
+
+export const PRESENTER_BUBBLE_EFFECTS: ReadonlyArray<{
+  id: PresenterBubbleEffect;
+  label: string;
+  shortLabel: string;
+}> = [
+  { id: 'none', label: 'Natural (none)', shortLabel: 'None' },
+  { id: 'warm-glow', label: 'Warm studio glow', shortLabel: 'Warm' },
+  { id: 'cinema-teal', label: 'Cinema teal', shortLabel: 'Teal' },
+  { id: 'bw-contrast', label: 'Noir B&W contrast', shortLabel: 'B&W' },
+  { id: 'soft-focus', label: 'Soft studio focus', shortLabel: 'Soft' },
+  { id: 'neon-ring', label: 'Neon cyber ring', shortLabel: 'Neon' },
+];
+
+export function presenterEffectFilter(effect?: PresenterBubbleEffect): string {
+  switch (effect) {
+    case 'warm-glow':
+      return 'saturate(1.18) contrast(1.06) sepia(0.14) brightness(1.04)';
+    case 'cinema-teal':
+      return 'contrast(1.12) saturate(1.14) hue-rotate(-8deg)';
+    case 'bw-contrast':
+      return 'grayscale(1) contrast(1.22) brightness(1.03)';
+    case 'soft-focus':
+      return 'saturate(1.06) brightness(1.05) contrast(0.96)';
+    case 'neon-ring':
+      return 'contrast(1.14) saturate(1.26)';
+    default:
+      return 'none';
+  }
+}
+
+export function cornerFromNormalizedCenter(x: number, y: number): PresenterProps['corner'] {
+  if (x < 0.5 && y < 0.5) return 'top-left';
+  if (x >= 0.5 && y < 0.5) return 'top-right';
+  if (x < 0.5 && y >= 0.5) return 'bottom-left';
+  return 'bottom-right';
+}
 
 export interface Size {
   width: number;

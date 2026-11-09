@@ -1,4 +1,5 @@
 import type { PresenterProps } from '../project/types';
+import { presenterEffectFilter } from '../render/layout';
 
 export type FloatingCameraMode = 'document-pip' | 'video-pip' | 'unsupported';
 
@@ -268,15 +269,22 @@ function applyPresenterStyleToDocPip(
             ? '20px'
             : '10px';
   const ringColor =
-    stage === 'recording' || stage === 'countdown'
-      ? '#ff5c7c'
-      : stage === 'paused'
-        ? '#f59e0b'
-        : presenter.borderColor || '#c3adff';
+    presenter.effect === 'neon-ring'
+      ? '#38bdf8'
+      : stage === 'recording' || stage === 'countdown'
+        ? '#ff5c7c'
+        : stage === 'paused'
+          ? '#f59e0b'
+          : presenter.borderColor || '#c3adff';
   const borderWidth = Math.max(3, presenter.border || 3);
   container.style.border = presenter.shape === 'hexagon' ? 'none' : `${borderWidth}px solid ${ringColor}`;
-  container.style.boxShadow = `0 0 0 2px rgba(17, 16, 24, 0.85), 0 14px 34px rgba(0, 0, 0, 0.65)`;
+  container.style.boxShadow =
+    presenter.effect === 'neon-ring'
+      ? '0 0 22px rgba(56, 189, 248, 0.7), 0 14px 34px rgba(0, 0, 0, 0.65)'
+      : `0 0 0 2px rgba(17, 16, 24, 0.85), 0 14px 34px rgba(0, 0, 0, 0.65)`;
   video.style.transform = presenter.mirror ? 'scaleX(-1)' : 'none';
+  const fx = presenterEffectFilter(presenter.effect);
+  video.style.filter = fx !== 'none' ? fx : 'none';
 }
 
 /**

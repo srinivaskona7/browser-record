@@ -259,6 +259,14 @@ export interface ArrowProps {
   width: number;
 }
 
+export type PresenterBubbleEffect =
+  | 'none'
+  | 'warm-glow'
+  | 'cinema-teal'
+  | 'bw-contrast'
+  | 'soft-focus'
+  | 'neon-ring';
+
 export interface PresenterProps {
   /** How the camera clip is presented when composited onto the screen. */
   layout: 'bubble' | 'side-by-side' | 'full' | 'screen-only';
@@ -268,9 +276,11 @@ export interface PresenterProps {
   margin: number;
   /** 'portrait' is a 3:4 rounded card; 'pill' is a 4:3 stadium pill; 'hexagon' is a 6-sided polygon; others are 1:1. */
   shape: 'circle' | 'rounded' | 'square' | 'portrait' | 'pill' | 'hexagon';
-  /** Optional custom center position in normalized canvas coordinates (0..1) set by canvas drag. */
+  /** Optional custom center position in normalized canvas coordinates (0..1) set by canvas/bubble drag. */
   x?: number;
   y?: number;
+  /** Optional visual look/effect applied directly to the camera bubble in recording, PiP, preview, and export. */
+  effect?: PresenterBubbleEffect;
   mirror: boolean;
   chromaKey: boolean;
   shadow: number;

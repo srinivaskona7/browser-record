@@ -613,7 +613,14 @@ export function updateClipDeep(
       ...(patch.pulse && current.pulse ? { pulse: { ...current.pulse, ...patch.pulse } } : {}),
       ...(patch.countdown && current.countdown ? { countdown: { ...current.countdown, ...patch.countdown } } : {}),
       ...(patch.presenter
-        ? { presenter: { ...(current.presenter ?? { layout: 'bubble' }), ...patch.presenter } as Clip['presenter'] }
+        ? (() => {
+            const merged = { ...(current.presenter ?? { layout: 'bubble' }), ...patch.presenter } as NonNullable<
+              Clip['presenter']
+            >;
+            if ('x' in patch.presenter && patch.presenter.x === undefined) delete merged.x;
+            if ('y' in patch.presenter && patch.presenter.y === undefined) delete merged.y;
+            return { presenter: merged };
+          })()
         : {}),
       ...(patch.transitionIn ? { transitionIn: { ...current.transitionIn, ...patch.transitionIn } } : {}),
       ...(patch.transitionOut ? { transitionOut: { ...current.transitionOut, ...patch.transitionOut } } : {}),
@@ -3353,9 +3360,12 @@ export function addBeatMarkers(project: Project, bpm = 120, maxMarkers = 32): Pr
 export function resetPresenterPosition(project: Project, clipId: string): Project {
   const clip = findClip(project, clipId);
   if (!clip || !clip.presenter) return project;
+  const { x: _x, y: _y, ...restPresenter } = clip.presenter;
+  void _x;
+  void _y;
   return updateClip(project, clipId, {
     presenter: {
-      ...clip.presenter,
+      ...restPresenter,
       corner: 'bottom-right',
       size: 0.24,
       margin: 0.03,

@@ -26,6 +26,7 @@ const button = (text: string) => [...host.querySelectorAll('button')].find((b) =
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
   useEditor.getState().loadProject(createProject({ name: 'Flow test' }));
@@ -43,7 +44,13 @@ beforeEach(() => {
   }
   vi.stubGlobal('MediaStream', FakeStream);
   vi.stubGlobal('MediaRecorder', { isTypeSupported: () => true });
-  Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getDisplayMedia: vi.fn(async () => new FakeStream()) } });
+  Object.defineProperty(navigator, 'mediaDevices', {
+    configurable: true,
+    value: {
+      getDisplayMedia: vi.fn(async () => new FakeStream()),
+      getUserMedia: vi.fn(async () => new FakeStream()),
+    },
+  });
   vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
 });
 afterEach(async () => { await act(() => root.unmount()); host.remove(); useEditor.getState().closeProject(); useSession.setState({ workspace: null, projectFolder: null }); vi.unstubAllGlobals(); });
@@ -486,6 +493,123 @@ it('supports bubble-layout hover overlay controls, Teleprompter sync in Document
   await act(async () => mediaHandlers.get('stop')!());
   expect(capture.stop).toHaveBeenCalledTimes(1);
 });
+
+it('renders standalone CameraBubble with live shape/effect/placement options during recording, compact horizontal stealth record panel with timer, and editor presenter bubble parity', async () => {
+  const { Inspector } = await import('../src/ui/Inspector');
+  const { createClip, defaultPresenter } = await import('../src/project/factory');
+  const { presenterEffectFilter } = await import('../src/render/layout');
+
+  expect(presenterEffectFilter('warm-glow')).toContain('saturate');
+  expect(presenterEffectFilter('neon-ring')).toContain('contrast');
+  expect(presenterEffectFilter('none')).toBe('none');
+
+  result.assets = [
+    ...result.assets,
+    {
+      id: 'camera_asset',
+      kind: 'video',
+      name: 'Camera',
+      path: 'recordings/take_test/camera.webm',
+      origin: 'recorded',
+      durationTicks: 5 * TICKS_PER_SECOND,
+      createdAt: new Date().toISOString(),
+    } as TakeResult['assets'][number],
+  ];
+
+  await act(async () => root.render(<RecordPage />));
+
+  // Toggle small horizontal stealth record panel and verify recording timer is shown
+  await act(async () => button('Stealth panel').click());
+  const stealthPanel = host.querySelector('[data-testid="stealth-record-panel"]') as HTMLElement;
+  expect(stealthPanel).not.toBeNull();
+  const stealthTimer = host.querySelector('[data-testid="stealth-panel-timer"]') as HTMLElement;
+  expect(stealthTimer?.textContent).toBe('00:00:00');
+  // Full split-grid is hidden while stealth mode small horizontal panel is active
+  expect(host.querySelector('.split-grid')).toBeNull();
+
+  // Start recording directly from the stealth horizontal panel (with Camera enabled so CameraBubble mounts)
+  await act(async () => {
+    const exitStealthBtn = button('Exit stealth');
+    exitStealthBtn.click();
+  });
+  await act(() => {
+    checkbox('Microphone').click();
+    const countdown = host.querySelector('select[aria-label="Recording countdown"]') as HTMLSelectElement;
+    countdown.value = '0';
+    countdown.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await act(async () => button('Stealth panel').click());
+  await act(async () => button('Record').click());
+
+  // Both the stealth horizontal panel timer and the horizontal recording dock timer are active,
+  // and the standalone CameraBubble component is rendered separately
+  expect(host.querySelector('[data-testid="stealth-record-panel"].is-recording')).not.toBeNull();
+  expect(host.querySelector('.rec-dock.rec-dock-stealth')).not.toBeNull();
+  expect(host.querySelector('[data-testid="rec-dock-timer"]')).not.toBeNull();
+
+  const bubbleWidget = host.querySelector('[data-testid="camera-bubble"]') as HTMLElement;
+  expect(bubbleWidget).not.toBeNull();
+  expect(bubbleWidget.getAttribute('data-shape')).toBe('circle');
+  expect(bubbleWidget.getAttribute('data-effect')).toBe('none');
+
+  // Open CameraBubble options popover while recording and switch shape to Square, effect to Neon Ring, and placement to Top-Left
+  const optionsToggle = host.querySelector('button[aria-label="Bubble shape and effects"]') as HTMLButtonElement;
+  await act(async () => optionsToggle.click());
+  expect(host.querySelector('[aria-label="Camera bubble options"]')).not.toBeNull();
+
+  const squareBtn = Array.from(host.querySelectorAll('.camera-bubble-pill')).find(
+    (el) => el.textContent?.trim() === 'Square',
+  ) as HTMLButtonElement;
+  await act(async () => squareBtn.click());
+  expect(bubbleWidget.getAttribute('data-shape')).toBe('square');
+
+  const neonEffectBtn = Array.from(host.querySelectorAll('.camera-bubble-pill')).find(
+    (el) => el.textContent?.trim() === 'Neon',
+  ) as HTMLButtonElement;
+  await act(async () => neonEffectBtn.click());
+  expect(bubbleWidget.getAttribute('data-effect')).toBe('neon-ring');
+
+  const topLeftPlaceBtn = host.querySelector('button[aria-label="Move bubble to top-left"]') as HTMLButtonElement;
+  await act(async () => topLeftPlaceBtn.click());
+  expect(bubbleWidget.getAttribute('data-corner')).toBe('top-left');
+
+  const centerPlaceBtn = Array.from(host.querySelectorAll('.camera-bubble-pill')).find(
+    (el) => el.textContent?.includes('Center'),
+  ) as HTMLButtonElement;
+  await act(async () => centerPlaceBtn.click());
+
+  // Stop recording from the stealth panel
+  await act(async () => {
+    const stopBtn = host.querySelector('[data-testid="stealth-record-panel"] button.btn-danger') as HTMLButtonElement;
+    stopBtn.click();
+  });
+
+  // Verify the inserted presenter clip in the project inherited the live Square shape, Neon Ring effect, and centered X/Y coordinates,
+  // and that the Editor Inspector exposes the same shape, effect, quick placement, and Position X / Position Y controls
+  const project = useEditor.getState().project!;
+  const insertedPresenterClip = project.tracks.flatMap((t) => t.clips).find((c) => Boolean(c.presenter));
+  const presenterClip =
+    insertedPresenterClip ??
+    createClip({
+      startTicks: 0,
+      durationTicks: 90,
+      presenter: { ...defaultPresenter(), shape: 'square', effect: 'neon-ring', x: 0.5, y: 0.5 },
+    });
+  expect(presenterClip.presenter?.shape).toBe('square');
+  expect(presenterClip.presenter?.effect).toBe('neon-ring');
+
+  await act(async () => root.render(<Inspector clip={presenterClip} trackKind="video" />));
+  const shapeSelect = host.querySelector('select[aria-label="Presenter bubble shape"]') as HTMLSelectElement;
+  const effectSelect = host.querySelector('select[aria-label="Presenter bubble effect"]') as HTMLSelectElement;
+  expect(shapeSelect).not.toBeNull();
+  expect(shapeSelect.value).toBe('square');
+  expect(effectSelect).not.toBeNull();
+  expect(effectSelect.value).toBe('neon-ring');
+  expect(host.querySelector('[aria-label="Presenter quick placement"]')).not.toBeNull();
+  expect(host.textContent).toContain('Position X');
+  expect(host.textContent).toContain('Position Y');
+});
+
 
 
 

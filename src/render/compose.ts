@@ -21,6 +21,7 @@ import {
   ease,
   endScreenZone,
   presenterBubble,
+  presenterEffectFilter,
   safeArea,
   sideBySideRegions,
   type Rect,
@@ -915,9 +916,13 @@ function drawPresenterBubble(
   }
   ctx.clip();
   ctx.globalAlpha = opacity;
-  if (clip.presenter!.shadow > 0) {
-    ctx.shadowColor = 'rgba(0,0,0,0.5)';
-    ctx.shadowBlur = clip.presenter!.shadow;
+  if (clip.presenter!.shadow > 0 || clip.presenter!.effect === 'neon-ring') {
+    ctx.shadowColor = clip.presenter!.effect === 'neon-ring' ? 'rgba(56, 189, 248, 0.85)' : 'rgba(0,0,0,0.5)';
+    ctx.shadowBlur = clip.presenter!.effect === 'neon-ring' ? Math.max(18, clip.presenter!.shadow) : clip.presenter!.shadow;
+  }
+  const bubbleFilter = presenterEffectFilter(clip.presenter!.effect);
+  if (bubbleFilter !== 'none' && 'filter' in ctx) {
+    (ctx as CanvasRenderingContext2D).filter = bubbleFilter;
   }
   const crop = cropRect(clip.transform, { width: drawable.width, height: drawable.height });
   // Crop the original to the bubble's aspect ratio so a portrait card is not
@@ -939,7 +944,13 @@ function drawPresenterBubble(
   }
   if (clip.presenter!.chromaKey) applyChromaKey(ctx, bubble);
   ctx.restore();
-  drawPresenterBorder(ctx, bubble, clip.presenter!.border, clip.presenter!.borderColor, opacity, clip.presenter!.shape);
+  const effectiveBorder =
+    clip.presenter!.effect === 'neon-ring' ? Math.max(4, clip.presenter!.border) : clip.presenter!.border;
+  const effectiveBorderColor =
+    clip.presenter!.effect === 'neon-ring' && clip.presenter!.border === 0
+      ? '#38bdf8'
+      : clip.presenter!.borderColor;
+  drawPresenterBorder(ctx, bubble, effectiveBorder, effectiveBorderColor, opacity, clip.presenter!.shape);
 }
 
 /** Ring around the presenter card. Drawn after the clip so it is never cropped. */

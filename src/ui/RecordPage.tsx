@@ -40,7 +40,14 @@ import * as ops from '../project/ops';
 import { createTrack, defaultPresenter } from '../project/factory';
 import { formatBytes } from '../export/presets';
 import { TICKS_PER_SECOND } from '../core/time';
-import { clamp, presenterBubble } from '../render/layout';
+import {
+  PRESENTER_BUBBLE_EFFECTS,
+  PRESENTER_BUBBLE_SHAPES,
+  clamp,
+  presenterBubble,
+  presenterEffectFilter,
+} from '../render/layout';
+import { CameraBubble } from './CameraBubble';
 import {
   detectFloatingCameraSupport,
   loadTeleprompterPrefs,
@@ -90,6 +97,24 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     });
   };
   const [quietMode, setQuietMode] = useState<QuietMode>('full');
+  const [stealthMode, setStealthMode] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('browser-record.stealth-mode.v1') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const toggleStealthMode = (next?: boolean) => {
+    setStealthMode((prev) => {
+      const value = typeof next === 'boolean' ? next : !prev;
+      try {
+        localStorage.setItem('browser-record.stealth-mode.v1', String(value));
+      } catch {
+        // Ignore storage quota errors
+      }
+      return value;
+    });
+  };
   const [controlsHidden, setControlsHidden] = useState(false);
   const [reviewTrimIn, setReviewTrimIn] = useState(0);
   const [reviewTrimOut, setReviewTrimOut] = useState(0);
@@ -1083,23 +1108,24 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       return null;
     }
   });
-  const selfViewBox = useRef<HTMLDivElement>(null);
-  const selfViewDrag = useRef<{ dx: number; dy: number } | null>(null);
 
   useEffect(() => {
-    if (selfViewPos) localStorage.setItem(SELF_VIEW_KEY, JSON.stringify(selfViewPos));
+    try {
+      if (selfViewPos) localStorage.setItem(SELF_VIEW_KEY, JSON.stringify(selfViewPos));
+      else localStorage.removeItem(SELF_VIEW_KEY);
+    } catch {
+      // Ignore storage quota errors
+    }
   }, [selfViewPos]);
 
   // A window that shrinks must not leave the bubble off-screen.
   useEffect(() => {
     const onResize = () => {
-      const box = selfViewBox.current?.getBoundingClientRect();
-      if (!box) return;
       setSelfViewPos((current) =>
         current
           ? {
-              x: clamp(current.x, 0, window.innerWidth - box.width),
-              y: clamp(current.y, 0, window.innerHeight - box.height),
+              x: clamp(current.x, 8, Math.max(8, window.innerWidth - 196)),
+              y: clamp(current.y, 8, Math.max(8, window.innerHeight - 196)),
             }
           : current,
       );
@@ -1108,30 +1134,14 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  /** Double-click the bubble to return it to its default corner. */
+  /** Double-click the bubble or click reset to return it to its default corner. */
   const resetSelfView = () => {
-    localStorage.removeItem(SELF_VIEW_KEY);
+    try {
+      localStorage.removeItem(SELF_VIEW_KEY);
+    } catch {
+      // Ignore
+    }
     setSelfViewPos(null);
-  };
-
-  const onSelfViewPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    selfViewDrag.current = { dx: event.clientX - rect.left, dy: event.clientY - rect.top };
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-
-  const onSelfViewPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    const drag = selfViewDrag.current;
-    if (!drag) return;
-    const { width, height } = event.currentTarget.getBoundingClientRect();
-    setSelfViewPos({
-      x: clamp(event.clientX - drag.dx, 0, window.innerWidth - width),
-      y: clamp(event.clientY - drag.dy, 0, window.innerHeight - height),
-    });
-  };
-
-  const onSelfViewPointerUp = () => {
-    selfViewDrag.current = null;
   };
 
   /** Restart = confirmed discard, then a fresh countdown once the discard has returned the stage to idle. */
@@ -1463,8 +1473,9 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
 
   return (
     <div
-      className={`page recorder-page cap-recorder${showMonitor ? ' monitor-expanded' : ''}`}
+      className={`page recorder-page cap-recorder${showMonitor ? ' monitor-expanded' : ''}${stealthMode ? ' is-stealth-mode' : ''}`}
       data-route-hidden={hidden ? 'true' : undefined}
+      data-stealth-mode={stealthMode ? 'true' : 'false'}
     >
       {!hidden && (
       <>
@@ -1488,6 +1499,15 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         <ImportMediaButton disabled={stage !== 'idle'} />
         <Button
           size="sm"
+          variant={stealthMode ? 'primary' : 'ghost'}
+          aria-pressed={stealthMode}
+          onClick={() => toggleStealthMode()}
+          title="Collapse the recorder into a small horizontal stealth panel with timer while keeping the camera bubble separate"
+        >
+          {stealthMode ? 'Exit stealth' : 'Stealth panel'}
+        </Button>
+        <Button
+          size="sm"
           variant={teleprompterOpen || teleprompter.enabled ? 'primary' : 'ghost'}
           aria-expanded={teleprompterOpen}
           onClick={() => setTeleprompterOpen(!teleprompterOpen)}
@@ -1503,6 +1523,121 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
           ⚙ Advanced
         </Button>
       </div>
+
+      {/* Compact Horizontal Stealth Record Panel (with live recording timer & independent bubble controls) */}
+      {stealthMode && (
+        <section
+          className={`stealth-record-panel${stage === 'recording' ? ' is-recording' : stage === 'paused' ? ' is-paused' : ''}`}
+          role="region"
+          aria-label="Stealth horizontal record panel"
+          data-testid="stealth-record-panel"
+        >
+          <div className="stealth-panel-status">
+            <span className={stage === 'recording' || stage === 'countdown' ? 'rec-dot' : 'rec-dot still'} aria-hidden />
+            <strong className="stealth-panel-state">
+              {stage === 'countdown'
+                ? 'STARTING'
+                : stage === 'recording'
+                  ? 'REC'
+                  : stage === 'paused'
+                    ? 'PAUSED'
+                    : stage === 'ready'
+                      ? 'READY'
+                      : 'STEALTH'}
+            </strong>
+            <span className="stealth-panel-timer mono" data-testid="stealth-panel-timer">
+              {stage === 'countdown' ? `00:00:0${countdown}` : formatElapsed(elapsedSeconds)}
+            </span>
+          </div>
+
+          <div className="stealth-panel-sources" role="group" aria-label="Stealth quick sources">
+            <button
+              type="button"
+              className="stealth-chip"
+              disabled={stage !== 'idle'}
+              aria-pressed={screenOn}
+              onClick={() => setScreenOn((prev) => !prev)}
+              title="Toggle screen capture"
+            >
+              Screen {screenOn ? 'On' : 'Off'}
+            </button>
+            <button
+              type="button"
+              className="stealth-chip"
+              disabled={stage !== 'idle'}
+              aria-pressed={cameraOn}
+              onClick={() => setCameraOn((prev) => !prev)}
+              title="Toggle camera bubble"
+            >
+              Cam {cameraOn ? 'On' : 'Off'}
+            </button>
+            <button
+              type="button"
+              className="stealth-chip"
+              disabled={stage !== 'idle'}
+              aria-pressed={micOn}
+              onClick={() => setMicOn((prev) => !prev)}
+              title="Toggle microphone"
+            >
+              Mic {micOn ? 'On' : 'Off'}
+            </button>
+            {cameraOn && (
+              <button
+                type="button"
+                className="stealth-chip"
+                aria-pressed={cameraPreviewOn || stage === 'recording' || stage === 'paused'}
+                disabled={stage !== 'idle'}
+                onClick={() => (cameraPreviewOn ? stopCameraPreview() : void startCameraPreview())}
+                title="Preview and position the standalone camera bubble before recording"
+              >
+                {cameraPreviewOn ? 'Hide bubble' : 'Show bubble'}
+              </button>
+            )}
+          </div>
+
+          <div className="stealth-panel-actions">
+            {(stage === 'idle' || stage === 'ready') && (
+              <Button size="sm" variant="primary" onClick={() => void start()}>
+                <span aria-hidden>●</span> {stage === 'ready' ? 'Start take' : 'Record'}
+              </Button>
+            )}
+            {(stage === 'recording' || stage === 'paused') && (
+              <>
+                <Button size="sm" variant="ghost" onClick={togglePause}>
+                  {stage === 'paused' ? 'Resume' : 'Pause'}
+                </Button>
+                <Button size="sm" variant="danger" onClick={() => void stopTake()}>
+                  ■ Stop
+                </Button>
+                {micOn && (
+                  <Button size="sm" variant="ghost" onClick={toggleMicMute}>
+                    {micMuted ? 'Unmute' : 'Mute'}
+                  </Button>
+                )}
+              </>
+            )}
+            {floatingSupport.supported && (
+              <Button
+                size="sm"
+                variant={floatingCameraOpen ? 'primary' : 'ghost'}
+                aria-pressed={floatingCameraOpen}
+                onClick={() => void toggleFloatingCamera()}
+                title={floatingSupport.detail}
+              >
+                {floatingCameraOpen ? 'Close PiP' : 'PiP'}
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label="Expand full studio panel"
+              onClick={() => toggleStealthMode(false)}
+            >
+              Expand ▾
+            </Button>
+          </div>
+        </section>
+      )}
 
       {teleprompterOpen && (
         <section className="cap-ready-card stack" style={{ gap: 10 }} role="region" aria-label="Teleprompter">
@@ -1669,7 +1804,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       )}
 
       {/* One primary action + one Floating controls entry */}
-      {stage === 'idle' && (
+      {stage === 'idle' && !stealthMode && (
         <div className="start-dock" role="toolbar" aria-label="Recording launcher">
           <Button variant="primary" onClick={start}>
             <span aria-hidden>●</span>{' '}
@@ -1693,9 +1828,9 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       )}
       </>
       )}
-      {/* The same camera stream the monitor shows, pinned to the viewport for
-          preview, ready, and the whole take. Hidden when hideFloatingPreview is
-          enabled so Entire screen capture never records a double bubble. */}
+      {/* Standalone CameraBubble component: completely separate from the stealth horizontal
+          control bar, movable to any place during preview or recording, with live shape
+          (Circle, Square, Rounded, Portrait, Pill, Hexagon) and visual effect options. */}
       {cameraOn &&
         !hideFloatingPreview &&
         (cameraPreviewOn ||
@@ -1704,67 +1839,41 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
           stage === 'recording' ||
           stage === 'paused' ||
           stage === 'finishing') && (
-          <div
-            ref={selfViewBox}
-            className={`rec-selfview${stage === 'recording' ? ' is-recording' : ''}`}
-            data-shape={presenter.shape}
-            aria-label="Live camera self-view"
-            title="Drag to move. Double-click to reset."
-            onDoubleClick={resetSelfView}
-            onPointerDown={onSelfViewPointerDown}
-            onPointerMove={onSelfViewPointerMove}
-            onPointerUp={onSelfViewPointerUp}
-            onPointerCancel={onSelfViewPointerUp}
-            style={{
-              ...(selfViewPos ? { left: selfViewPos.x, top: selfViewPos.y, right: 'auto', bottom: 'auto' } : {}),
-              width: presenter.shape === 'pill' ? 228 : presenter.shape === 'portrait' ? 164 : 188,
-              height: presenter.shape === 'pill' ? 156 : presenter.shape === 'portrait' ? 218 : 188,
-              clipPath:
-                presenter.shape === 'hexagon'
-                  ? 'polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%)'
-                  : 'none',
-              borderRadius:
-                presenter.shape === 'circle'
-                  ? '50%'
-                  : presenter.shape === 'pill'
-                    ? '999px'
-                    : presenter.shape === 'rounded'
-                      ? '28px'
-                      : presenter.shape === 'portrait'
-                        ? '22px'
-                        : '14px',
-              outline:
-                presenter.shape === 'hexagon'
-                  ? 'none'
-                  : stage === 'recording'
-                    ? '3px solid #ff5c7c'
-                    : `3px solid ${presenter.borderColor || '#c3adff'}`,
-            }}
-          >
-            <video
-              ref={selfViewRef}
-              muted
-              playsInline
-              autoPlay
-              style={{ transform: presenter.mirror ? 'scaleX(-1)' : 'none' }}
-            />
-          </div>
+          <CameraBubble
+            videoRef={selfViewRef}
+            presenter={presenter}
+            stage={stage}
+            position={selfViewPos}
+            onPositionChange={setSelfViewPos}
+            onUpdatePresenter={(patch) =>
+              setPresenter((current) => {
+                const next = { ...current, ...patch };
+                if ('x' in patch && patch.x === undefined) delete next.x;
+                if ('y' in patch && patch.y === undefined) delete next.y;
+                return next;
+              })
+            }
+          />
         )}
 
-      {/* Active recording bar: Timer · Pause/Resume · Stop + More (Mute, Hide preview, Restart, Discard) */}
+      {/* Active recording bar: small horizontal stealth control bar with live recording timer,
+          Pause/Resume, Stop, and More — completely independent from CameraBubble. */}
       {(stage === 'countdown' || stage === 'recording' || stage === 'paused' || stage === 'finishing') && (
         <div
-          className={`rec-bar rec-dock${stage === 'paused' ? ' paused' : ''}${controlsHidden ? ' rec-dock-collapsed' : ''}`}
+          className={`rec-bar rec-dock${stage === 'paused' ? ' paused' : ''}${controlsHidden ? ' rec-dock-collapsed' : ''}${stealthMode ? ' rec-dock-stealth' : ''}`}
           role="group"
           aria-label="Recording controls"
+          data-stealth={stealthMode ? 'true' : 'false'}
         >
           <span className="rec-dock-status">
             <span className={stage === 'recording' || stage === 'countdown' ? 'rec-dot' : 'rec-dot still'} aria-hidden />
             <strong className="rec-state" role="status" aria-live="polite">
               {stage === 'countdown' ? 'STARTING' : stage === 'paused' ? 'PAUSED' : stage === 'finishing' ? 'SAVING' : 'REC'}
             </strong>
-            <span className="rec-timer" aria-hidden="true">{stage === 'countdown' ? countdown : formatElapsed(elapsedSeconds)}</span>
-            {!controlsHidden && (stats?.markers.length ?? 0) > 0 && (
+            <span className="rec-timer" data-testid="rec-dock-timer" aria-hidden="true">
+              {stage === 'countdown' ? countdown : formatElapsed(elapsedSeconds)}
+            </span>
+            {!controlsHidden && !stealthMode && (stats?.markers.length ?? 0) > 0 && (
               <span className="rec-markers">
                 {stats?.markers.length} marker{stats?.markers.length === 1 ? '' : 's'}
               </span>
@@ -1828,6 +1937,15 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                     <Button
                       size="sm"
                       variant="ghost"
+                      aria-pressed={stealthMode}
+                      onClick={() => toggleStealthMode()}
+                      title="Toggle small horizontal stealth record panel"
+                    >
+                      {stealthMode ? 'Exit stealth panel' : 'Stealth panel'}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
                       className="rec-restart"
                       onClick={() => setRestartOpen(true)}
                       aria-label="Restart take"
@@ -1880,7 +1998,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         </div>
       )}
 
-      {!hidden && (
+      {!hidden && !stealthMode && (
       <div className="split-grid">
         <div className="stack" style={{ gap: 14 }}>
           <Panel
@@ -2186,15 +2304,8 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                           label="Bubble shape"
                           value={presenter.shape}
                           onChange={(value) => setPresenter((current) => ({ ...current, shape: value as PresenterProps['shape'] }))}
-                          disabled={stage !== 'idle' || !cameraOn}
-                          options={[
-                            { value: 'circle', label: 'Round bubble' },
-                            { value: 'rounded', label: 'Rounded square' },
-                            { value: 'square', label: 'Square' },
-                            { value: 'portrait', label: 'Portrait card (3:4)' },
-                            { value: 'pill', label: 'Pill (stadium)' },
-                        { value: 'hexagon', label: 'Hexagon' },
-                      ]}
+                          disabled={!cameraOn}
+                          options={PRESENTER_BUBBLE_SHAPES.map((s) => ({ value: s.id, label: s.label }))}
                     />
                   </Field>
                 </div>
@@ -2203,8 +2314,16 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                     <Select
                       label="Bubble position"
                       value={presenter.corner}
-                      onChange={(value) => setPresenter((current) => ({ ...current, corner: value as PresenterProps['corner'] }))}
-                      disabled={stage !== 'idle' || !cameraOn}
+                      onChange={(value) => {
+                        resetSelfView();
+                        setPresenter((current) => {
+                          const { x: _x, y: _y, ...rest } = current;
+                          void _x;
+                          void _y;
+                          return { ...rest, corner: value as PresenterProps['corner'] };
+                        });
+                      }}
+                      disabled={!cameraOn}
                       options={[
                         { value: 'bottom-right', label: 'Bottom right' },
                         { value: 'bottom-left', label: 'Bottom left' },
@@ -2215,6 +2334,20 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                   </Field>
                 </div>
               </div>
+              <Field label="Bubble effect">
+                <Select
+                  label="Bubble effect"
+                  value={presenter.effect ?? 'none'}
+                  onChange={(value) =>
+                    setPresenter((current) => ({
+                      ...current,
+                      effect: value as NonNullable<PresenterProps['effect']>,
+                    }))
+                  }
+                  disabled={!cameraOn}
+                  options={PRESENTER_BUBBLE_EFFECTS.map((fx) => ({ value: fx.id, label: fx.label }))}
+                />
+              </Field>
               <Slider
                 label="Size"
                 min={0.08}
@@ -2257,19 +2390,16 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                 label="Mirror camera (meeting-style)"
                 checked={presenter.mirror}
                 onChange={(value) => setPresenter((current) => ({ ...current, mirror: value }))}
-                disabled={stage !== 'idle'}
               />
               <Toggle
                 label="Visible in preview & export"
                 checked={presenter.visible !== false}
                 onChange={(value) => setPresenter((current) => ({ ...current, visible: value }))}
-                disabled={stage !== 'idle'}
               />
               <Toggle
                 label="Chroma key (experimental — green background)"
                 checked={presenter.chromaKey}
                 onChange={(value) => setPresenter((current) => ({ ...current, chromaKey: value }))}
-                disabled={stage !== 'idle'}
               />
               <Button
                 size="sm"
@@ -2517,6 +2647,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                       height: '100%',
                       objectFit: 'cover',
                       transform: presenter.mirror ? 'scaleX(-1)' : 'none',
+                      filter: presenterEffectFilter(presenter.effect),
                       display: cameraReady ? 'block' : 'none',
                     }}
                   />
