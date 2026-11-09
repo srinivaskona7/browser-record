@@ -43,8 +43,12 @@ import { TICKS_PER_SECOND } from '../core/time';
 import { clamp, presenterBubble } from '../render/layout';
 import {
   detectFloatingCameraSupport,
+  loadTeleprompterPrefs,
   openFloatingCamera,
+  saveTeleprompterPrefs,
+  teleprompterPixelsPerSecond,
   type FloatingCameraSession,
+  type TeleprompterState,
 } from '../capture/floatingCamera';
 import {
   describeCapMode,
@@ -75,6 +79,16 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
   const [openEditorAfterStop, setOpenEditorAfterStop] = useState(true);
   const [showMonitor, setShowMonitor] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [teleprompterOpen, setTeleprompterOpen] = useState(false);
+  const [teleprompter, setTeleprompter] = useState<TeleprompterState>(() => loadTeleprompterPrefs());
+  const teleprompterScrollRef = useRef<HTMLDivElement>(null);
+  const updateTeleprompter = (patch: Partial<TeleprompterState>) => {
+    setTeleprompter((prev) => {
+      const next = { ...prev, ...patch };
+      saveTeleprompterPrefs(next);
+      return next;
+    });
+  };
   const [quietMode, setQuietMode] = useState<QuietMode>('full');
   const [controlsHidden, setControlsHidden] = useState(false);
   const [reviewTrimIn, setReviewTrimIn] = useState(0);
@@ -446,6 +460,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
           micMuted,
           hasCamera: cameraOn,
         },
+        initialTeleprompter: teleprompter,
         onStartRecord: () => pipHandlersRef.current.start(),
         onTogglePause: () => pipHandlersRef.current.togglePause(),
         onStop: () => pipHandlersRef.current.stopTake(),
@@ -454,6 +469,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         onToggleMic: () => pipHandlersRef.current.toggleMicMute(),
         onToggleHidePreview: () => setHideFloatingPreview((prev) => !prev),
         onUpdatePresenter: (patch) => setPresenter((prev) => ({ ...prev, ...patch })),
+        onUpdateTeleprompter: (patch) => updateTeleprompter(patch),
         onClose: () => {
           floatingCameraRef.current = null;
           if (mountedRef.current) {
@@ -470,35 +486,86 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     }
   };
 
+  useEffect(() => {
+    floatingCameraRef.current?.updateTeleprompter(teleprompter);
+  }, [teleprompter]);
+
+  useEffect(() => {
+    if (!teleprompter.playing) return;
+    const timer = window.setInterval(() => {
+      const box = teleprompterScrollRef.current;
+      if (!box) return;
+      const pxPerSec = teleprompterPixelsPerSecond(teleprompter.wpm, teleprompter.fontSize);
+      box.scrollTop += Math.max(1, Math.round((pxPerSec * 50) / 1000));
+    }, 50);
+    return () => window.clearInterval(timer);
+  }, [teleprompter.playing, teleprompter.wpm, teleprompter.fontSize]);
+
   // Turning the camera source off must not leave the device light on.
   useEffect(() => {
     cameraOnRef.current = cameraOn;
     if (!cameraOn && cameraPreviewStream.current) stopCameraPreview();
   }, [cameraOn]);
 
-  // Register MediaSession enterpictureinpicture handler so Chrome can auto-float the camera when switching tabs.
+  // Register MediaSession enterpictureinpicture + hardware media key handlers (pause/play/stop)
+  // so OS media keys and background/fullscreen tabs can control an active take.
   useEffect(() => {
     if (typeof navigator === 'undefined' || !('mediaSession' in navigator) || !navigator.mediaSession?.setActionHandler) {
       return;
     }
-    try {
-      navigator.mediaSession.setActionHandler('enterpictureinpicture' as MediaSessionAction, () => {
-        if (!floatingCameraRef.current && cameraOnRef.current) {
-          void toggleFloatingCamera();
-        }
-      });
-    } catch {
-      // Action not supported in this browser version
-    }
-    return () => {
+    const ms = navigator.mediaSession;
+    const trySetHandler = (action: string, handler: MediaSessionActionHandler | null) => {
       try {
-        navigator.mediaSession.setActionHandler('enterpictureinpicture' as MediaSessionAction, null);
+        ms.setActionHandler(action as MediaSessionAction, handler);
+      } catch {
+        // Action not supported in this browser version
+      }
+    };
+    trySetHandler('enterpictureinpicture', () => {
+      if (!floatingCameraRef.current && cameraOnRef.current) {
+        void toggleFloatingCamera();
+      }
+    });
+    if (stage === 'recording' || stage === 'paused') {
+      try {
+        ms.playbackState = stage === 'recording' ? 'playing' : 'paused';
+        if (typeof MediaMetadata !== 'undefined') {
+          ms.metadata = new MediaMetadata({
+            title: stage === 'paused' ? 'Paused recording' : 'Recording take',
+            artist: project?.name ?? 'Browser 4K Studio',
+            album: 'Browser 4K Studio',
+          });
+        }
+      } catch {
+        // Ignore MediaMetadata errors in headless/stub environments
+      }
+      trySetHandler('pause', () => {
+        if (stage === 'recording') pipHandlersRef.current.togglePause();
+      });
+      trySetHandler('play', () => {
+        if (stage === 'paused') pipHandlersRef.current.togglePause();
+      });
+      trySetHandler('stop', () => {
+        pipHandlersRef.current.stopTake();
+      });
+    } else {
+      try {
+        ms.playbackState = 'none';
       } catch {
         // Ignore
       }
+      trySetHandler('pause', null);
+      trySetHandler('play', null);
+      trySetHandler('stop', null);
+    }
+    return () => {
+      trySetHandler('enterpictureinpicture', null);
+      trySetHandler('pause', null);
+      trySetHandler('play', null);
+      trySetHandler('stop', null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [stage, project?.name]);
 
   // The floating self-view mounts when camera preview or a take starts, so hand it the live stream.
   useEffect(() => {
@@ -879,6 +946,9 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         return;
       }
       setStage('recording');
+      if (teleprompter.enabled && teleprompter.script.trim().length > 0) {
+        updateTeleprompter({ playing: true });
+      }
     } catch (err) {
       const message = (err as Error).message;
       setError(describeCaptureError(message));
@@ -897,6 +967,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     if (!capture || stoppingRef.current) return;
     stoppingRef.current = true;
     setStage('finishing');
+    if (teleprompter.playing) updateTeleprompter({ playing: false });
     try {
       const result = await capture.stop();
       captureRef.current = null;
@@ -930,9 +1001,13 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     if (stage === 'recording') {
       capture.pause();
       setStage('paused');
+      if (teleprompter.playing) updateTeleprompter({ playing: false });
     } else {
       capture.resume();
       setStage('recording');
+      if (teleprompter.enabled && teleprompter.script.trim().length > 0) {
+        updateTeleprompter({ playing: true });
+      }
     }
   };
 
@@ -1413,6 +1488,14 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         <ImportMediaButton disabled={stage !== 'idle'} />
         <Button
           size="sm"
+          variant={teleprompterOpen || teleprompter.enabled ? 'primary' : 'ghost'}
+          aria-expanded={teleprompterOpen}
+          onClick={() => setTeleprompterOpen(!teleprompterOpen)}
+        >
+          Teleprompter
+        </Button>
+        <Button
+          size="sm"
           variant="ghost"
           aria-expanded={settingsOpen}
           onClick={() => setSettingsOpen(!settingsOpen)}
@@ -1420,6 +1503,134 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
           ⚙ Advanced
         </Button>
       </div>
+
+      {teleprompterOpen && (
+        <section className="cap-ready-card stack" style={{ gap: 10 }} role="region" aria-label="Teleprompter">
+          <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+            <div>
+              <span className="eyebrow">TELEPROMPTER · FLOATING NOTES</span>
+              <div className="field-hint">
+                Hidden from Window &amp; Tab recordings · Syncs live to Floating controls (Document PiP)
+              </div>
+            </div>
+            <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+              <Toggle
+                label="Show in Floating PiP"
+                checked={teleprompter.enabled}
+                onChange={(checked) => updateTeleprompter({ enabled: checked, ...(checked ? {} : { playing: false }) })}
+              />
+              <Button
+                size="sm"
+                variant={teleprompter.playing ? 'primary' : 'ghost'}
+                onClick={() => updateTeleprompter({ enabled: true, playing: !teleprompter.playing })}
+              >
+                {teleprompter.playing ? '⏸ Pause scroll' : '▶ Play scroll'}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label="Reset teleprompter scroll"
+                onClick={() => {
+                  if (teleprompterScrollRef.current) teleprompterScrollRef.current.scrollTop = 0;
+                  updateTeleprompter({ playing: false });
+                }}
+              >
+                ↺ Reset
+              </Button>
+            </div>
+          </div>
+
+          <textarea
+            className="input"
+            rows={4}
+            aria-label="Teleprompter script"
+            placeholder="Paste your presenter script or talking points here…"
+            value={teleprompter.script}
+            onChange={(event) => updateTeleprompter({ script: event.target.value })}
+            style={{ width: '100%', resize: 'vertical', lineHeight: 1.5 }}
+          />
+
+          <div className="row" style={{ gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+            <div style={{ flex: '1 1 180px' }}>
+              <Slider
+                label="Scroll speed"
+                min={60}
+                max={300}
+                step={10}
+                value={teleprompter.wpm}
+                format={(v) => `${v} wpm`}
+                onChange={(wpm) => updateTeleprompter({ wpm })}
+              />
+            </div>
+            <div style={{ flex: '1 1 160px' }}>
+              <Slider
+                label="Backdrop opacity"
+                min={0.35}
+                max={0.98}
+                step={0.03}
+                value={teleprompter.opacity}
+                format={(v) => `${Math.round(v * 100)}%`}
+                onChange={(opacity) => updateTeleprompter({ opacity })}
+              />
+            </div>
+            <div className="row" style={{ gap: 6, alignItems: 'center' }} role="group" aria-label="Teleprompter text size">
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label="Decrease teleprompter text size"
+                onClick={() => updateTeleprompter({ fontSize: Math.max(14, teleprompter.fontSize - 2) })}
+              >
+                −
+              </Button>
+              <span className="mono" style={{ minWidth: 44, textAlign: 'center', fontSize: 12 }}>
+                {teleprompter.fontSize}px
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label="Increase teleprompter text size"
+                onClick={() => updateTeleprompter({ fontSize: Math.min(36, teleprompter.fontSize + 2) })}
+              >
+                +
+              </Button>
+            </div>
+          </div>
+
+          {teleprompter.script.trim().length > 0 && (
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '16px 1fr 16px',
+                alignItems: 'center',
+                background: `rgba(17, 16, 24, ${teleprompter.opacity})`,
+                border: '1px solid var(--border)',
+                borderRadius: 10,
+                padding: '8px 10px',
+                maxHeight: 132,
+                overflow: 'hidden',
+              }}
+            >
+              <span aria-hidden style={{ color: '#60a5fa', fontWeight: 700 }}>▸</span>
+              <div
+                ref={teleprompterScrollRef}
+                data-testid="studio-teleprompter-preview"
+                style={{
+                  maxHeight: 112,
+                  overflowY: 'auto',
+                  fontSize: teleprompter.fontSize,
+                  lineHeight: 1.5,
+                  whiteSpace: 'pre-wrap',
+                  fontWeight: 600,
+                  padding: '0 6px',
+                }}
+              >
+                {teleprompter.script}
+              </div>
+              <span aria-hidden style={{ color: '#60a5fa', fontWeight: 700, textAlign: 'right' }}>◂</span>
+            </div>
+          )}
+        </section>
+      )}
 
       {stage === 'ready' && preparedSummary && (
         <section className="cap-ready-card" role="region" aria-label="Source confirmation">

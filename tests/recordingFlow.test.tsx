@@ -389,5 +389,104 @@ it('enforces the 3-case Camera-Duplication Rule so export contains the camera at
   expect(host.textContent).toContain('Discard this take');
 });
 
+it('supports bubble-layout hover overlay controls, Teleprompter sync in Document PiP, and MediaSession hardware key controls across background/fullscreen tabs', async () => {
+  const { openFloatingCamera, teleprompterPixelsPerSecond } = await import('../src/capture/floatingCamera');
+  const { defaultPresenter } = await import('../src/project/factory');
+
+  expect(teleprompterPixelsPerSecond(150, 20)).toBeGreaterThan(10);
+
+  const pipDoc = document.implementation.createHTMLDocument('pip-bubble');
+  const winListeners = new Map<string, () => void>();
+  const fakePipWin = {
+    document: pipDoc,
+    innerWidth: 180,
+    innerHeight: 180,
+    addEventListener: vi.fn((evt: string, cb: () => void) => winListeners.set(evt, cb)),
+    resizeTo: vi.fn(),
+    close: vi.fn(),
+  } as unknown as Window;
+
+  window.documentPictureInPicture = {
+    requestWindow: vi.fn(async () => fakePipWin),
+  };
+
+  const prompterPatches: Array<Record<string, unknown>> = [];
+  const pipSession = await openFloatingCamera({
+    stream: new MediaStream(),
+    presenter: defaultPresenter(),
+    initialControlState: { stage: 'recording', elapsedText: '00:00:08', previewHidden: false, hasCamera: true },
+    initialTeleprompter: {
+      enabled: true,
+      script: 'Welcome to Browser 4K Studio. Today we ship zero-copy WebCodecs.',
+      wpm: 160,
+      fontSize: 20,
+      opacity: 0.85,
+      playing: false,
+    },
+    onUpdateTeleprompter: (patch) => {
+      prompterPatches.push(patch);
+    },
+  });
+
+  // 180x180 square window uses 'bubble' layout with hover-overlay controls
+  expect(pipSession.getActiveLayout()).toBe('bubble');
+  const toolbar = pipDoc.querySelector('[role="toolbar"]') as HTMLElement;
+  expect(toolbar.getAttribute('data-pip-controls-mode')).toBe('hover-overlay');
+  expect(toolbar.getAttribute('data-hovered')).toBe('false');
+  pipDoc.body.dispatchEvent(new Event('mouseenter'));
+  expect(toolbar.getAttribute('data-hovered')).toBe('true');
+  pipDoc.body.dispatchEvent(new Event('mouseleave'));
+  expect(toolbar.getAttribute('data-hovered')).toBe('false');
+
+  // Teleprompter overlay is rendered inside Document PiP and updates on font-size / scroll toggles
+  const pipPrompter = pipDoc.querySelector('[data-testid="pip-teleprompter"]') as HTMLElement;
+  expect(pipPrompter.style.display).toBe('grid');
+  expect(pipDoc.querySelector('[data-testid="pip-teleprompter-meta"]')?.textContent).toBe('Teleprompter · 160 WPM');
+  expect(pipDoc.querySelector('[data-testid="pip-teleprompter-body"]')?.textContent).toContain(
+    'Today we ship zero-copy WebCodecs.',
+  );
+
+  (pipDoc.querySelector('[data-testid="pip-prompter-font-up"]') as HTMLButtonElement).click();
+  expect(prompterPatches).toContainEqual({ fontSize: 22 });
+
+  (pipDoc.querySelector('[data-testid="pip-prompter-play"]') as HTMLButtonElement).click();
+  expect(prompterPatches).toContainEqual({ playing: true });
+
+  await pipSession.close();
+  delete window.documentPictureInPicture;
+
+  // Verify MediaSession hardware key handlers (pause, play, stop) control background/fullscreen takes
+  const mediaHandlers = new Map<string, () => void>();
+  Object.defineProperty(navigator, 'mediaSession', {
+    configurable: true,
+    value: {
+      playbackState: 'none',
+      metadata: null,
+      setActionHandler: vi.fn((action: string, handler: (() => void) | null) => {
+        if (handler) mediaHandlers.set(action, handler);
+        else mediaHandlers.delete(action);
+      }),
+    },
+  });
+
+  await startRecording();
+  expect(mediaHandlers.has('pause')).toBe(true);
+  expect(mediaHandlers.has('stop')).toBe(true);
+
+  // Triggering OS/hardware 'pause' pauses the recording even when RecordPage is in the background
+  await act(async () => root.render(<RecordPage hidden={true} />));
+  await act(() => mediaHandlers.get('pause')!());
+  expect(capture.pause).toHaveBeenCalledTimes(1);
+
+  // Triggering OS/hardware 'play' resumes the paused recording
+  await act(() => mediaHandlers.get('play')!());
+  expect(capture.resume).toHaveBeenCalledTimes(1);
+
+  // Triggering OS/hardware 'stop' finalizes the take
+  await act(async () => mediaHandlers.get('stop')!());
+  expect(capture.stop).toHaveBeenCalledTimes(1);
+});
+
+
 
 

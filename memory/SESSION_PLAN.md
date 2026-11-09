@@ -1,4 +1,4 @@
-# Session Plan — Browser 4K Studio P0/P1 Consolidation & Verification
+# Session Plan — Browser 4K Studio P0/P1 Consolidation & PiP/Teleprompter Enhancements
 
 - [x] **Step 1**: Baseline Browser 4K Studio implementation (`7d90762` / `39fc04b`).
 - [x] **Step 2 (P0 — Record & Takes)**: Keep `Pause / Resume`, elapsed timer, and `Stop` visible in both expanded and collapsed `.rec-dock` states (including in Edit). Group secondary take actions in `RecordingsLibrary` under `More` and disable `+ Add to timeline` for takes from other projects with a clear explanation.
@@ -11,3 +11,7 @@
   - Give open dialogs/popovers first use of `Escape`, then exit `Focus` even when a button has focus.
   - Make `Tools` drawer and `Inspector` mutually exclusive at `≤ 1200 px` with a clear `Tools / Inspector` switch, and place `History` and `Project settings` in disclosures.
 - [x] **Step 5 (Verification & Live Release)**: Run typecheck, lint, unit tests, and a real Chrome DevOps lesson test (record two takes, combine them, mask a token, export a landscape lesson and a vertical chapter, verify frame rate, captions, audio, and playback), then commit, push to `origin/main`, and verify live GitHub Pages deployment.
+- [x] **Step 6 (PiP Bubble Hover Overlay Controls)**: In `src/capture/floatingCamera.ts`, when `activeLayout === 'bubble'` (e.g. `180×180` or `400×400` square window), let the camera bubble fill the PiP viewport cleanly and display a floating compact overlay bar on hover/focus with `Record` / `Pause`/`Resume` / `Stop` / `Mute` while keeping the top-left elapsed badge always visible.
+- [x] **Step 7 (Global MediaSession Hardware Keys for Background/Fullscreen)**: In `src/ui/RecordPage.tsx`, register `navigator.mediaSession` metadata and action handlers (`pause`, `play`, `stop`, `enterpictureinpicture`) synchronized with `stage` (`recording` vs `paused`) so hardware media keys and OS media controls can pause, resume, or stop a take when another app, browser tab, or fullscreen window is focused.
+- [x] **Step 8 (Teleprompter in Recorder & Floating PiP)**: Add a Cap-style Teleprompter (`TeleprompterState` / `TeleprompterPrefs` in `src/capture/floatingCamera.ts` + UI in `src/ui/RecordPage.tsx` and Document PiP) with script editor, WPM scroll speed (`60–300 wpm`, default `150 wpm`), font size (`14–36 px`), play/pause/reset auto-scroll, and live sync into the Floating PiP window.
+- [x] **Step 9 (Verification & Tests)**: Add unit/integration tests in `tests/recordingFlow.test.tsx`, and run `npm run typecheck`, `npm run lint`, `npm test`, and `npm run build`.
