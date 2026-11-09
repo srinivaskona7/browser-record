@@ -1,8 +1,13 @@
 import { useState } from 'react';
 import { useEditor } from '../project/store';
 import type { Clip, Project } from '../project/types';
-import { createTrack } from '../project/factory';
+import { createTrack, defaultPresenter } from '../project/factory';
 import * as ops from '../project/ops';
+import {
+  PRESENTER_BUBBLE_EFFECTS,
+  PRESENTER_BUBBLE_SHAPES,
+  cornerFromNormalizedCenter,
+} from '../render/layout';
 import {
   VIDEO_EFFECTS,
   COLOR_FILTERS,
@@ -22,7 +27,7 @@ import {
 import { SFX_PRESETS } from '../audio/sfx';
 import { TICKS_PER_SECOND } from '../core/time';
 import { formatSelectionScopeChip } from '../editor/selection';
-import { Badge, Button, Toggle } from './components';
+import { Badge, Button, Slider, Toggle } from './components';
 import { SvgIcon, type IconName } from './icons';
 
 export const EDITOR_TOOLS: ReadonlyArray<{ id: string; label: string; iconName: IconName }> = [
@@ -270,35 +275,46 @@ export function EditorToolLibrary({
       {tool === 'presenter' ? (
         <div className="stack" style={{ gap: 10 }} data-testid="presenter-reframe-panel">
           <p className="field-hint">
-            Presenter &amp; Reframe: choose camera bubble shape, layout, corner anchor, safe-area guides, or drag the
-            bubble directly on the preview canvas.
+            Presenter &amp; Reframe: choose camera bubble shape (Square, Circle, Rounded…), visual effect, corner or free X/Y position, or drag the bubble directly on the preview canvas.
           </p>
           <div className="stack" style={{ gap: 6 }}>
             <span className="field-label">Presenter shape</span>
             <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-              {(
-                [
-                  ['circle', 'Circle'],
-                  ['rounded', 'Rounded'],
-                  ['square', 'Square'],
-                  ['portrait', 'Portrait'],
-                  ['pill', 'Pill'],
-                  ['hexagon', 'Hexagon'],
-                ] as const
-              ).map(([shape, label]) => (
+              {PRESENTER_BUBBLE_SHAPES.map((s) => (
                 <Button
-                  key={shape}
+                  key={s.id}
                   size="sm"
-                  variant={presenterClip?.presenter?.shape === shape ? 'primary' : 'ghost'}
+                  variant={presenterClip?.presenter?.shape === s.id ? 'primary' : 'ghost'}
                   disabled={!presenterClip}
                   onClick={() =>
                     presenterClip &&
-                    apply(`Presenter shape: ${label}`, (p) =>
-                      ops.updateClipDeep(p, presenterClip.id, { presenter: { shape } }),
+                    apply(`Presenter shape: ${s.shortLabel}`, (p) =>
+                      ops.updateClipDeep(p, presenterClip.id, { presenter: { shape: s.id } }),
                     )
                   }
                 >
-                  {label}
+                  {s.shortLabel}
+                </Button>
+              ))}
+            </div>
+          </div>
+          <div className="stack" style={{ gap: 6 }}>
+            <span className="field-label">Bubble visual effect</span>
+            <div className="row" style={{ gap: 6, flexWrap: 'wrap' }} role="group" aria-label="Editor bubble effects">
+              {PRESENTER_BUBBLE_EFFECTS.map((fx) => (
+                <Button
+                  key={fx.id}
+                  size="sm"
+                  variant={(presenterClip?.presenter?.effect ?? 'none') === fx.id ? 'primary' : 'ghost'}
+                  disabled={!presenterClip}
+                  onClick={() =>
+                    presenterClip &&
+                    apply(`Presenter effect: ${fx.label}`, (p) =>
+                      ops.updateClipDeep(p, presenterClip.id, { presenter: { effect: fx.id } }),
+                    )
+                  }
+                >
+                  {fx.shortLabel}
                 </Button>
               ))}
             </div>
@@ -332,7 +348,7 @@ export function EditorToolLibrary({
             </div>
           </div>
           <div className="stack" style={{ gap: 6 }}>
-            <span className="field-label">Corner anchor</span>
+            <span className="field-label">Corner anchor &amp; quick placement</span>
             <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
               {(
                 [
@@ -345,7 +361,13 @@ export function EditorToolLibrary({
                 <Button
                   key={corner}
                   size="sm"
-                  variant={presenterClip?.presenter?.corner === corner ? 'primary' : 'ghost'}
+                  variant={
+                    presenterClip?.presenter?.corner === corner &&
+                    presenterClip?.presenter?.x === undefined &&
+                    presenterClip?.presenter?.y === undefined
+                      ? 'primary'
+                      : 'ghost'
+                  }
                   disabled={!presenterClip}
                   onClick={() =>
                     presenterClip &&
@@ -357,8 +379,125 @@ export function EditorToolLibrary({
                   {label}
                 </Button>
               ))}
+              <Button
+                size="sm"
+                variant={
+                  typeof presenterClip?.presenter?.x === 'number' &&
+                  Math.abs(presenterClip.presenter.x - 0.5) < 0.03 &&
+                  typeof presenterClip?.presenter?.y === 'number' &&
+                  Math.abs(presenterClip.presenter.y - 0.5) < 0.03
+                    ? 'primary'
+                    : 'ghost'
+                }
+                disabled={!presenterClip}
+                onClick={() =>
+                  presenterClip &&
+                  apply('Presenter anchor: Center', (p) =>
+                    ops.updateClipDeep(p, presenterClip.id, { presenter: { x: 0.5, y: 0.5 } }),
+                  )
+                }
+              >
+                ⊕ Center
+              </Button>
             </div>
           </div>
+          {presenterClip?.presenter && (
+            <div className="stack" style={{ gap: 8 }}>
+              <Slider
+                label="Position X"
+                min={0.05}
+                max={0.95}
+                step={0.01}
+                value={
+                  typeof presenterClip.presenter.x === 'number'
+                    ? presenterClip.presenter.x
+                    : presenterClip.presenter.corner === 'top-left' || presenterClip.presenter.corner === 'bottom-left'
+                      ? 0.16
+                      : 0.84
+                }
+                format={(v) => `${Math.round(v * 100)}%`}
+                onChange={(value) => {
+                  const curY =
+                    typeof presenterClip.presenter!.y === 'number'
+                      ? presenterClip.presenter!.y
+                      : presenterClip.presenter!.corner === 'top-left' || presenterClip.presenter!.corner === 'top-right'
+                        ? 0.18
+                        : 0.82;
+                  apply('Move presenter bubble X', (p) =>
+                    ops.updateClipDeep(p, presenterClip.id, {
+                      presenter: {
+                        x: value,
+                        y: curY,
+                        corner: cornerFromNormalizedCenter(value, curY),
+                      },
+                    }),
+                  );
+                }}
+              />
+              <Slider
+                label="Position Y"
+                min={0.05}
+                max={0.95}
+                step={0.01}
+                value={
+                  typeof presenterClip.presenter.y === 'number'
+                    ? presenterClip.presenter.y
+                    : presenterClip.presenter.corner === 'top-left' || presenterClip.presenter.corner === 'top-right'
+                      ? 0.18
+                      : 0.82
+                }
+                format={(v) => `${Math.round(v * 100)}%`}
+                onChange={(value) => {
+                  const curX =
+                    typeof presenterClip.presenter!.x === 'number'
+                      ? presenterClip.presenter!.x
+                      : presenterClip.presenter!.corner === 'top-left' || presenterClip.presenter!.corner === 'bottom-left'
+                        ? 0.16
+                        : 0.84;
+                  apply('Move presenter bubble Y', (p) =>
+                    ops.updateClipDeep(p, presenterClip.id, {
+                      presenter: {
+                        x: curX,
+                        y: value,
+                        corner: cornerFromNormalizedCenter(curX, value),
+                      },
+                    }),
+                  );
+                }}
+              />
+              <Slider
+                label="Bubble size"
+                min={0.1}
+                max={0.7}
+                step={0.01}
+                value={presenterClip.presenter.size}
+                format={(v) => `${Math.round(v * 100)}%`}
+                onChange={(size) =>
+                  apply('Resize presenter bubble', (p) =>
+                    ops.updateClipDeep(p, presenterClip.id, { presenter: { size } }),
+                  )
+                }
+              />
+              <Toggle
+                label="Mirror camera"
+                checked={presenterClip.presenter.mirror}
+                onChange={(mirror) =>
+                  apply('Mirror presenter camera', (p) =>
+                    ops.updateClipDeep(p, presenterClip.id, { presenter: { mirror } }),
+                  )
+                }
+              />
+              <Toggle
+                label="Visible in preview & export"
+                checked={presenterClip.presenter.visible !== false}
+                onChange={(visible) =>
+                  apply('Presenter visibility', (p) =>
+                    ops.updateClipDeep(p, presenterClip.id, { presenter: { visible } }),
+                  )
+                }
+              />
+            </div>
+          )}
           <div className="stack" style={{ gap: 6 }}>
             <span className="field-label">Canvas reframe aspect</span>
             <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
@@ -378,8 +517,23 @@ export function EditorToolLibrary({
           </div>
           <Toggle label="Show safe-area guides" checked={showSafeAreas} onChange={setShowSafeAreas} />
           {!presenterClip && (
-            <div className="hint-card">
-              Record with Camera enabled or place a clip on the Camera track to customize the presenter bubble.
+            <div className="hint-card stack" style={{ gap: 8 }}>
+              <div>
+                Record with Camera enabled or convert a video clip into a draggable camera bubble overlay.
+              </div>
+              {clip && clip.kind === 'media' && (
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={() =>
+                    apply('Enable presenter bubble on clip', (p) =>
+                      ops.updateClip(p, clip.id, { presenter: defaultPresenter() }),
+                    )
+                  }
+                >
+                  Convert selected clip to Camera Bubble
+                </Button>
+              )}
             </div>
           )}
         </div>

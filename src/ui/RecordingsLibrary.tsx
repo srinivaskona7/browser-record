@@ -4,7 +4,7 @@ import { useEditor } from '../project/store';
 import { downloadBlob, formatBytes } from '../app/actions';
 import { openExistingProject } from '../app/bootstrap';
 import { buildAssetsFromManifest, recoverInterruptedTake } from '../capture/recorder';
-import { createTrack } from '../project/factory';
+import { createTrack, defaultPresenter } from '../project/factory';
 import * as ops from '../project/ops';
 import type { Project } from '../project/types';
 import { takeIdsOf } from '../workspace/takeRefs';
@@ -82,6 +82,8 @@ export function RecordingsLibrary({
   const [selectedRecoverableIds, setSelectedRecoverableIds] = useState<Set<string>>(new Set());
   const [clearResult, setClearResult] = useState<ExecuteClearUnusedResult | null>(null);
   const [clearBusy, setClearBusy] = useState(false);
+  const [deleteAllTakesOpen, setDeleteAllTakesOpen] = useState(false);
+  const [deleteAllTakesBusy, setDeleteAllTakesBusy] = useState(false);
 
   const activeSet = useMemo(() => {
     const set = new Set<string>();
@@ -221,9 +223,10 @@ export function RecordingsLibrary({
         durationTicks: 0,
       };
       for (const asset of builtAssets) {
+        const isCamera = asset.kind === 'video' && /camera|webcam/i.test(asset.name);
         const trackName =
           asset.kind === 'video'
-            ? /camera/i.test(asset.name)
+            ? isCamera
               ? 'Camera'
               : 'Screen'
             : /mic/i.test(asset.name)
@@ -235,7 +238,9 @@ export function RecordingsLibrary({
           next = ops.addTrack(next, track);
         }
         const placed = ops.addAssetClip(next, track.id, asset.id, 0, { mode: 'overwrite' });
-        next = placed.project;
+        next = isCamera
+          ? ops.updateClip(placed.project, placed.clipId, { presenter: defaultPresenter() })
+          : placed.project;
         if (!firstClipId) firstClipId = placed.clipId;
       }
       return next;
@@ -274,9 +279,10 @@ export function RecordingsLibrary({
         if (!next.assets.some((a) => a.id === asset.id || a.path === asset.path)) {
           next = ops.upsertAsset(next, asset);
         }
+        const isCamera = asset.kind === 'video' && /camera|webcam/i.test(asset.name);
         const trackName =
           asset.kind === 'video'
-            ? /camera/i.test(asset.name)
+            ? isCamera
               ? 'Camera'
               : 'Screen'
             : /mic/i.test(asset.name)
@@ -288,7 +294,9 @@ export function RecordingsLibrary({
           next = ops.addTrack(next, track);
         }
         const placed = ops.addAssetClip(next, track.id, asset.id, insertedAt, { mode: 'overwrite' });
-        next = placed.project;
+        next = isCamera
+          ? ops.updateClip(placed.project, placed.clipId, { presenter: defaultPresenter() })
+          : placed.project;
         if (!firstClipId) firstClipId = placed.clipId;
       }
       return next;
@@ -431,6 +439,17 @@ export function RecordingsLibrary({
           >
             Clear unused recordings…
           </Button>
+          {filteredItems.some((item) => item.status !== 'Active') && (
+            <Button
+              size="sm"
+              variant="danger"
+              disabled={deleteAllTakesBusy}
+              onClick={() => setDeleteAllTakesOpen(true)}
+              data-testid="delete-all-takes-btn"
+            >
+              Delete all ({filteredItems.filter((item) => item.status !== 'Active').length})…
+            </Button>
+          )}
         </div>
       }
     >
@@ -518,6 +537,19 @@ export function RecordingsLibrary({
                   >
                     + Add to timeline
                   </Button>
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    disabled={item.status === 'Active'}
+                    title={
+                      item.status === 'Active'
+                        ? 'Active takes are pinned and protected while recording.'
+                        : 'Permanently delete this raw take'
+                    }
+                    onClick={() => void handleDeleteSingleTake(item)}
+                  >
+                    {item.status === 'Recoverable' ? 'Discard' : 'Delete'}
+                  </Button>
                   <details className="rec-more-menu">
                     <summary className="btn btn-ghost btn-sm" aria-label={`More actions for ${item.label}`}>
                       More ▾
@@ -547,13 +579,11 @@ export function RecordingsLibrary({
                       <Button
                         size="sm"
                         variant="danger"
-                        disabled={item.status === 'Active' || item.status === 'Used in timeline'}
+                        disabled={item.status === 'Active'}
                         title={
                           item.status === 'Active'
                             ? 'Active takes are pinned and protected while recording.'
-                            : item.status === 'Used in timeline'
-                              ? 'Used in timeline — remove the clip from the timeline before deleting this take.'
-                              : 'Permanently delete this raw take'
+                            : 'Permanently delete this raw take'
                         }
                         onClick={() => void handleDeleteSingleTake(item)}
                       >
@@ -717,6 +747,57 @@ export function RecordingsLibrary({
             )}
           </div>
         )}
+      </Dialog>
+
+      <Dialog
+        open={deleteAllTakesOpen}
+        title={`Delete all ${filteredItems.filter((item) => item.status !== 'Active').length} recording(s)?`}
+        onClose={() => {
+          if (!deleteAllTakesBusy) setDeleteAllTakesOpen(false);
+        }}
+        footer={
+          <div className="row" style={{ gap: 8 }}>
+            <Button variant="ghost" disabled={deleteAllTakesBusy} onClick={() => setDeleteAllTakesOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              disabled={deleteAllTakesBusy}
+              data-testid="confirm-delete-all-takes-btn"
+              onClick={async () => {
+                if (!workspace) return;
+                setDeleteAllTakesBusy(true);
+                try {
+                  let deleted = 0;
+                  for (const item of filteredItems) {
+                    if (item.status === 'Active') continue;
+                    const ok = await deleteTake(workspace.root, item.projectFolder, item.take.takeId);
+                    if (ok) deleted += 1;
+                  }
+                  setDeleteAllTakesOpen(false);
+                  await refresh();
+                  onChanged?.();
+                  pushToast(`Deleted ${deleted} recording(s).`, 'info');
+                } finally {
+                  setDeleteAllTakesBusy(false);
+                }
+              }}
+            >
+              {deleteAllTakesBusy
+                ? 'Deleting…'
+                : `Delete all ${filteredItems.filter((item) => item.status !== 'Active').length} recording(s)`}
+            </Button>
+          </div>
+        }
+      >
+        <div className="stack">
+          <p>
+            This permanently deletes all{' '}
+            <strong>{filteredItems.filter((item) => item.status !== 'Active').length}</strong> recorded take(s) in the
+            current view. Any active recording in progress is never touched.
+          </p>
+          <div className="warn-card">This action removes the raw recording files from local storage and cannot be undone.</div>
+        </div>
       </Dialog>
     </Panel>
   );

@@ -17,6 +17,8 @@ export interface CameraBubbleProps {
   presenter: PresenterProps;
   stage: 'idle' | 'selecting' | 'ready' | 'countdown' | 'recording' | 'paused' | 'finishing';
   position: CameraBubblePosition | null;
+  cameraLive?: boolean;
+  onStartPreview?: () => void;
   onPositionChange: (pos: CameraBubblePosition | null) => void;
   onUpdatePresenter: (patch: Partial<PresenterProps>) => void;
 }
@@ -100,6 +102,8 @@ export function CameraBubble({
   presenter,
   stage,
   position,
+  cameraLive = true,
+  onStartPreview,
   onPositionChange,
   onUpdatePresenter,
 }: CameraBubbleProps) {
@@ -239,6 +243,43 @@ export function CameraBubble({
             filter: filterCss !== 'none' ? filterCss : undefined,
           }}
         />
+        {!cameraLive && stage === 'idle' && (
+          <div
+            data-bubble-controls="true"
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              padding: 12,
+              textAlign: 'center',
+              background:
+                'radial-gradient(circle at 35% 28%, rgba(195, 173, 255, 0.28), rgba(22, 20, 30, 0.94) 75%)',
+              color: '#f5f2ff',
+              filter: filterCss !== 'none' ? filterCss : undefined,
+            }}
+          >
+            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.04em', opacity: 0.9 }}>
+              CAMERA BUBBLE
+            </span>
+            <span style={{ fontSize: 10.5, color: '#b2abc4', lineHeight: 1.3 }}>
+              Drag anywhere · {presenter.shape}
+            </span>
+            {onStartPreview && (
+              <button
+                type="button"
+                className="camera-bubble-pill"
+                onClick={() => onStartPreview()}
+                title="Turn on live camera preview inside the bubble"
+              >
+                Live preview
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Quick on-bubble HUD trigger & corner/shape/effect popover (works while idle AND while recording) */}
@@ -256,6 +297,7 @@ export function CameraBubble({
               <button
                 key={corner}
                 type="button"
+                data-testid={`bubble-place-${corner}`}
                 className={`camera-bubble-chip${active ? ' is-active' : ''}`}
                 aria-label={`Move bubble to ${corner}`}
                 title={`Snap camera bubble to ${corner}`}
@@ -267,6 +309,7 @@ export function CameraBubble({
           })}
           <button
             type="button"
+            data-testid="camera-bubble-options-toggle"
             className={`camera-bubble-chip${optionsOpen ? ' is-active' : ''}`}
             aria-label="Bubble shape and effects"
             aria-expanded={optionsOpen}
@@ -278,13 +321,19 @@ export function CameraBubble({
         </div>
 
         {optionsOpen && (
-          <div className="camera-bubble-popover" role="dialog" aria-label="Camera bubble options">
+          <div
+            className="camera-bubble-popover"
+            data-testid="camera-bubble-options-popover"
+            role="dialog"
+            aria-label="Camera bubble options"
+          >
             <div className="camera-bubble-section-label">Shape</div>
             <div className="camera-bubble-pill-grid" role="group" aria-label="Bubble shape options">
               {PRESENTER_BUBBLE_SHAPES.map((s) => (
                 <button
                   key={s.id}
                   type="button"
+                  data-testid={`bubble-shape-${s.id}`}
                   className={`camera-bubble-pill${presenter.shape === s.id ? ' is-active' : ''}`}
                   aria-pressed={presenter.shape === s.id}
                   onClick={() => onUpdatePresenter({ shape: s.id })}
@@ -300,6 +349,7 @@ export function CameraBubble({
                 <button
                   key={fx.id}
                   type="button"
+                  data-testid={`bubble-effect-${fx.id}`}
                   className={`camera-bubble-pill${(presenter.effect ?? 'none') === fx.id ? ' is-active' : ''}`}
                   aria-pressed={(presenter.effect ?? 'none') === fx.id}
                   onClick={() => onUpdatePresenter({ effect: fx.id })}
@@ -335,6 +385,7 @@ export function CameraBubble({
               </button>
               <button
                 type="button"
+                data-testid="bubble-place-center"
                 className="camera-bubble-pill"
                 onClick={() => snapToPlace('center')}
               >

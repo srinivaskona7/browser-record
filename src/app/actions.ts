@@ -234,9 +234,56 @@ export async function deleteProjectFolder(folder: string): Promise<{ ok: boolean
     .getState()
     .pushToast(
       `Deleted "${folder}" from the workspace, including its recordings. Exports you saved elsewhere are untouched.`,
-      'info',
+    'info',
     );
   return { ok: true };
+}
+
+/**
+ * Permanently delete every project folder in the current workspace (including
+ * their recordings and imported originals). Closes the active project if open.
+ */
+export async function deleteAllProjectsFromWorkspace(): Promise<{
+  ok: boolean;
+  deletedCount: number;
+  reason?: string;
+}> {
+  const session = useSession.getState();
+  const workspace = session.workspace;
+  if (!workspace) return { ok: false, deletedCount: 0, reason: 'No workspace is open, so nothing was deleted.' };
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  deletingFolder = '__all__';
+  const deadline = Date.now() + 5000;
+  while (saving && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
+  if (saving) {
+    deletingFolder = null;
+    return { ok: false, deletedCount: 0, reason: 'A save is still in progress. Try again in a moment.' };
+  }
+  let deletedCount = 0;
+  try {
+    const rows = await listProjects(workspace.root);
+    for (const row of rows) {
+      const res = await deleteProject(workspace.root, row.folder);
+      if (res.ok) deletedCount += 1;
+    }
+  } finally {
+    deletingFolder = null;
+  }
+  useEditor.getState().closeProject();
+  useSession.getState().setProjectFolder(null);
+  useSession.getState().setSaveState('saved');
+  writeLastSession({ projectFolder: null });
+  useSession.getState().setRoute('projects');
+  useSession
+    .getState()
+    .pushToast(
+      `Deleted all ${deletedCount} project(s) and their recordings from the workspace.`,
+      'info',
+    );
+  return { ok: true, deletedCount };
 }
 
 export async function refreshProjectList() {

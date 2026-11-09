@@ -112,6 +112,9 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       } catch {
         // Ignore storage quota errors
       }
+      if (value && cameraOn && !cameraPreviewStream.current && !cameraStream.current) {
+        void startCameraPreview();
+      }
       return value;
     });
   };
@@ -120,7 +123,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
   const [reviewTrimOut, setReviewTrimOut] = useState(0);
   const [reviewPreviewUrl, setReviewPreviewUrl] = useState<string | null>(null);
   const [floatingClosedDuringTake, setFloatingClosedDuringTake] = useState(false);
-  const [cameraDuplicationMode, setCameraDuplicationMode] = useState<CameraDuplicationMode>('baked-in-screen');
+  const [cameraDuplicationMode, setCameraDuplicationMode] = useState<CameraDuplicationMode>('separate-layer');
   const [postRecordTitle, setPostRecordTitle] = useState('');
   const [hideFloatingPreview, setHideFloatingPreview] = useState(false);
   const [hideMonitorDuringDisplay, setHideMonitorDuringDisplay] = useState(true);
@@ -1506,6 +1509,24 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         >
           {stealthMode ? 'Exit stealth' : 'Stealth panel'}
         </Button>
+        {cameraOn && (
+          <Button
+            size="sm"
+            variant={!hideFloatingPreview ? 'primary' : 'ghost'}
+            aria-pressed={!hideFloatingPreview}
+            onClick={() => {
+              if (hideFloatingPreview) {
+                setHideFloatingPreview(false);
+                if (!cameraPreviewOn && stage === 'idle') void startCameraPreview();
+              } else {
+                setHideFloatingPreview(true);
+              }
+            }}
+            title="Show or hide the standalone draggable camera bubble"
+          >
+            {hideFloatingPreview ? 'Show bubble' : 'Camera bubble'}
+          </Button>
+        )}
         <Button
           size="sm"
           variant={teleprompterOpen || teleprompter.enabled ? 'primary' : 'ghost'}
@@ -1582,16 +1603,55 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
               Mic {micOn ? 'On' : 'Off'}
             </button>
             {cameraOn && (
-              <button
-                type="button"
-                className="stealth-chip"
-                aria-pressed={cameraPreviewOn || stage === 'recording' || stage === 'paused'}
-                disabled={stage !== 'idle'}
-                onClick={() => (cameraPreviewOn ? stopCameraPreview() : void startCameraPreview())}
-                title="Preview and position the standalone camera bubble before recording"
-              >
-                {cameraPreviewOn ? 'Hide bubble' : 'Show bubble'}
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="stealth-chip"
+                  aria-pressed={!hideFloatingPreview}
+                  onClick={() => {
+                    if (hideFloatingPreview) {
+                      setHideFloatingPreview(false);
+                      if (!cameraPreviewOn && stage === 'idle') void startCameraPreview();
+                    } else {
+                      setHideFloatingPreview(true);
+                    }
+                  }}
+                  title="Show or hide the standalone draggable camera bubble"
+                >
+                  {hideFloatingPreview ? 'Show bubble' : 'Hide bubble'}
+                </button>
+                <select
+                  aria-label="Stealth bubble shape"
+                  className="stealth-chip"
+                  value={presenter.shape}
+                  onChange={(e) =>
+                    setPresenter((current) => ({ ...current, shape: e.target.value as PresenterProps['shape'] }))
+                  }
+                >
+                  {PRESENTER_BUBBLE_SHAPES.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.shortLabel}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Stealth bubble effect"
+                  className="stealth-chip"
+                  value={presenter.effect ?? 'none'}
+                  onChange={(e) =>
+                    setPresenter((current) => ({
+                      ...current,
+                      effect: e.target.value as NonNullable<PresenterProps['effect']>,
+                    }))
+                  }
+                >
+                  {PRESENTER_BUBBLE_EFFECTS.map((fx) => (
+                    <option key={fx.id} value={fx.id}>
+                      {fx.shortLabel}
+                    </option>
+                  ))}
+                </select>
+              </>
             )}
           </div>
 
@@ -1833,7 +1893,8 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
           (Circle, Square, Rounded, Portrait, Pill, Hexagon) and visual effect options. */}
       {cameraOn &&
         !hideFloatingPreview &&
-        (cameraPreviewOn ||
+        (!hidden ||
+          cameraPreviewOn ||
           stage === 'ready' ||
           stage === 'countdown' ||
           stage === 'recording' ||
@@ -1844,6 +1905,8 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
             presenter={presenter}
             stage={stage}
             position={selfViewPos}
+            cameraLive={cameraPreviewOn || stage === 'ready' || stage === 'countdown' || stage === 'recording' || stage === 'paused'}
+            onStartPreview={() => void startCameraPreview()}
             onPositionChange={setSelfViewPos}
             onUpdatePresenter={(patch) =>
               setPresenter((current) => {

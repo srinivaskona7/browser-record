@@ -14,7 +14,10 @@ const capture = vi.hoisted(() => ({ start: vi.fn(), stop: vi.fn(), pause: vi.fn(
 const importing = vi.hoisted(() => vi.fn());
 vi.mock('../src/capture/recorder', () => ({ CaptureSession: { start: capture.start }, recoverInterruptedTake: vi.fn() }));
 vi.mock('../src/app/bootstrap', async (original) => ({ ...await original<object>(), importMediaIntoSession: importing }));
-vi.mock('../src/workspace/workspace', async (original) => ({ ...await original<object>(), listTakes: vi.fn(async () => []), checkStorageHeadroom: vi.fn(async () => ({ enough: true })) }));
+vi.mock('../src/workspace/workspace', async (original) => ({
+  ...(await original<typeof import('../src/workspace/workspace')>()),
+  checkStorageHeadroom: vi.fn(async () => ({ enough: true })),
+}));
 vi.mock('../src/capture/devices', async (original) => ({ ...await original<object>(), enumerateDevices: vi.fn(async () => ({ cameras: [], microphones: [] })), onDeviceChange: vi.fn(() => () => undefined) }));
 
 let host: HTMLDivElement;
@@ -608,6 +611,72 @@ it('renders standalone CameraBubble with live shape/effect/placement options dur
   expect(host.querySelector('[aria-label="Presenter quick placement"]')).not.toBeNull();
   expect(host.textContent).toContain('Position X');
   expect(host.textContent).toContain('Position Y');
+
+  // Verify Editor left-rail Camera tool (EditorToolLibrary tool="presenter") also exposes shapes, visual effects, Center, and X/Y sliders
+  const { EditorToolLibrary } = await import('../src/ui/EditorTools');
+  await act(async () => root.render(<EditorToolLibrary tool="presenter" project={project} clip={presenterClip} />));
+  expect(host.querySelector('[data-testid="presenter-reframe-panel"]')).not.toBeNull();
+  expect(host.querySelector('[aria-label="Editor bubble effects"]')).not.toBeNull();
+  expect(host.textContent).toContain('Position X');
+  expect(host.textContent).toContain('Position Y');
+});
+
+it('supports Delete all projects in ProjectsPage and Delete all recordings in RecordingsLibrary', async () => {
+  const { ProjectsPage } = await import('../src/ui/ProjectsPage');
+  const { MemoryDirectoryHandle } = await import('../src/workspace/memoryFs');
+  const { saveProject, writeTakeManifest } = await import('../src/workspace/workspace');
+
+  const rootDir = new MemoryDirectoryHandle('workspace');
+  useSession.setState({
+    workspace: {
+      root: rootDir,
+      info: { mode: 'memory', name: 'Test Workspace', persistent: false },
+    },
+    projectFolder: 'proj-a',
+  });
+
+  const projA = createProject({ name: 'Project Alpha', width: 1920, height: 1080, fps: { num: 30, den: 1 } });
+  const projB = createProject({ name: 'Project Beta', width: 1920, height: 1080, fps: { num: 30, den: 1 } });
+  await saveProject(rootDir, projA, 'proj-a');
+  await saveProject(rootDir, projB, 'proj-b');
+  await writeTakeManifest(rootDir, 'proj-a', {
+    version: 1,
+    takeId: 'take_alpha_1',
+    projectId: projA.id,
+    startedAt: new Date().toISOString(),
+    endedAt: new Date(Date.now() + 3000).toISOString(),
+    status: 'finalized',
+    segmentSeconds: 5,
+    assets: [],
+  });
+
+  await act(async () => root.render(<ProjectsPage />));
+  expect(host.textContent).toContain('Project Alpha');
+  expect(host.textContent).toContain('Project Beta');
+
+  // Delete all recordings from the RecordingsLibrary section first
+  const deleteAllTakesBtn = host.querySelector('[data-testid="delete-all-takes-btn"]') as HTMLButtonElement;
+  expect(deleteAllTakesBtn).not.toBeNull();
+  await act(async () => deleteAllTakesBtn.click());
+  const confirmDeleteAllTakesBtn = document.querySelector(
+    '[data-testid="confirm-delete-all-takes-btn"]',
+  ) as HTMLButtonElement;
+  expect(confirmDeleteAllTakesBtn).not.toBeNull();
+  await act(async () => confirmDeleteAllTakesBtn.click());
+  expect(host.querySelector('[data-testid="delete-all-takes-btn"]')).toBeNull();
+
+  // Now click Delete all projects and confirm
+  const deleteAllProjectsBtn = host.querySelector('[data-testid="delete-all-projects-btn"]') as HTMLButtonElement;
+  expect(deleteAllProjectsBtn).not.toBeNull();
+  await act(async () => deleteAllProjectsBtn.click());
+  const confirmDeleteAllProjectsBtn = document.querySelector(
+    '[data-testid="confirm-delete-all-projects-btn"]',
+  ) as HTMLButtonElement;
+  expect(confirmDeleteAllProjectsBtn).not.toBeNull();
+  await act(async () => confirmDeleteAllProjectsBtn.click());
+
+  expect(host.textContent).toContain('No projects yet');
+  expect(useEditor.getState().project).toBeNull();
 });
 
 

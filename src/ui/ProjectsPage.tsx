@@ -12,6 +12,7 @@ import {
 } from '../app/bootstrap';
 import {
   createAndOpenProject,
+  deleteAllProjectsFromWorkspace,
   formatBytes,
   importProjectBundle,
 } from '../app/actions';
@@ -49,6 +50,8 @@ export function ProjectsPage() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ folder: string; project: ProjectSummary } | null>(null);
+  const [deleteAllOpen, setDeleteAllOpen] = useState(false);
+  const [deletingAll, setDeletingAll] = useState(false);
   const [name, setName] = useState('Untitled session');
   const [preset, setPreset] = useState('1080p');
   const [fpsValue, setFpsValue] = useState('30');
@@ -383,6 +386,14 @@ export function ProjectsPage() {
                     { value: 'duration-desc', label: 'Sort: Longest duration' },
                   ]}
                 />
+                <Button
+                  size="sm"
+                  variant="danger"
+                  data-testid="delete-all-projects-btn"
+                  onClick={() => setDeleteAllOpen(true)}
+                >
+                  Delete all ({projects.length})…
+                </Button>
               </>
             )}
           </div>
@@ -543,6 +554,53 @@ export function ProjectsPage() {
         onClose={() => setDeleteTarget(null)}
         onDeleted={refresh}
       />
+
+      <Dialog
+        open={deleteAllOpen}
+        title={`Delete all ${projects.length} project(s)?`}
+        onClose={() => {
+          if (!deletingAll) setDeleteAllOpen(false);
+        }}
+        footer={
+          <>
+            <Button variant="ghost" disabled={deletingAll} onClick={() => setDeleteAllOpen(false)}>
+              Cancel — keep projects
+            </Button>
+            <Button
+              variant="danger"
+              disabled={deletingAll || projects.length === 0}
+              data-testid="confirm-delete-all-projects-btn"
+              onClick={async () => {
+                setDeletingAll(true);
+                try {
+                  const res = await deleteAllProjectsFromWorkspace();
+                  if (res.ok) {
+                    setDeleteAllOpen(false);
+                    await refresh();
+                  } else if (res.reason) {
+                    pushToast(res.reason, 'error');
+                  }
+                } finally {
+                  setDeletingAll(false);
+                }
+              }}
+            >
+              {deletingAll ? 'Deleting all…' : `Delete all ${projects.length} project(s) permanently`}
+            </Button>
+          </>
+        }
+      >
+        <div className="stack">
+          <p>
+            This permanently deletes all <strong>{projects.length}</strong> project folder(s) in this workspace,
+            including their <code>project.json</code> timelines, recorded takes, and imported media copies.
+          </p>
+          <div className="warn-card">
+            Exports you saved outside this workspace (Downloads, another folder) are not touched. This action cannot be
+            undone.
+          </div>
+        </div>
+      </Dialog>
     </div>
   );
 }
