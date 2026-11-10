@@ -10,6 +10,7 @@ import { decodeAudioForExport } from '../audio/prepare';
 import { PlanningPanel } from './PlanningPanel';
 import {
   PRESETS,
+  applyCompactBitrateBudget,
   defaultPresetId,
   formatBytes,
   planBitrate,
@@ -65,6 +66,7 @@ export function ExportPage() {
   const [targetGb, setTargetGb] = useState('');
   const [includeCaptions, setIncludeCaptions] = useState(true);
   const [turboMode, setTurboMode] = useState(true);
+  const [compactSizeMode, setCompactSizeMode] = useState(true);
   const [sidecarFormat, setSidecarFormat] = useState<'none' | 'srt' | 'vtt' | 'both'>('none');
   const [wavExportBusy, setWavExportBusy] = useState(false);
   const [resultPreviewUrl, setResultPreviewUrl] = useState<string | null>(null);
@@ -134,6 +136,10 @@ export function ExportPage() {
   const durationSeconds = exportTargetProject ? exportTargetProject.durationTicks / TICKS_PER_SECOND : 0;
   // Custom target file size only applies when Custom preset is active; never leaks into standard presets.
   const useCustomTargetSize = presetId === CUSTOM_ID && Boolean(targetGb && Number(targetGb) > 0);
+  const compactRates = useMemo(
+    () => applyCompactBitrateBudget(preset.videoBitrate, preset.audioBitrate, compactSizeMode && !useCustomTargetSize),
+    [preset.videoBitrate, preset.audioBitrate, compactSizeMode, useCustomTargetSize],
+  );
   const budget = useMemo(() => {
     if (!exportTargetProject) return null;
     return planBitrate({
@@ -141,16 +147,19 @@ export function ExportPage() {
       width: preset.width,
       height: preset.height,
       fps: outputFps,
-      audioBitrate: preset.audioBitrate,
+      audioBitrate: compactRates.audioBitrate,
       maxDurationSeconds: preset.maxDurationSeconds,
       maxBytes: preset.maxBytes,
-      ...(useCustomTargetSize ? { targetBytes: Number(targetGb) * 1_000_000_000 } : { videoBitrate: preset.videoBitrate }),
+      compactSizeMode,
+      ...(useCustomTargetSize
+        ? { targetBytes: Number(targetGb) * 1_000_000_000 }
+        : { videoBitrate: compactRates.videoBitrate }),
     });
-  }, [exportTargetProject, preset, durationSeconds, outputFps, useCustomTargetSize, targetGb]);
+  }, [exportTargetProject, preset, durationSeconds, outputFps, useCustomTargetSize, targetGb, compactRates, compactSizeMode]);
 
   const effectiveVideoBitrate = useCustomTargetSize
     ? Math.round((budget?.videoMbps ?? 0) * 1_000_000)
-    : preset.videoBitrate;
+    : compactRates.videoBitrate;
 
   const resolvedOutput = useMemo(
     () => ({
@@ -159,10 +168,10 @@ export function ExportPage() {
       fps: outputFps,
       container: preset.container,
       videoBitrate: effectiveVideoBitrate,
-      audioBitrate: preset.audioBitrate,
+      audioBitrate: compactRates.audioBitrate,
       sampleRate: project?.settings.sampleRate ?? 48_000,
     }),
-    [preset.width, preset.height, outputFps, preset.container, effectiveVideoBitrate, preset.audioBitrate, project?.settings.sampleRate],
+    [preset.width, preset.height, outputFps, preset.container, effectiveVideoBitrate, compactRates.audioBitrate, project?.settings.sampleRate],
   );
 
   useEffect(() => {
@@ -416,6 +425,7 @@ export function ExportPage() {
         signal: controller.signal,
         includeCaptions,
         turboMode,
+        compactSizeMode,
         onProgress: setProgress,
       });
       setPlaybackVerified(null);
@@ -504,6 +514,7 @@ export function ExportPage() {
         getAssetFile: (path) => ensureAssetFile(path),
         includeCaptions,
         turboMode,
+        compactSizeMode,
       });
       if (!out.buffer) throw new Error('The sample could not be buffered in memory.');
       const blob = new Blob([out.buffer], { type: out.container === 'mp4' ? 'video/mp4' : 'video/webm' });
@@ -771,6 +782,16 @@ export function ExportPage() {
                   onChange={setTurboMode}
                 />
               </Field>
+              <Field
+                label="File size (4× Smaller Ultra-Compact VBR)"
+                hint="Uses HEVC/AV1/H.264 High VBR, 8s long-GOP keyframe spacing, and screen-detail hints for 4× smaller files."
+              >
+                <Toggle
+                  label="📦 4× Smaller File Size (Ultra-Compact VBR)"
+                  checked={compactSizeMode}
+                  onChange={setCompactSizeMode}
+                />
+              </Field>
             </div>
 
             <details className="record-details">
@@ -910,11 +931,12 @@ export function ExportPage() {
               data-testid="export-output-summary"
             >
               {resolvedOutput.height}p ({resolvedOutput.width}×{resolvedOutput.height}) · {resolvedOutput.fps} fps ·{' '}
-              {Number((resolvedOutput.videoBitrate / 1e6).toFixed(1))} Mbps · {resolvedOutput.container.toUpperCase()} ·{' '}
+              {Number((resolvedOutput.videoBitrate / 1e6).toFixed(2))} Mbps · {resolvedOutput.container.toUpperCase()} ·{' '}
               {formatDuration(durationSeconds)} · Estimated size: ~{formatBytes(budget?.estimatedBytes ?? 0)}
               {activeSegment ? ` · Chapter: ${activeSegment.label}` : ' · Full timeline'}
               {resolvedOutput.width < resolvedOutput.height ? ' · Vertical 9:16' : ' · Landscape'}
-              {turboMode ? ' · ⚡ 4× Turbo' : ''}
+              {turboMode ? ' · ⚡ 4× Faster' : ''}
+              {compactSizeMode ? ' · 📦 4× Smaller' : ''}
             </div>
             <div className="field-hint mono" style={{ wordBreak: 'break-all' }}>
               {destinationPath}

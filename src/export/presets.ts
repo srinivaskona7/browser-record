@@ -321,6 +321,25 @@ export interface BitrateBudget {
 export const CONTAINER_OVERHEAD = 0.01;
 
 /**
+ * Computes the 4× smaller Ultra-Compact VBR video and audio bitrates for screen,
+ * terminal, and presenter-bubble lessons using long-GOP (8s keyframe interval),
+ * `contentHint: 'detail'`, and high-efficiency HEVC/AV1/H.264 High VBR.
+ */
+export function applyCompactBitrateBudget(
+  videoBitrate: number,
+  audioBitrate: number,
+  compactSizeMode = true,
+): { videoBitrate: number; audioBitrate: number } {
+  if (!compactSizeMode) {
+    return { videoBitrate, audioBitrate };
+  }
+  return {
+    videoBitrate: Math.max(350_000, Math.round(videoBitrate * 0.25)),
+    audioBitrate: Math.min(audioBitrate, 96_000),
+  };
+}
+
+/**
  * Plan a bitrate for a duration and target size. A target size is a budget,
  * not a promise: VBR encoders land near it, not on it.
  *
@@ -336,6 +355,7 @@ export function planBitrate(params: {
   videoBitrate?: number;
   maxDurationSeconds?: number;
   maxBytes?: number;
+  compactSizeMode?: boolean;
 }): BitrateBudget {
   const warnings: string[] = [];
   const overheadFactor = 1 + CONTAINER_OVERHEAD;
@@ -359,8 +379,10 @@ export function planBitrate(params: {
   const pixelsPerSecond = params.width * params.height * params.fps;
   const bitsPerPixel = pixelsPerSecond > 0 ? (videoMbps * 1_000_000) / pixelsPerSecond : 0;
 
-  // Below ~0.02 bits/pixel/second, small text and UI edges start to smear.
-  const threshold = params.height >= 2000 ? 0.02 : 0.015;
+  // Below ~0.02 bits/pixel/second (or ~0.0045 in 4× Ultra-Compact long-GOP screen-detail mode),
+  // small text and UI edges start to smear.
+  const baseThreshold = params.height >= 2000 ? 0.02 : 0.015;
+  const threshold = params.compactSizeMode ? baseThreshold * 0.22 : baseThreshold;
   if (bitsPerPixel < threshold && params.durationSeconds > 0) {
     warnings.push(
       `${videoMbps.toFixed(2)} Mbps at ${params.width}×${params.height}${params.fps} is ${bitsPerPixel.toFixed(3)} bits/pixel — likely to soften terminal text and UI edges.`,

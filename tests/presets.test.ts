@@ -37,6 +37,34 @@ describe('bitrate budget', () => {
       expect(preset.videoBitrate).toBeLessThanOrEqual(12_000_000 + 6_000_000);
     }
   });
+
+  it('reduces video bitrate and estimated file size by 4x in Ultra-Compact VBR mode', async () => {
+    const { applyCompactBitrateBudget } = await import('../src/export/presets');
+    const standardBudget = planBitrate({
+      durationSeconds: 600,
+      width: 1920,
+      height: 1080,
+      fps: 30,
+      audioBitrate: 192_000,
+      videoBitrate: 8_000_000,
+      compactSizeMode: false,
+    });
+    const compactRates = applyCompactBitrateBudget(8_000_000, 192_000, true);
+    expect(compactRates.videoBitrate).toBe(2_000_000);
+    expect(compactRates.audioBitrate).toBe(96_000);
+
+    const compactBudget = planBitrate({
+      durationSeconds: 600,
+      width: 1920,
+      height: 1080,
+      fps: 30,
+      audioBitrate: compactRates.audioBitrate,
+      videoBitrate: compactRates.videoBitrate,
+      compactSizeMode: true,
+    });
+    expect(compactBudget.estimatedBytes).toBeLessThanOrEqual(standardBudget.estimatedBytes * 0.26);
+    expect(compactBudget.plausible).toBe(true);
+  });
 });
 
 describe('quality sample planning', () => {

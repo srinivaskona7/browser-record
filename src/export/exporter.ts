@@ -27,7 +27,7 @@ import { ensureProjectFontsLoaded } from '../effects/catalog';
 import { renderFrame } from '../render/compose';
 import { MediaAssetResolver, prepareFrameSources, type PreparedFrame } from '../render/sources';
 import { frameCount } from '../project/factory';
-import { formatBytes, planBitrate, type ExportPreset } from './presets';
+import { applyCompactBitrateBudget, formatBytes, planBitrate, type ExportPreset } from './presets';
 import type { DirectoryHandleLike, FileHandleLike, WritableLike } from '../workspace/types';
 import { resolveFile } from '../workspace/workspace';
 
@@ -59,6 +59,8 @@ export interface ExportResult {
   hasAudio: boolean;
   /** Whether 4× Turbo Hardware Acceleration pipeline was active. */
   turboMode?: boolean;
+  /** Whether 4× Smaller Ultra-Compact VBR encoding was active. */
+  compactSizeMode?: boolean;
 }
 
 export interface ExportRequest {
@@ -86,6 +88,12 @@ export interface ExportRequest {
    * pipelining to achieve 4×+ faster export throughput.
    */
   turboMode?: boolean;
+  /**
+   * 4× Smaller Size (default true): uses high-efficiency HEVC/AV1/H.264 High VBR,
+   * 8-second long-GOP keyframe interval, `contentHint: 'detail'`, and 0.25× target
+   * bitrate so exported files are ~4× smaller while keeping UI & terminal text sharp.
+   */
+  compactSizeMode?: boolean;
 }
 
 export class ExportCancelled extends Error {
@@ -148,16 +156,34 @@ export async function exportProject(request: ExportRequest): Promise<ExportResul
   const frameOffsetX = (width - project.canvas.width * frameScale) / 2;
   const frameOffsetY = (height - project.canvas.height * frameScale) / 2;
 
-  // Codec selection is measured, not assumed.
+  const turboMode = request.turboMode !== false;
+  const compactSizeMode = request.compactSizeMode !== false;
+  const compactBitrates =
+    request.videoBitrate !== undefined
+      ? {
+          videoBitrate: request.videoBitrate,
+          audioBitrate: request.audioBitrate ?? (compactSizeMode ? Math.min(preset.audioBitrate, 96_000) : preset.audioBitrate),
+        }
+      : applyCompactBitrateBudget(preset.videoBitrate, request.audioBitrate ?? preset.audioBitrate, compactSizeMode);
+  const videoBitrate = compactBitrates.videoBitrate;
+  const audioBitrate = compactBitrates.audioBitrate;
+
+  // Codec selection is measured, not assumed. In 4× Smaller mode, prefer HEVC/AV1 first
+  // when the target container is MP4 so hardware HEVC/AV1 encoders deliver maximum compression.
+  const effectivePreference: Array<CodecCandidate['family']> =
+    compactSizeMode && preset.container === 'mp4'
+      ? Array.from(new Set<CodecCandidate['family']>(['hevc', 'av1', ...preset.codecPreference]))
+      : preset.codecPreference;
   const videoSupport: CodecSupport[] = [];
-  for (const codec of VIDEO_CODECS) {
-    if (!preset.codecPreference.includes(codec.family as never)) continue;
-    videoSupport.push(await probeVideoEncoder(codec, width, height, fpsNumber, request.videoBitrate ?? preset.videoBitrate));
+  for (const family of effectivePreference) {
+    for (const codec of VIDEO_CODECS.filter((c) => c.family === family)) {
+      videoSupport.push(await probeVideoEncoder(codec, width, height, fpsNumber, videoBitrate));
+    }
   }
   let chosenVideo = videoSupport.find((support) => support.encoderSupported);
   if (!chosenVideo) {
     // WebM is the fallback container when H.264 is unavailable but VP9/VP8 is.
-    const webm = await probeVideoEncoder(VIDEO_CODECS.find((c) => c.family === 'vp9')!, width, height, fpsNumber, preset.videoBitrate);
+    const webm = await probeVideoEncoder(VIDEO_CODECS.find((c) => c.family === 'vp9')!, width, height, fpsNumber, videoBitrate);
     if (webm.encoderSupported) chosenVideo = webm;
   }
   if (!chosenVideo) {
@@ -173,8 +199,6 @@ export async function exportProject(request: ExportRequest): Promise<ExportResul
       `${chosenVideo.codec.label} is the supported encoder here, so this export is ${container.toUpperCase()} (${chosenVideo.codec.label}) instead of ${preset.container.toUpperCase()}.`,
     );
   }
-  const videoBitrate = request.videoBitrate ?? preset.videoBitrate;
-  const audioBitrate = request.audioBitrate ?? preset.audioBitrate;
 
   let audioCodec = await pickAudioCodec(container, audioBitrate, project.settings.sampleRate);
   if (!audioCodec) {
@@ -188,6 +212,7 @@ export async function exportProject(request: ExportRequest): Promise<ExportResul
     fps: fpsNumber,
     audioBitrate: audioCodec ? audioBitrate : 0,
     videoBitrate,
+    compactSizeMode,
   });
   warnings.push(...budget.warnings);
 
@@ -224,7 +249,6 @@ export async function exportProject(request: ExportRequest): Promise<ExportResul
   const canvas = createExportCanvas(width, height);
   const ctx = canvas.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
   if (!ctx) throw new Error('Could not create the export canvas.');
-  const turboMode = request.turboMode !== false;
   if ('imageSmoothingEnabled' in ctx) {
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = turboMode ? 'medium' : 'high';
@@ -233,9 +257,10 @@ export async function exportProject(request: ExportRequest): Promise<ExportResul
   const videoSource = new CanvasSource(canvas, {
     codec: mediaBunnyVideoCodec(chosenVideo.codec) as VideoCodec,
     quality: new Quality({ bitrate: videoBitrate, bitrateMode: 'variable' }),
-    keyFrameInterval: 4,
+    keyFrameInterval: compactSizeMode ? 8 : 4,
     latencyMode: turboMode ? 'realtime' : 'quality',
     hardwareAcceleration: turboMode ? 'prefer-hardware' : 'no-preference',
+    contentHint: compactSizeMode ? 'detail' : undefined,
   });
   output.addVideoTrack(videoSource, { frameRate: fpsNumber });
 
@@ -383,7 +408,14 @@ export async function exportProject(request: ExportRequest): Promise<ExportResul
           fps: rate,
           bytesWritten: written,
           etaSeconds: remaining,
-          detail: turboMode ? '⚡ 4× Turbo Hardware Pipeline' : undefined,
+          detail:
+            turboMode && compactSizeMode
+              ? '⚡ 4× Turbo Hardware Pipeline · 📦 4× Smaller Ultra-Compact VBR'
+              : turboMode
+                ? '⚡ 4× Turbo Hardware Pipeline'
+                : compactSizeMode
+                  ? '📦 4× Smaller Ultra-Compact VBR'
+                  : undefined,
         });
       }
     }
@@ -472,6 +504,7 @@ export async function exportProject(request: ExportRequest): Promise<ExportResul
     warnings,
     hasAudio: Boolean(audioCodec && audioBuffer),
     turboMode,
+    compactSizeMode,
   };
 }
 
