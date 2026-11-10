@@ -44,8 +44,6 @@ import {
   PRESENTER_BUBBLE_EFFECTS,
   PRESENTER_BUBBLE_SHAPES,
   clamp,
-  presenterBubble,
-  presenterEffectFilter,
 } from '../render/layout';
 import { CameraBubble } from './CameraBubble';
 import {
@@ -97,28 +95,17 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     });
   };
   const [quietMode, setQuietMode] = useState<QuietMode>('full');
-  const [stealthMode, setStealthMode] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem('browser-record.stealth-mode.v1') === 'true';
-    } catch {
-      return false;
-    }
-  });
-  const [studioExpandedWhileRecording, setStudioExpandedWhileRecording] = useState(false);
+  const [stealthMode, setStealthMode] = useState<boolean>(false);
+  const [studioExpandedWhileRecording, setStudioExpandedWhileRecording] = useState(true);
   const toggleStealthMode = (next?: boolean) => {
     setStealthMode((prev) => {
       const value = typeof next === 'boolean' ? next : !prev;
-      try {
-        localStorage.setItem('browser-record.stealth-mode.v1', String(value));
-      } catch {
-        // Ignore storage quota errors
-      }
       if (value) {
         setStudioExpandedWhileRecording(false);
         if (cameraOn && !cameraPreviewStream.current && !cameraStream.current) {
           void startCameraPreview();
         }
-      } else if (stage === 'countdown' || stage === 'recording' || stage === 'paused') {
+      } else {
         setStudioExpandedWhileRecording(true);
       }
       return value;
@@ -911,7 +898,6 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     setStats(null);
     sessionStats.current = null;
     setCountdown(0);
-    setStudioExpandedWhileRecording(false);
     try {
       let specs = preparedSpecsRef.current;
       if (!specs) {
@@ -1042,7 +1028,6 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       // showed "recording" and 0 B committed after the take had finished.
       setStats(null);
       sessionStats.current = null;
-      setStudioExpandedWhileRecording(false);
       setStage('idle');
       void refreshTakes();
       // Preserve the review / post-record sheet when in Instant mode, when
@@ -1417,8 +1402,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
   );
   const isRecordingDisplaySurface =
     (stage === 'countdown' || stage === 'recording' || stage === 'paused') &&
-    screenOn &&
-    (actualReturnedSurface.surface === 'screen' || (!actualReturnedSurface.surface && surface === 'screen'));
+    screenOn;
   const cameraLayerRule = useMemo(
     () =>
       resolveCameraLayerVisibility({
@@ -1524,17 +1508,10 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     );
   }
 
-  // A fixed virtual canvas is enough: every value below is converted to a
-  // percentage, so the preview matches presenterBubble at any display size.
-  const previewCanvas = {
-    width: 1000,
-    height: Math.max(1, Math.round((1000 * project.canvas.height) / project.canvas.width)),
-  };
-  const bubble = presenterBubble({ canvas: previewCanvas, presenter });
-
   const isActiveTake =
     stage === 'countdown' || stage === 'recording' || stage === 'paused' || stage === 'finishing';
-  const inStealthView = stealthMode || (isActiveTake && !studioExpandedWhileRecording);
+  void studioExpandedWhileRecording;
+  const inStealthView = stealthMode;
 
   return (
     <div
@@ -1562,31 +1539,26 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       <div className="recorder-entry-actions" role="group" aria-label="Record and edit entry points">
         <span className="recorder-mode-label"><span className="rec-dot still" aria-hidden /> Record</span>
         <ImportMediaButton disabled={stage !== 'idle'} />
-        <Button
-          size="sm"
-          variant={stealthMode ? 'primary' : 'ghost'}
-          aria-pressed={stealthMode}
-          onClick={() => toggleStealthMode()}
-          title="Collapse the entire Record tab into a small horizontal stealth panel with timer while keeping the camera bubble separate"
-        >
-          {stealthMode ? 'Exit stealth' : 'Stealth panel'}
-        </Button>
         {cameraOn && (
           <Button
             size="sm"
-            variant={!hideFloatingPreview ? 'primary' : 'ghost'}
-            aria-pressed={!hideFloatingPreview}
+            variant={cameraPreviewOn && !hideFloatingPreview ? 'primary' : 'ghost'}
+            aria-pressed={cameraPreviewOn && !hideFloatingPreview}
             onClick={() => {
-              if (hideFloatingPreview) {
-                setHideFloatingPreview(false);
-                if (!cameraPreviewOn && stage === 'idle') void startCameraPreview();
+              if (stage === 'idle') {
+                if (cameraPreviewOn) {
+                  stopCameraPreview();
+                } else {
+                  setHideFloatingPreview(false);
+                  void startCameraPreview();
+                }
               } else {
-                setHideFloatingPreview(true);
+                setHideFloatingPreview((prev) => !prev);
               }
             }}
-            title="Show or hide the standalone draggable camera bubble"
+            title="Preview and position the standalone draggable camera bubble"
           >
-            {hideFloatingPreview ? 'Show bubble' : 'Camera bubble'}
+            {cameraPreviewOn && !hideFloatingPreview ? 'Hide bubble' : 'Preview camera bubble'}
           </Button>
         )}
         <Button
@@ -2064,15 +2036,14 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       )}
       </>
       )}
-      {/* Standalone CameraBubble component: completely separate from the stealth horizontal
-          control bar, movable to any place during preview or recording, with live shape
+      {/* Standalone CameraBubble component: completely separate from the horizontal
+          recording control bar, movable to any place during preview or recording, with live shape
           (Circle, Square, Rounded, Portrait, Pill, Hexagon) and visual effect options.
           Hidden when Document/Video PiP (floatingCameraOpen) is open so the user never sees two camera bubbles. */}
       {cameraOn &&
         !hideFloatingPreview &&
         !floatingCameraOpen &&
-        (!hidden ||
-          cameraPreviewOn ||
+        (cameraPreviewOn ||
           stage === 'ready' ||
           stage === 'countdown' ||
           stage === 'recording' ||
@@ -2851,64 +2822,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                     pointerEvents: 'none',
                   }}
                 >
-                  The screen preview appears when recording starts. Use Preview camera to check the bubble first.
-                </div>
-              )}
-              {cameraOn && hideFloatingPreview && (
-                <div
-                  aria-label="Camera preview"
-                  style={{
-                    position: 'absolute',
-                    // Same geometry the exporter uses; size is a fraction of the
-                    // frame height and the corner margin is presenter.margin.
-                    left: `${(bubble.x / previewCanvas.width) * 100}%`,
-                    top: `${(bubble.y / previewCanvas.height) * 100}%`,
-                    width: `${(bubble.width / previewCanvas.width) * 100}%`,
-                    height: `${(bubble.height / previewCanvas.height) * 100}%`,
-                    borderRadius:
-                      presenter.shape === 'circle'
-                        ? '50%'
-                        : `${(bubble.radius / bubble.width) * 100}% / ${(bubble.radius / bubble.height) * 100}%`,
-                    overflow: 'hidden',
-                    boxShadow:
-                      presenter.shadow > 0
-                        ? `0 ${Math.max(2, bubble.height * 0.012)}px ${Math.max(4, bubble.height * 0.04)}px rgba(0,0,0,${Math.min(0.7, presenter.shadow / 30)})`
-                        : 'none',
-                    outline: presenter.border > 0 ? `2px solid ${presenter.borderColor}` : 'none',
-                    background: '#11161a',
-                  }}
-                >
-                  <video
-                    ref={cameraPreviewRef}
-                    muted
-                    playsInline
-                    style={{
-                      width: '100%',
-                      height: '100%',
-                      objectFit: 'cover',
-                      transform: presenter.mirror ? 'scaleX(-1)' : 'none',
-                      filter: presenterEffectFilter(presenter.effect),
-                      display: cameraReady ? 'block' : 'none',
-                    }}
-                  />
-                  {!cameraReady && (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        inset: 0,
-                        display: 'grid',
-                        placeItems: 'center',
-                        fontSize: 8,
-                        lineHeight: 1.1,
-                        color: 'var(--text-3)',
-                        textAlign: 'center',
-                        padding: 2,
-                        overflow: 'hidden',
-                      }}
-                    >
-                      camera
-                    </div>
-                  )}
+                  The screen preview appears when recording starts. Use Preview camera bubble to check and position the bubble first.
                 </div>
               )}
               {stage === 'recording' && (
