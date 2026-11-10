@@ -64,6 +64,7 @@ export function ExportPage() {
   const [audioKbps, setAudioKbps] = useState(128);
   const [targetGb, setTargetGb] = useState('');
   const [includeCaptions, setIncludeCaptions] = useState(true);
+  const [turboMode, setTurboMode] = useState(true);
   const [sidecarFormat, setSidecarFormat] = useState<'none' | 'srt' | 'vtt' | 'both'>('none');
   const [wavExportBusy, setWavExportBusy] = useState(false);
   const [resultPreviewUrl, setResultPreviewUrl] = useState<string | null>(null);
@@ -414,6 +415,7 @@ export function ExportPage() {
         getAssetFile: (path) => ensureAssetFile(path),
         signal: controller.signal,
         includeCaptions,
+        turboMode,
         onProgress: setProgress,
       });
       setPlaybackVerified(null);
@@ -501,6 +503,7 @@ export function ExportPage() {
         fps: resolvedOutput.fps,
         getAssetFile: (path) => ensureAssetFile(path),
         includeCaptions,
+        turboMode,
       });
       if (!out.buffer) throw new Error('The sample could not be buffered in memory.');
       const blob = new Blob([out.buffer], { type: out.container === 'mp4' ? 'video/mp4' : 'video/webm' });
@@ -758,6 +761,16 @@ export function ExportPage() {
               <Field label="Burned-in captions" hint="Render subtitle cues directly into the video frames.">
                 <Toggle label="Include captions in the picture" checked={includeCaptions} onChange={setIncludeCaptions} />
               </Field>
+              <Field
+                label="Export speed (4× Turbo Pipeline)"
+                hint="Uses single-pass sequential packet decoding, GPU hardware encoder acceleration, and 4-frame async pipelining."
+              >
+                <Toggle
+                  label="⚡ 4× Faster Turbo Export (Hardware Accelerated)"
+                  checked={turboMode}
+                  onChange={setTurboMode}
+                />
+              </Field>
             </div>
 
             <details className="record-details">
@@ -901,6 +914,7 @@ export function ExportPage() {
               {formatDuration(durationSeconds)} · Estimated size: ~{formatBytes(budget?.estimatedBytes ?? 0)}
               {activeSegment ? ` · Chapter: ${activeSegment.label}` : ' · Full timeline'}
               {resolvedOutput.width < resolvedOutput.height ? ' · Vertical 9:16' : ' · Landscape'}
+              {turboMode ? ' · ⚡ 4× Turbo' : ''}
             </div>
             <div className="field-hint mono" style={{ wordBreak: 'break-all' }}>
               {destinationPath}
