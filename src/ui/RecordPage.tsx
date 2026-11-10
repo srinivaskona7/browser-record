@@ -168,8 +168,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
   const [reviewTrimIn, setReviewTrimIn] = useState(0);
   const [reviewTrimOut, setReviewTrimOut] = useState(0);
   const [reviewPreviewUrl, setReviewPreviewUrl] = useState<string | null>(null);
-  const [floatingClosedDuringTake, setFloatingClosedDuringTake] = useState(false);
-  const [cameraDuplicationMode, setCameraDuplicationMode] = useState<CameraDuplicationMode>('separate-layer');
+  const [cameraDuplicationMode, setCameraDuplicationMode] = useState<CameraDuplicationMode>('baked-in-screen');
   const [postRecordTitle, setPostRecordTitle] = useState('');
   const [hideFloatingPreview, setHideFloatingPreview] = useState(false);
   const [hideMonitorDuringDisplay, setHideMonitorDuringDisplay] = useState(true);
@@ -552,13 +551,11 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
           floatingCameraRef.current = null;
           if (mountedRef.current) {
             setFloatingCameraOpen(false);
-            setFloatingClosedDuringTake(true);
           }
         },
       });
       floatingCameraRef.current = pipSession;
       setFloatingCameraOpen(true);
-      setFloatingClosedDuringTake(false);
     } catch (err) {
       setError(`Floating camera unavailable: ${(err as Error).message}`);
     }
@@ -649,12 +646,11 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
   useEffect(() => {
     const element = selfViewRef.current;
     if (!element) return;
-    (element as HTMLVideoElement & { autoPictureInPicture?: boolean }).autoPictureInPicture = true;
     const stream = cameraStream.current ?? cameraPreviewStream.current;
     if (!stream || element.srcObject === stream) return;
     element.srcObject = stream;
     void element.play().catch(() => undefined);
-  }, [stage, cameraPreviewOn]);
+  }, [stage, cameraPreviewOn, floatingCameraOpen]);
 
   const acquireSources = async (): Promise<CaptureAssetSpec[]> => {
     const specs: CaptureAssetSpec[] = [];
@@ -910,18 +906,6 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       setError('Choose at least one source: screen, camera or microphone.');
       startingRef.current = false;
       return;
-    }
-    // When starting from Ready state (or Camera-only mode where getDisplayMedia is not needed),
-    // use this click's transient user activation to auto-pop the cross-tab floating PiP camera bubble.
-    if (
-      cameraOn &&
-      !hideFloatingPreview &&
-      !floatingCameraRef.current &&
-      !floatingClosedDuringTake &&
-      floatingSupport.mode === 'document-pip' &&
-      (Boolean(preparedSpecsRef.current) || !screenOn)
-    ) {
-      void toggleFloatingCamera().catch(() => undefined);
     }
     // Take one's numbers must never show on take two's bar before the first commit.
     setStats(null);
@@ -2082,9 +2066,11 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       )}
       {/* Standalone CameraBubble component: completely separate from the stealth horizontal
           control bar, movable to any place during preview or recording, with live shape
-          (Circle, Square, Rounded, Portrait, Pill, Hexagon) and visual effect options. */}
+          (Circle, Square, Rounded, Portrait, Pill, Hexagon) and visual effect options.
+          Hidden when Document/Video PiP (floatingCameraOpen) is open so the user never sees two camera bubbles. */}
       {cameraOn &&
         !hideFloatingPreview &&
+        !floatingCameraOpen &&
         (!hidden ||
           cameraPreviewOn ||
           stage === 'ready' ||
@@ -2868,7 +2854,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                   The screen preview appears when recording starts. Use Preview camera to check the bubble first.
                 </div>
               )}
-              {cameraOn && (
+              {cameraOn && hideFloatingPreview && (
                 <div
                   aria-label="Camera preview"
                   style={{

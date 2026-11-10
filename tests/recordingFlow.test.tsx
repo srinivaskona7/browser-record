@@ -527,6 +527,9 @@ it('renders standalone CameraBubble with live shape/effect/placement options dur
   ];
 
   await act(async () => root.render(<RecordPage />));
+  // Verify only ONE camera bubble is rendered on the page (no duplicate inner 'Camera preview' box)
+  expect(host.querySelectorAll('[data-testid="camera-bubble"]')).toHaveLength(1);
+  expect(host.querySelector('[aria-label="Camera preview"]')).toBeNull();
 
   // Toggle small horizontal stealth record panel and verify recording timer is shown
   await act(async () => button('Stealth panel').click());
