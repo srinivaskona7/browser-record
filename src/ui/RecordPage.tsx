@@ -104,6 +104,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       return false;
     }
   });
+  const [studioExpandedWhileRecording, setStudioExpandedWhileRecording] = useState(false);
   const toggleStealthMode = (next?: boolean) => {
     setStealthMode((prev) => {
       const value = typeof next === 'boolean' ? next : !prev;
@@ -112,11 +113,56 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       } catch {
         // Ignore storage quota errors
       }
-      if (value && cameraOn && !cameraPreviewStream.current && !cameraStream.current) {
-        void startCameraPreview();
+      if (value) {
+        setStudioExpandedWhileRecording(false);
+        if (cameraOn && !cameraPreviewStream.current && !cameraStream.current) {
+          void startCameraPreview();
+        }
+      } else if (stage === 'countdown' || stage === 'recording' || stage === 'paused') {
+        setStudioExpandedWhileRecording(true);
       }
       return value;
     });
+  };
+  const STEALTH_BAR_KEY = 'browser-record.stealth-bar-position';
+  const [stealthBarPos, setStealthBarPos] = useState<{ x: number; y: number } | null>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STEALTH_BAR_KEY) ?? 'null') as { x?: unknown; y?: unknown } | null;
+      return saved && typeof saved.x === 'number' && typeof saved.y === 'number' ? { x: saved.x, y: saved.y } : null;
+    } catch {
+      return null;
+    }
+  });
+  const stealthBarDrag = useRef<{ pointerId: number; dx: number; dy: number } | null>(null);
+  const onStealthBarPointerDown = (event: React.PointerEvent<HTMLElement>) => {
+    const target = event.target as HTMLElement;
+    if (target.closest('button, select, input, summary, details, a')) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    stealthBarDrag.current = {
+      pointerId: event.pointerId,
+      dx: event.clientX - rect.left,
+      dy: event.clientY - rect.top,
+    };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+  const onStealthBarPointerMove = (event: React.PointerEvent<HTMLElement>) => {
+    const drag = stealthBarDrag.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = clamp(event.clientX - drag.dx, 8, Math.max(8, (window.innerWidth || 1280) - rect.width - 8));
+    const y = clamp(event.clientY - drag.dy, 8, Math.max(8, (window.innerHeight || 720) - rect.height - 8));
+    setStealthBarPos({ x, y });
+    try {
+      localStorage.setItem(STEALTH_BAR_KEY, JSON.stringify({ x, y }));
+    } catch {
+      // Ignore storage errors
+    }
+  };
+  const onStealthBarPointerUp = (event: React.PointerEvent<HTMLElement>) => {
+    if (stealthBarDrag.current?.pointerId === event.pointerId) {
+      event.currentTarget.releasePointerCapture?.(event.pointerId);
+      stealthBarDrag.current = null;
+    }
   };
   const [controlsHidden, setControlsHidden] = useState(false);
   const [reviewTrimIn, setReviewTrimIn] = useState(0);
@@ -877,6 +923,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     setStats(null);
     sessionStats.current = null;
     setCountdown(0);
+    setStudioExpandedWhileRecording(false);
     try {
       let specs = preparedSpecsRef.current;
       if (!specs) {
@@ -1007,6 +1054,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       // showed "recording" and 0 B committed after the take had finished.
       setStats(null);
       sessionStats.current = null;
+      setStudioExpandedWhileRecording(false);
       setStage('idle');
       void refreshTakes();
       // Preserve the review / post-record sheet when in Instant mode, when
@@ -1474,13 +1522,17 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
   };
   const bubble = presenterBubble({ canvas: previewCanvas, presenter });
 
+  const isActiveTake =
+    stage === 'countdown' || stage === 'recording' || stage === 'paused' || stage === 'finishing';
+  const inStealthView = stealthMode || (isActiveTake && !studioExpandedWhileRecording);
+
   return (
     <div
-      className={`page recorder-page cap-recorder${showMonitor ? ' monitor-expanded' : ''}${stealthMode ? ' is-stealth-mode' : ''}`}
+      className={`page recorder-page cap-recorder${showMonitor ? ' monitor-expanded' : ''}${inStealthView ? ' is-stealth-mode' : ''}`}
       data-route-hidden={hidden ? 'true' : undefined}
-      data-stealth-mode={stealthMode ? 'true' : 'false'}
+      data-stealth-mode={inStealthView ? 'true' : 'false'}
     >
-      {!hidden && (
+      {!hidden && !inStealthView && (
       <>
       <header className="page-head">
         <div>
@@ -1505,7 +1557,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
           variant={stealthMode ? 'primary' : 'ghost'}
           aria-pressed={stealthMode}
           onClick={() => toggleStealthMode()}
-          title="Collapse the recorder into a small horizontal stealth panel with timer while keeping the camera bubble separate"
+          title="Collapse the entire Record tab into a small horizontal stealth panel with timer while keeping the camera bubble separate"
         >
           {stealthMode ? 'Exit stealth' : 'Stealth panel'}
         </Button>
@@ -1544,118 +1596,154 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
           ⚙ Advanced
         </Button>
       </div>
+      </>
+      )}
 
-      {/* Compact Horizontal Stealth Record Panel (with live recording timer & independent bubble controls) */}
-      {stealthMode && (
+      {/* Small Horizontal Stealth Record Panel (with live recording timer & independent bubble controls).
+          When Stealth Mode is active or when recording is running, the ENTIRE Record tab collapses
+          into ONLY this small draggable horizontal bar + the standalone <CameraBubble />. */}
+      {inStealthView && (
         <section
-          className={`stealth-record-panel${stage === 'recording' ? ' is-recording' : stage === 'paused' ? ' is-paused' : ''}`}
+          className={`stealth-record-panel rec-bar rec-dock rec-dock-stealth${stage === 'recording' ? ' is-recording' : stage === 'paused' ? ' is-paused paused' : ''}${controlsHidden ? ' rec-dock-collapsed' : ''}`}
           role="region"
           aria-label="Stealth horizontal record panel"
           data-testid="stealth-record-panel"
+          data-stealth="true"
+          title="Drag anywhere on screen"
+          onPointerDown={onStealthBarPointerDown}
+          onPointerMove={onStealthBarPointerMove}
+          onPointerUp={onStealthBarPointerUp}
+          onPointerCancel={onStealthBarPointerUp}
+          style={
+            stealthBarPos
+              ? {
+                  position: 'fixed',
+                  left: stealthBarPos.x,
+                  top: stealthBarPos.y,
+                  right: 'auto',
+                  bottom: 'auto',
+                  transform: 'none',
+                }
+              : undefined
+          }
         >
-          <div className="stealth-panel-status">
+          <div className="stealth-panel-status rec-dock-status">
             <span className={stage === 'recording' || stage === 'countdown' ? 'rec-dot' : 'rec-dot still'} aria-hidden />
-            <strong className="stealth-panel-state">
+            <strong className="stealth-panel-state rec-state" role="status" aria-live="polite">
               {stage === 'countdown'
                 ? 'STARTING'
                 : stage === 'recording'
                   ? 'REC'
                   : stage === 'paused'
                     ? 'PAUSED'
-                    : stage === 'ready'
-                      ? 'READY'
-                      : 'STEALTH'}
+                    : stage === 'finishing'
+                      ? 'SAVING'
+                      : stage === 'ready'
+                        ? 'READY'
+                        : 'STEALTH'}
             </strong>
-            <span className="stealth-panel-timer mono" data-testid="stealth-panel-timer">
+            <span className="stealth-panel-timer rec-timer mono" data-testid="stealth-panel-timer">
               {stage === 'countdown' ? `00:00:0${countdown}` : formatElapsed(elapsedSeconds)}
             </span>
-          </div>
-
-          <div className="stealth-panel-sources" role="group" aria-label="Stealth quick sources">
-            <button
-              type="button"
-              className="stealth-chip"
-              disabled={stage !== 'idle'}
-              aria-pressed={screenOn}
-              onClick={() => setScreenOn((prev) => !prev)}
-              title="Toggle screen capture"
-            >
-              Screen {screenOn ? 'On' : 'Off'}
-            </button>
-            <button
-              type="button"
-              className="stealth-chip"
-              disabled={stage !== 'idle'}
-              aria-pressed={cameraOn}
-              onClick={() => setCameraOn((prev) => !prev)}
-              title="Toggle camera bubble"
-            >
-              Cam {cameraOn ? 'On' : 'Off'}
-            </button>
-            <button
-              type="button"
-              className="stealth-chip"
-              disabled={stage !== 'idle'}
-              aria-pressed={micOn}
-              onClick={() => setMicOn((prev) => !prev)}
-              title="Toggle microphone"
-            >
-              Mic {micOn ? 'On' : 'Off'}
-            </button>
-            {cameraOn && (
-              <>
-                <button
-                  type="button"
-                  className="stealth-chip"
-                  aria-pressed={!hideFloatingPreview}
-                  onClick={() => {
-                    if (hideFloatingPreview) {
-                      setHideFloatingPreview(false);
-                      if (!cameraPreviewOn && stage === 'idle') void startCameraPreview();
-                    } else {
-                      setHideFloatingPreview(true);
-                    }
-                  }}
-                  title="Show or hide the standalone draggable camera bubble"
-                >
-                  {hideFloatingPreview ? 'Show bubble' : 'Hide bubble'}
-                </button>
-                <select
-                  aria-label="Stealth bubble shape"
-                  className="stealth-chip"
-                  value={presenter.shape}
-                  onChange={(e) =>
-                    setPresenter((current) => ({ ...current, shape: e.target.value as PresenterProps['shape'] }))
-                  }
-                >
-                  {PRESENTER_BUBBLE_SHAPES.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.shortLabel}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  aria-label="Stealth bubble effect"
-                  className="stealth-chip"
-                  value={presenter.effect ?? 'none'}
-                  onChange={(e) =>
-                    setPresenter((current) => ({
-                      ...current,
-                      effect: e.target.value as NonNullable<PresenterProps['effect']>,
-                    }))
-                  }
-                >
-                  {PRESENTER_BUBBLE_EFFECTS.map((fx) => (
-                    <option key={fx.id} value={fx.id}>
-                      {fx.shortLabel}
-                    </option>
-                  ))}
-                </select>
-              </>
+            <span data-testid="rec-dock-timer" style={{ display: 'none' }} aria-hidden="true">
+              {stage === 'countdown' ? countdown : formatElapsed(elapsedSeconds)}
+            </span>
+            {!controlsHidden && (error || warnings[0]) && (
+              <Badge tone={error ? 'danger' : 'warn'}>{error ?? warnings[0]}</Badge>
             )}
           </div>
 
-          <div className="stealth-panel-actions">
+          {!controlsHidden && (
+            <div className="stealth-panel-sources" role="group" aria-label="Stealth quick sources">
+              {(stage === 'idle' || stage === 'ready') && (
+                <>
+                  <button
+                    type="button"
+                    className="stealth-chip"
+                    disabled={stage !== 'idle'}
+                    aria-pressed={screenOn}
+                    onClick={() => setScreenOn((prev) => !prev)}
+                    title="Toggle screen capture"
+                  >
+                    Screen {screenOn ? 'On' : 'Off'}
+                  </button>
+                  <button
+                    type="button"
+                    className="stealth-chip"
+                    disabled={stage !== 'idle'}
+                    aria-pressed={cameraOn}
+                    onClick={() => setCameraOn((prev) => !prev)}
+                    title="Toggle camera bubble"
+                  >
+                    Cam {cameraOn ? 'On' : 'Off'}
+                  </button>
+                  <button
+                    type="button"
+                    className="stealth-chip"
+                    disabled={stage !== 'idle'}
+                    aria-pressed={micOn}
+                    onClick={() => setMicOn((prev) => !prev)}
+                    title="Toggle microphone"
+                  >
+                    Mic {micOn ? 'On' : 'Off'}
+                  </button>
+                </>
+              )}
+              {cameraOn && (
+                <>
+                  <button
+                    type="button"
+                    className="stealth-chip"
+                    aria-pressed={!hideFloatingPreview}
+                    onClick={() => {
+                      if (hideFloatingPreview) {
+                        setHideFloatingPreview(false);
+                        if (!cameraPreviewOn && stage === 'idle') void startCameraPreview();
+                      } else {
+                        setHideFloatingPreview(true);
+                      }
+                    }}
+                    title="Show or hide the standalone draggable camera bubble"
+                  >
+                    {hideFloatingPreview ? 'Show bubble' : 'Hide bubble'}
+                  </button>
+                  <select
+                    aria-label="Stealth bubble shape"
+                    className="stealth-chip"
+                    value={presenter.shape}
+                    onChange={(e) =>
+                      setPresenter((current) => ({ ...current, shape: e.target.value as PresenterProps['shape'] }))
+                    }
+                  >
+                    {PRESENTER_BUBBLE_SHAPES.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.shortLabel}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    aria-label="Stealth bubble effect"
+                    className="stealth-chip"
+                    value={presenter.effect ?? 'none'}
+                    onChange={(e) =>
+                      setPresenter((current) => ({
+                        ...current,
+                        effect: e.target.value as NonNullable<PresenterProps['effect']>,
+                      }))
+                    }
+                  >
+                    {PRESENTER_BUBBLE_EFFECTS.map((fx) => (
+                      <option key={fx.id} value={fx.id}>
+                        {fx.shortLabel}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
+            </div>
+          )}
+
+          <div className="stealth-panel-actions rec-dock-actions">
             {(stage === 'idle' || stage === 'ready') && (
               <Button size="sm" variant="primary" onClick={() => void start()}>
                 <span aria-hidden>●</span> {stage === 'ready' ? 'Start take' : 'Record'}
@@ -1663,20 +1751,67 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
             )}
             {(stage === 'recording' || stage === 'paused') && (
               <>
-                <Button size="sm" variant="ghost" onClick={togglePause}>
-                  {stage === 'paused' ? 'Resume' : 'Pause'}
-                </Button>
-                <Button size="sm" variant="danger" onClick={() => void stopTake()}>
-                  ■ Stop
-                </Button>
-                {micOn && (
-                  <Button size="sm" variant="ghost" onClick={toggleMicMute}>
-                    {micMuted ? 'Unmute' : 'Mute'}
-                  </Button>
+                <RecordingActions
+                  paused={stage === 'paused'}
+                  openEditor={openEditorAfterStop && capMode !== 'instant'}
+                  onPause={togglePause}
+                  onStop={() => void stopTake()}
+                />
+                {!controlsHidden && (
+                  <>
+                    <Button size="sm" variant="danger" onClick={() => void stopTake()}>
+                      ■ Stop
+                    </Button>
+                    {micOn && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={toggleMicMute}
+                        aria-label={micMuted ? 'Unmute the microphone' : 'Mute the microphone'}
+                      >
+                        {micMuted ? 'Unmute' : 'Mute'}
+                      </Button>
+                    )}
+                    <details className="rec-more-menu">
+                      <summary className="btn btn-ghost btn-sm" aria-label="More recording controls">
+                        More
+                      </summary>
+                      <div className="rec-more-popover" role="group" aria-label="Secondary recording actions">
+                        {cameraOn && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            aria-pressed={hideFloatingPreview}
+                            onClick={() => setHideFloatingPreview((prev) => !prev)}
+                          >
+                            {hideFloatingPreview ? 'Show camera preview' : 'Hide camera preview'}
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="rec-restart"
+                          onClick={() => setRestartOpen(true)}
+                          aria-label="Restart take"
+                        >
+                          ↻ Restart
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => setDiscardOpen(true)}>
+                          Discard
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={addMarker}>
+                          Marker
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => void stopTake(true)}>
+                          Stop &amp; export
+                        </Button>
+                      </div>
+                    </details>
+                  </>
                 )}
               </>
             )}
-            {floatingSupport.supported && (
+            {floatingSupport.supported && !controlsHidden && (
               <Button
                 size="sm"
                 variant={floatingCameraOpen ? 'primary' : 'ghost'}
@@ -1687,18 +1822,37 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                 {floatingCameraOpen ? 'Close PiP' : 'PiP'}
               </Button>
             )}
+            {isActiveTake ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label={controlsHidden ? 'Show recording controls' : 'Hide recording controls'}
+                onClick={() => setControlsHidden((prev) => !prev)}
+              >
+                {controlsHidden ? 'Show controls ▴' : 'Hide controls ▾'}
+              </Button>
+            ) : null}
             <Button
               size="sm"
               variant="ghost"
               aria-label="Expand full studio panel"
-              onClick={() => toggleStealthMode(false)}
+              onClick={() => {
+                if (isActiveTake) {
+                  setStudioExpandedWhileRecording(true);
+                  setStealthMode(false);
+                } else {
+                  toggleStealthMode(false);
+                }
+              }}
             >
-              Expand ▾
+              Exit stealth ▾
             </Button>
           </div>
         </section>
       )}
 
+      {!hidden && !inStealthView && (
+      <>
       {teleprompterOpen && (
         <section className="cap-ready-card stack" style={{ gap: 10 }} role="region" aria-label="Teleprompter">
           <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
@@ -1919,9 +2073,8 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
           />
         )}
 
-      {/* Active recording bar: small horizontal stealth control bar with live recording timer,
-          Pause/Resume, Stop, and More — completely independent from CameraBubble. */}
-      {(stage === 'countdown' || stage === 'recording' || stage === 'paused' || stage === 'finishing') && (
+      {/* Active recording bar: only shown when the user explicitly expands the full Studio UI while recording */}
+      {!inStealthView && (stage === 'countdown' || stage === 'recording' || stage === 'paused' || stage === 'finishing') && (
         <div
           className={`rec-bar rec-dock${stage === 'paused' ? ' paused' : ''}${controlsHidden ? ' rec-dock-collapsed' : ''}${stealthMode ? ' rec-dock-stealth' : ''}`}
           role="group"
@@ -2061,7 +2214,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         </div>
       )}
 
-      {!hidden && !stealthMode && (
+      {!hidden && !inStealthView && (
       <div className="split-grid">
         <div className="stack" style={{ gap: 14 }}>
           <Panel
@@ -2852,7 +3005,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       </Dialog>
 
       {/* Shared Recordings Library with project filter and preview-first Clear unused recordings */}
-      {!hidden && (quietMode === 'full' || (stage !== 'recording' && stage !== 'paused')) && (
+      {!hidden && !inStealthView && (quietMode === 'full' || (stage !== 'recording' && stage !== 'paused')) && (
         <RecordingsLibrary
           activeTakeId={activeTakeId}
           defaultProjectFolder={session.projectFolder ?? 'all'}

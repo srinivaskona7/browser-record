@@ -191,10 +191,17 @@ it('uses Cap Stealth Controller constraints (surfaceSwitching: exclude), hides l
   });
 
   await startRecording();
-  // Cap Stealth Controller guidance and captured surface badge are visibly rendered
+  // By default, starting a recording collapses the entire Record tab into pure Stealth Mode:
+  // page header, entry actions, preview monitor, and split-grid are all hidden!
+  expect(host.querySelector('[data-testid="stealth-record-panel"].is-recording')).not.toBeNull();
+  expect(host.querySelector('.page-head')).toBeNull();
+  expect(host.querySelector('.recorder-entry-actions')).toBeNull();
+  expect(host.querySelector('.split-grid')).toBeNull();
+
+  // Expanding out of stealth while recording shows Cap Stealth Controller guidance and hides the live screen monitor
+  await act(async () => button('Exit stealth').click());
   expect(host.querySelector('[aria-label="Across tabs and display capture"]')).not.toBeNull();
   expect(host.textContent).toContain('Captured: Display');
-  // Live screen monitor is hidden during Entire screen capture to prevent hall-of-mirrors effect
   expect(host.textContent).toContain('Live screen monitor hidden during display capture');
 
   // Stopping sharing triggers track 'ended' and saves one playable take
@@ -527,8 +534,11 @@ it('renders standalone CameraBubble with live shape/effect/placement options dur
   expect(stealthPanel).not.toBeNull();
   const stealthTimer = host.querySelector('[data-testid="stealth-panel-timer"]') as HTMLElement;
   expect(stealthTimer?.textContent).toBe('00:00:00');
-  // Full split-grid is hidden while stealth mode small horizontal panel is active
+  // Entire Record tab (header, entry actions, preview monitor, split-grid, RecordingsLibrary) is hidden in Stealth Mode
+  expect(host.querySelector('.page-head')).toBeNull();
+  expect(host.querySelector('.recorder-entry-actions')).toBeNull();
   expect(host.querySelector('.split-grid')).toBeNull();
+  expect(host.querySelector('[data-testid="clear-unused-takes-btn"]')).toBeNull();
 
   // Start recording directly from the stealth horizontal panel (with Camera enabled so CameraBubble mounts)
   await act(async () => {
