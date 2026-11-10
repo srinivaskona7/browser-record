@@ -98,12 +98,11 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
   const [stealthMode, setStealthMode] = useState<boolean>(() => {
     try {
       const saved = localStorage.getItem('browser-record.stealth-mode.v2');
-      return saved === null ? true : saved === 'true';
+      return saved === null ? false : saved === 'true';
     } catch {
-      return true;
+      return false;
     }
   });
-  const [studioExpandedWhileRecording, setStudioExpandedWhileRecording] = useState(false);
   const toggleStealthMode = (next?: boolean) => {
     setStealthMode((prev) => {
       const value = typeof next === 'boolean' ? next : !prev;
@@ -113,12 +112,9 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         // Ignore storage quota errors
       }
       if (value) {
-        setStudioExpandedWhileRecording(false);
         if (cameraOn && !cameraPreviewStream.current && !cameraStream.current) {
           void startCameraPreview();
         }
-      } else {
-        setStudioExpandedWhileRecording(true);
       }
       return value;
     });
@@ -910,7 +906,6 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     setStats(null);
     sessionStats.current = null;
     setCountdown(0);
-    setStudioExpandedWhileRecording(false);
     try {
       let specs = preparedSpecsRef.current;
       if (!specs) {
@@ -1343,19 +1338,15 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     let firstClipId: string | undefined;
     try {
       useEditor.getState().apply('Open recorded take', (p) => {
-        const hasScreenAsset = result.assets.some((a) => a.kind === 'video' && !/camera|webcam/i.test(a.name));
         // If a screen/window/tab video was recorded AND the live CameraBubble was visible on screen
         // (!hideFloatingPreview) in 'baked-in-screen' mode, the bubble is ALREADY visible in screen.webm
-        // for Entire Screen / current-Window / current-Tab captures unless the browser explicitly
-        // reported a separate 'tab' surface that was not this page. Default to compositeInExport=false
-        // when screen + visible bubble were captured so the Editor never shows two bubbles at once!
-        const shouldCompositeCameraLayer =
-          !hasScreenAsset ||
-          hideFloatingPreview ||
-          cameraDuplicationMode === 'separate-layer';
+        // so the Editor never shows two bubbles at once. `cameraLayerRule.compositeInExport` encodes
+        // the capture-surface rule: Window/Tab captures never include the floating bubble in the shared
+        // surface stream, so the camera is composited as a separate layer there; only Entire Screen
+        // with a visible bubble in baked-in-screen mode skips the second composite.
         const effectivePresenter: PresenterProps = {
           ...presenter,
-          visible: presenter.visible !== false && shouldCompositeCameraLayer && cameraLayerRule.compositeInExport,
+          visible: presenter.visible !== false && cameraLayerRule.compositeInExport,
         };
         const screenAsset = result.assets.find((a) => a.kind === 'video' && !/camera|webcam/i.test(a.name));
         const targetWidth =
@@ -1533,7 +1524,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
 
   const isActiveTake =
     stage === 'countdown' || stage === 'recording' || stage === 'paused' || stage === 'finishing';
-  const inStealthView = stealthMode || (isActiveTake && !studioExpandedWhileRecording);
+  const inStealthView = stealthMode;
 
   return (
     <div
@@ -1782,57 +1773,52 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                   onPause={togglePause}
                   onStop={() => void stopTake()}
                 />
+                {!controlsHidden && micOn && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={toggleMicMute}
+                    aria-label={micMuted ? 'Unmute the microphone' : 'Mute the microphone'}
+                  >
+                    {micMuted ? 'Unmute' : 'Mute'}
+                  </Button>
+                )}
                 {!controlsHidden && (
-                  <>
-                    <Button size="sm" variant="danger" onClick={() => void stopTake()}>
-                      ■ Stop
-                    </Button>
-                    {micOn && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={toggleMicMute}
-                        aria-label={micMuted ? 'Unmute the microphone' : 'Mute the microphone'}
-                      >
-                        {micMuted ? 'Unmute' : 'Mute'}
-                      </Button>
-                    )}
-                    <details className="rec-more-menu">
-                      <summary className="btn btn-ghost btn-sm" aria-label="More recording controls">
-                        More
-                      </summary>
-                      <div className="rec-more-popover" role="group" aria-label="Secondary recording actions">
-                        {cameraOn && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            aria-pressed={hideFloatingPreview}
-                            onClick={() => setHideFloatingPreview((prev) => !prev)}
-                          >
-                            {hideFloatingPreview ? 'Show camera preview' : 'Hide camera preview'}
-                          </Button>
-                        )}
+                  <details className="rec-more-menu">
+                    <summary className="btn btn-ghost btn-sm" aria-label="More recording controls">
+                      More
+                    </summary>
+                    <div className="rec-more-popover" role="group" aria-label="Secondary recording actions">
+                      {cameraOn && (
                         <Button
                           size="sm"
                           variant="ghost"
-                          className="rec-restart"
-                          onClick={() => setRestartOpen(true)}
-                          aria-label="Restart take"
+                          aria-pressed={hideFloatingPreview}
+                          onClick={() => setHideFloatingPreview((prev) => !prev)}
                         >
-                          ↻ Restart
+                          {hideFloatingPreview ? 'Show camera preview' : 'Hide camera preview'}
                         </Button>
-                        <Button size="sm" variant="ghost" onClick={() => setDiscardOpen(true)}>
-                          Discard
-                        </Button>
-                        <Button size="sm" variant="ghost" onClick={addMarker}>
-                          Marker
-                        </Button>
-                        <Button size="sm" variant="ghost" onClick={() => void stopTake(true)}>
-                          Stop &amp; export
-                        </Button>
-                      </div>
-                    </details>
-                  </>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="rec-restart"
+                        onClick={() => setRestartOpen(true)}
+                        aria-label="Restart take"
+                      >
+                        ↻ Restart
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setDiscardOpen(true)}>
+                        Discard
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={addMarker}>
+                        Marker
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => void stopTake(true)}>
+                        Stop &amp; export
+                      </Button>
+                    </div>
+                  </details>
                 )}
               </>
             )}
@@ -1861,14 +1847,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
               size="sm"
               variant="ghost"
               aria-label="Expand full studio panel"
-              onClick={() => {
-                if (isActiveTake) {
-                  setStudioExpandedWhileRecording(true);
-                  setStealthMode(false);
-                } else {
-                  toggleStealthMode(false);
-                }
-              }}
+              onClick={() => setStealthMode(false)}
             >
               Exit stealth ▾
             </Button>
