@@ -87,6 +87,8 @@ export async function probeAudioEncoder(codec: CodecCandidate, sampleRate: numbe
 export function probeRecorderMimeTypes(): Array<{ mime: string; supported: boolean }> {
   if (typeof MediaRecorder === 'undefined') return [];
   const candidates = [
+    'video/webm;codecs=av01.0.08M.08,opus',
+    'video/mp4;codecs=hvc1.1.6.L123.B0,mp4a.40.2',
     'video/webm;codecs=vp9,opus',
     'video/webm;codecs=vp8,opus',
     'video/webm',
@@ -103,8 +105,22 @@ export function chooseRecorderMime(kind: 'video' | 'audio', includeAudio: boolea
   const candidates =
     kind === 'video'
       ? includeAudio
-        ? ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4']
-        : ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4']
+        ? [
+            'video/webm;codecs=av01.0.08M.08,opus',
+            'video/mp4;codecs=hvc1.1.6.L123.B0,mp4a.40.2',
+            'video/webm;codecs=vp9,opus',
+            'video/webm;codecs=vp8,opus',
+            'video/webm',
+            'video/mp4',
+          ]
+        : [
+            'video/webm;codecs=av01.0.08M.08',
+            'video/mp4;codecs=hvc1.1.6.L123.B0',
+            'video/webm;codecs=vp9',
+            'video/webm;codecs=vp8',
+            'video/webm',
+            'video/mp4',
+          ]
       : ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/wav'];
   if (typeof MediaRecorder === 'undefined') return '';
   return candidates.find((mime) => MediaRecorder.isTypeSupported(mime)) ?? '';

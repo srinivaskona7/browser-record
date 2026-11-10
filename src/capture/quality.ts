@@ -32,21 +32,27 @@ export function captureDimensions(resolution: CaptureResolution): CaptureDimensi
 }
 
 /**
- * Bitrate that keeps terminal text sharp in a compact file size without asking a
- * 1080p capture to pretend it is 4K. ~4 Mbps at 1080p30 and ~14 Mbps at 4K30 VBR.
+ * Bitrate that keeps terminal text sharp in a 4× smaller Ultra-Compact VBR file
+ * (~3.6 Mbps at 4K30 and ~1.2 Mbps at 1080p30) using modern AV1/HEVC/VP9/H.264
+ * High VBR encoders, while keeping 1080p far below 4K.
  */
-export function recordingBitrate(width: number, height: number, fps: number): number {
+export function recordingBitrate(
+  width: number,
+  height: number,
+  fps: number,
+  compactSizeMode = true,
+): number {
   const pixels = Math.max(1, width * height);
   const pixelsPerSecond = pixels * Math.max(1, fps);
-  const bitsPerPixel = 0.06;
-  const floor = 2_800_000;
-  const ceiling = 24_000_000;
+  const bitsPerPixel = compactSizeMode ? 0.015 : 0.06;
+  const floor = compactSizeMode ? 750_000 : 2_800_000;
+  const ceiling = compactSizeMode ? 6_000_000 : 24_000_000;
   return Math.round(Math.min(ceiling, Math.max(floor, pixelsPerSecond * bitsPerPixel)));
 }
 
-/** Conservative first-run target when no project or measurement exists. */
+/** Default 4K capture target (3840×2160 @ 30 fps) with 4× smaller VBR bitrate. */
 export function firstRunQuality(): { resolution: CaptureResolution; fps: 30; dimensions: CaptureDimensions } {
-  return { resolution: '1080', fps: 30, dimensions: RESOLUTION_DIMENSIONS['1080'] };
+  return { resolution: '4k', fps: 30, dimensions: RESOLUTION_DIMENSIONS['4k'] };
 }
 
 /**

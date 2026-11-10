@@ -201,10 +201,12 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
   const [systemAudio, setSystemAudio] = useState(false);
   const [surface, setSurface] = useState<'screen' | 'window' | 'tab'>('screen');
   const [presenter, setPresenter] = useState<PresenterProps>(() => defaultPresenter());
-  // Start from the project's own canvas. A fresh project is 1080p/30 until the
-  // machine has been measured; nothing claims 4K before a track is opened.
+  // Default to 4K (3840×2160 @ 30) with 4× smaller Ultra-Compact VBR so screen and
+  // terminal captures start at full 4K clarity while using ~3.6 Mbps.
   const [resolution, setResolution] = useState<CaptureResolution>(() =>
-    project ? resolutionForCanvas(project.canvas) : '1080',
+    project && Math.max(project.canvas.width, project.canvas.height) >= 2560
+      ? resolutionForCanvas(project.canvas)
+      : '4k',
   );
   const [fps, setFps] = useState<'30' | '60'>(() =>
     project && frameRateForCanvas(project.canvas) === 60 ? '60' : '30',
@@ -302,12 +304,14 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     };
   }, [project, hidden]);
 
-  // Follow the project's canvas once per project. Re-running on every canvas
-  // change would overwrite a quality choice the user just made.
+  // Follow the project's canvas once per project if it was explicitly set to 1440p/4K;
+  // otherwise keep 4K capture target as the default.
   useEffect(() => {
     if (!project || initialisedFor.current === project.id) return;
     initialisedFor.current = project.id;
-    setResolution(resolutionForCanvas(project.canvas));
+    if (Math.max(project.canvas.width, project.canvas.height) >= 2560) {
+      setResolution(resolutionForCanvas(project.canvas));
+    }
     setFps(frameRateForCanvas(project.canvas) === 60 ? '60' : '30');
   }, [project]);
 
@@ -1361,8 +1365,30 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
           ...presenter,
           visible: presenter.visible !== false && cameraLayerRule.compositeInExport,
         };
+        const screenAsset = result.assets.find((a) => a.kind === 'video' && !/camera|webcam/i.test(a.name));
+        const targetWidth =
+          screenAsset?.width && screenAsset.width >= 2560
+            ? screenAsset.width
+            : resolution === '4k'
+              ? 3840
+              : resolution === '1440'
+                ? 2560
+                : p.canvas.width;
+        const targetHeight =
+          screenAsset?.height && screenAsset.height >= 1440
+            ? screenAsset.height
+            : resolution === '4k'
+              ? 2160
+              : resolution === '1440'
+                ? 1440
+                : p.canvas.height;
         const cleanBase: Project = {
           ...p,
+          canvas: {
+            ...p.canvas,
+            width: targetWidth,
+            height: targetHeight,
+          },
           tracks: [],
           assets: [...result.assets],
           markers: [...result.markers],
@@ -1687,6 +1713,18 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                   >
                     Mic {micOn ? 'On' : 'Off'}
                   </button>
+                  <select
+                    aria-label="Stealth capture resolution"
+                    className="stealth-chip"
+                    disabled={stage !== 'idle'}
+                    value={resolution}
+                    onChange={(e) => setResolution(e.target.value as CaptureResolution)}
+                    title="4K Ultra-Compact VBR capture resolution"
+                  >
+                    <option value="4k">4K Ultra-Compact</option>
+                    <option value="1440">1440p QHD</option>
+                    <option value="1080">1080p FHD</option>
+                  </select>
                 </>
               )}
               {cameraOn && (

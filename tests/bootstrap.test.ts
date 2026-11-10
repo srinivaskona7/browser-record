@@ -119,9 +119,16 @@ describe('capture quality defaults', () => {
     expect(resolutionForCanvas({ width: 3840, height: 2160 })).toBe('4k');
   });
 
-  it('keeps a 1080p target far below a 4K bitrate', () => {
+  it('keeps a 1080p target far below a 4K bitrate and makes 4K recording 4x smaller in Ultra-Compact VBR mode', async () => {
+    const { firstRunQuality } = await import('../src/capture/quality');
+    expect(firstRunQuality().resolution).toBe('4k');
+    expect(firstRunQuality().dimensions).toEqual({ width: 3840, height: 2160 });
     expect(recordingBitrate(1920, 1080, 30)).toBeLessThan(recordingBitrate(3840, 2160, 30));
     expect(recordingBitrate(1920, 1080, 60)).toBeGreaterThan(recordingBitrate(1920, 1080, 30));
+    // 4K30 Ultra-Compact VBR is ~3.73 Mbps (4x smaller than the 14.93 Mbps legacy rate)
+    const compact4k = recordingBitrate(3840, 2160, 30, true);
+    const legacy4k = recordingBitrate(3840, 2160, 30, false);
+    expect(compact4k).toBeLessThanOrEqual(Math.round(legacy4k * 0.26));
   });
 
   it('reads frame rate from the project canvas', () => {

@@ -224,11 +224,19 @@ export class CaptureSession {
       );
 
       const recorderFactory = options.createRecorder ?? ((stream, recorderOptions) => new MediaRecorder(stream, recorderOptions));
+      const baseVideoBps = options.videoBitsPerSecond ?? 3_600_000;
+      // Camera bubble track only occupies ~25% of the canvas height in composition, so
+      // capping its recording bitrate to 1.2 Mbps (or 0.35× of 4K screen bitrate) avoids
+      // doubling the take's disk footprint while keeping the presenter face crisp.
+      const assetVideoBps =
+        spec.key === 'camera'
+          ? Math.min(1_200_000, Math.max(600_000, Math.round(baseVideoBps * 0.35)))
+          : baseVideoBps;
       const recorderOptions: MediaRecorderOptions = {
         mimeType: spec.mimeType,
         ...(spec.kind === 'microphone' || spec.kind === 'system-audio'
-          ? { audioBitsPerSecond: options.audioBitsPerSecond ?? 160_000 }
-          : { videoBitsPerSecond: options.videoBitsPerSecond ?? 16_000_000 }),
+          ? { audioBitsPerSecond: options.audioBitsPerSecond ?? 96_000 }
+          : { videoBitsPerSecond: assetVideoBps }),
       };
       let recorder: MediaRecorder;
       try {
