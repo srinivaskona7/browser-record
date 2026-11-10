@@ -95,11 +95,23 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     });
   };
   const [quietMode, setQuietMode] = useState<QuietMode>('full');
-  const [stealthMode, setStealthMode] = useState<boolean>(false);
-  const [studioExpandedWhileRecording, setStudioExpandedWhileRecording] = useState(true);
+  const [stealthMode, setStealthMode] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('browser-record.stealth-mode.v2');
+      return saved === null ? true : saved === 'true';
+    } catch {
+      return true;
+    }
+  });
+  const [studioExpandedWhileRecording, setStudioExpandedWhileRecording] = useState(false);
   const toggleStealthMode = (next?: boolean) => {
     setStealthMode((prev) => {
       const value = typeof next === 'boolean' ? next : !prev;
+      try {
+        localStorage.setItem('browser-record.stealth-mode.v2', String(value));
+      } catch {
+        // Ignore storage quota errors
+      }
       if (value) {
         setStudioExpandedWhileRecording(false);
         if (cameraOn && !cameraPreviewStream.current && !cameraStream.current) {
@@ -898,6 +910,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     setStats(null);
     sessionStats.current = null;
     setCountdown(0);
+    setStudioExpandedWhileRecording(false);
     try {
       let specs = preparedSpecsRef.current;
       if (!specs) {
@@ -1330,9 +1343,19 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     let firstClipId: string | undefined;
     try {
       useEditor.getState().apply('Open recorded take', (p) => {
+        const hasScreenAsset = result.assets.some((a) => a.kind === 'video' && !/camera|webcam/i.test(a.name));
+        // If a screen/window/tab video was recorded AND the live CameraBubble was visible on screen
+        // (!hideFloatingPreview) in 'baked-in-screen' mode, the bubble is ALREADY visible in screen.webm
+        // for Entire Screen / current-Window / current-Tab captures unless the browser explicitly
+        // reported a separate 'tab' surface that was not this page. Default to compositeInExport=false
+        // when screen + visible bubble were captured so the Editor never shows two bubbles at once!
+        const shouldCompositeCameraLayer =
+          !hasScreenAsset ||
+          hideFloatingPreview ||
+          cameraDuplicationMode === 'separate-layer';
         const effectivePresenter: PresenterProps = {
           ...presenter,
-          visible: presenter.visible !== false && cameraLayerRule.compositeInExport,
+          visible: presenter.visible !== false && shouldCompositeCameraLayer && cameraLayerRule.compositeInExport,
         };
         const screenAsset = result.assets.find((a) => a.kind === 'video' && !/camera|webcam/i.test(a.name));
         const targetWidth =
@@ -1510,8 +1533,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
 
   const isActiveTake =
     stage === 'countdown' || stage === 'recording' || stage === 'paused' || stage === 'finishing';
-  void studioExpandedWhileRecording;
-  const inStealthView = stealthMode;
+  const inStealthView = stealthMode || (isActiveTake && !studioExpandedWhileRecording);
 
   return (
     <div
@@ -1539,6 +1561,15 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       <div className="recorder-entry-actions" role="group" aria-label="Record and edit entry points">
         <span className="recorder-mode-label"><span className="rec-dot still" aria-hidden /> Record</span>
         <ImportMediaButton disabled={stage !== 'idle'} />
+        <Button
+          size="sm"
+          variant={stealthMode ? 'primary' : 'ghost'}
+          aria-pressed={stealthMode}
+          onClick={() => toggleStealthMode(true)}
+          title="Collapse the entire Record tab into Pure Stealth Mode: only the small horizontal control bar with timer and the separate CameraBubble"
+        >
+          Stealth panel
+        </Button>
         {cameraOn && (
           <Button
             size="sm"
@@ -2043,7 +2074,8 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       {cameraOn &&
         !hideFloatingPreview &&
         !floatingCameraOpen &&
-        (cameraPreviewOn ||
+        ((!hidden && inStealthView) ||
+          cameraPreviewOn ||
           stage === 'ready' ||
           stage === 'countdown' ||
           stage === 'recording' ||

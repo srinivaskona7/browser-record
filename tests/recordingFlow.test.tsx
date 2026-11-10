@@ -60,6 +60,10 @@ afterEach(async () => { await act(() => root.unmount()); host.remove(); useEdito
 
 async function startRecording(review = false) {
   await act(async () => root.render(<RecordPage />));
+  // RecordPage starts in Pure Stealth Mode by default; click "Exit stealth" when testing Studio checkboxes
+  if (host.querySelector('[data-testid="stealth-record-panel"]')) {
+    await act(async () => button('Exit stealth').click());
+  }
   await act(() => {
     checkbox('Camera').click();
     checkbox('Microphone').click();
@@ -139,6 +143,7 @@ it('opens a clean timeline containing only the current recorded take at playhead
 
 it('separates choosing a source from starting the take via the Ready confirmation card and keeps active takes alive when hidden', async () => {
   await act(async () => root.render(<RecordPage />));
+  await act(async () => button('Exit stealth').click());
   await act(() => {
     checkbox('Camera').click();
     checkbox('Microphone').click();
@@ -191,7 +196,9 @@ it('uses Cap Stealth Controller constraints (surfaceSwitching: exclude), hides l
   });
 
   await startRecording();
-  // Normal Studio Record UI stays visible (no forced Stealth Mode) and live screen monitor is hidden to prevent mirror effect
+  // Recording enters Pure Stealth Mode by default; clicking Exit stealth expands the Studio UI
+  expect(host.querySelector('[data-testid="stealth-record-panel"].is-recording')).not.toBeNull();
+  await act(async () => button('Exit stealth').click());
   expect(host.querySelector('[aria-label="Across tabs and display capture"]')).not.toBeNull();
   expect(host.textContent).toContain('Captured: Display');
   expect(host.textContent).toContain('Live screen monitor hidden during display capture');
@@ -358,6 +365,7 @@ it('enforces the 3-case Camera-Duplication Rule so export contains the camera at
 
   // Verify compact setup with Show preview toggle, hideable recording controls (.rec-dock), and Instant mode Post-Record Quick Export sheet
   await act(async () => root.render(<RecordPage />));
+  await act(async () => button('Exit stealth').click());
   expect(host.querySelector('.cap-recorder.monitor-expanded')).toBeNull();
   await act(async () => button('Show preview').click());
   expect(host.querySelector('.cap-recorder.monitor-expanded')).not.toBeNull();
@@ -519,26 +527,30 @@ it('renders standalone CameraBubble with live shape/effect/placement options dur
   ];
 
   await act(async () => root.render(<RecordPage />));
-  // Before preview or recording starts, no placeholder camera bubble is shown and no duplicate 'Camera preview' box exists
-  expect(host.querySelectorAll('[data-testid="camera-bubble"]')).toHaveLength(0);
-  expect(host.querySelector('[aria-label="Camera preview"]')).toBeNull();
-
-  // Click "Preview camera bubble" to show the single live CameraBubble before recording
-  await act(async () => button('Preview camera bubble').click());
+  // RecordPage starts in Pure Stealth Mode by default: ONLY the small horizontal stealth bar + ONE CameraBubble are rendered!
+  const stealthPanel = host.querySelector('[data-testid="stealth-record-panel"]') as HTMLElement;
+  expect(stealthPanel).not.toBeNull();
+  const stealthTimer = host.querySelector('[data-testid="stealth-panel-timer"]') as HTMLElement;
+  expect(stealthTimer?.textContent).toBe('00:00:00');
+  expect(host.querySelector('.page-head')).toBeNull();
+  expect(host.querySelector('.recorder-entry-actions')).toBeNull();
+  expect(host.querySelector('.split-grid')).toBeNull();
   expect(host.querySelectorAll('[data-testid="camera-bubble"]')).toHaveLength(1);
   expect(host.querySelector('[aria-label="Camera preview"]')).toBeNull();
 
-  // Start recording with Camera enabled and 0s countdown
+  // Disable Microphone and countdown in Studio, then return to Pure Stealth Mode and click Record
+  await act(async () => button('Exit stealth').click());
   await act(() => {
     checkbox('Microphone').click();
     const countdown = host.querySelector('select[aria-label="Recording countdown"]') as HTMLSelectElement;
     countdown.value = '0';
     countdown.dispatchEvent(new Event('change', { bubbles: true }));
   });
-  await act(async () => button('Start recording').click());
+  await act(async () => button('Stealth panel').click());
+  await act(async () => button('Record').click());
 
-  // The horizontal recording dock timer is active and ONLY ONE standalone CameraBubble component is rendered
-  expect(host.querySelector('.rec-dock')).not.toBeNull();
+  // While recording in Pure Stealth Mode, ONLY the small horizontal stealth bar with timer and ONE CameraBubble exist
+  expect(host.querySelector('[data-testid="stealth-record-panel"].is-recording')).not.toBeNull();
   expect(host.querySelector('[data-testid="rec-dock-timer"]')).not.toBeNull();
   expect(host.querySelectorAll('[data-testid="camera-bubble"]')).toHaveLength(1);
   expect(host.querySelector('[aria-label="Camera preview"]')).toBeNull();

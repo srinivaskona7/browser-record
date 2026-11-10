@@ -2148,10 +2148,20 @@ select:disabled {
 }
 
 /* Small horizontal stealth record panel with recording timer */
+.app-shell:has(.recorder-page.is-stealth-mode:not([data-route-hidden='true'])) > .topbar {
+  opacity: 0.18;
+  transition: opacity 160ms ease;
+}
+
+.app-shell:has(.recorder-page.is-stealth-mode:not([data-route-hidden='true'])) > .topbar:hover,
+.app-shell:has(.recorder-page.is-stealth-mode:not([data-route-hidden='true'])) > .topbar:focus-within {
+  opacity: 1;
+}
+
 .recorder-page.is-stealth-mode {
   min-height: 0;
-  padding-top: 12px;
-  padding-bottom: 12px;
+  padding: 0;
+  background: transparent;
 }
 
 .stealth-record-panel {
