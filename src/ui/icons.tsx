@@ -19,7 +19,8 @@ export type IconName =
   | 'mic'
   | 'pause'
   | 'play'
-  | 'stop';
+  | 'stop'
+  | 'crop';
 
 export function SvgIcon({ name, size = 18 }: { name: IconName; size?: number }): ReactNode {
   const common = {
@@ -186,6 +187,16 @@ export function SvgIcon({ name, size = 18 }: { name: IconName; size?: number }):
       return (
         <svg {...common}>
           <rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor" />
+        </svg>
+      );
+    case 'crop':
+      return (
+        <svg {...common}>
+          <rect x="4" y="4" width="16" height="16" rx="1.5" />
+          <path d="M4 4h8v8" />
+          <path d="M12 4h8v8" />
+          <path d="M4 12h8v8" />
+          <path d="M12 12h8v8" />
         </svg>
       );
   }

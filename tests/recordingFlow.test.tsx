@@ -63,7 +63,12 @@ async function startRecording(review = false) {
   await act(() => {
     checkbox('Camera').click();
     checkbox('Microphone').click();
-    if (review) checkbox('Open editor when recording stops').click();
+    if (review) {
+      const selects = [...host.querySelectorAll('select[aria-label="After recording"]')] as HTMLSelectElement[];
+      const afterStopSelect = selects.find((s) => !s.disabled);
+      afterStopSelect!.value = 'review';
+      afterStopSelect!.dispatchEvent(new Event('change', { bubbles: true }));
+    }
     const countdown = host.querySelector('select[aria-label="Recording countdown"]') as HTMLSelectElement;
     countdown.value = '0'; countdown.dispatchEvent(new Event('change', { bubbles: true }));
   });

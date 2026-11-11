@@ -88,7 +88,8 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
   const project = useEditor((state) => state.project);
   const session = useSession();
   const [capMode, setCapMode] = useState<CapMode>('studio');
-  const [openEditorAfterStop, setOpenEditorAfterStop] = useState(true);
+  /** What happens after a take stops: open editor, review/download, or just save to library. */
+  const [afterStopAction, setAfterStopAction] = useState<'edit' | 'review' | 'none'>('edit');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [showMonitor, setShowMonitor] = useState(false);
   const [teleprompter, setTeleprompter] = useState<TeleprompterState>(() => loadTeleprompterPrefs());
@@ -106,6 +107,16 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
   const [reviewTrimOut, setReviewTrimOut] = useState(0);
   const [reviewPreviewUrl, setReviewPreviewUrl] = useState<string | null>(null);
   const [cameraDuplicationMode, setCameraDuplicationMode] = useState<CameraDuplicationMode>('baked-in-screen');
+  /** Quality preset: balanced (default), smaller files, or maximum detail. */
+  const [qualityPreset, setQualityPreset] = useState<'balanced' | 'smaller' | 'maximum'>('balanced');
+  /** Configurable recording shortcuts. Stored in localStorage, defaults match Cap-style keys. */
+  const [shortcuts, setShortcuts] = useState<Record<'pause' | 'stop' | 'marker' | 'mute' | 'hide', string>>(JSON.parse(localStorage.getItem('browser-record.shortcuts') ?? '{}') || {
+    pause: 'p',
+    stop: 's',
+    marker: 'm',
+    mute: 'u',
+    hide: 'h',
+  });
   const [postRecordTitle, setPostRecordTitle] = useState('');
   const [hideFloatingPreview, setHideFloatingPreview] = useState(false);
   const [hideMonitorDuringDisplay, setHideMonitorDuringDisplay] = useState(true);
@@ -155,11 +166,26 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
   const initialisedFor = useRef<string | null>(null);
   const [countdownSeconds, setCountdownSeconds] = useState(3);
   const [countdown, setCountdown] = useState(0);
+  /** Area capture: full-screen region selector overlay state. */
+  const [areaMode, setAreaMode] = useState(false);
+  const [areaSelection, setAreaSelection] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const [areaAspectRatio, setAreaAspectRatio] = useState<'free' | '16:9' | '4:3' | '1:1' | '9:16'>('free');
+  /** Cropped stream produced from the full-screen capture for area recording. */
+  const areaCroppedStreamRef = useRef<MediaStream | null>(null);
+  /** Video element used to play the full-screen capture so we can crop it to canvas. */
+  const areaSourceVideoRef = useRef<HTMLVideoElement | null>(null);
+  /** Canvas used to crop the full-screen capture to the selected region. */
+  const areaCropCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  /** Animation frame loop for cropping full-screen → region stream. */
+  const areaCropLoopRef = useRef<number | null>(null);
   const [devices, setDevices] = useState<{ mic: DeviceChoice[]; camera: DeviceChoice[] }>({ mic: [], camera: [] });
   const [micId, setMicId] = useState('');
   const [cameraId, setCameraId] = useState('');
   const [micLevel, setMicLevel] = useState<MeterReading | null>(null);
   const [stats, setStats] = useState<CaptureStats | null>(null);
+  /** Device info reported after opening camera/mic streams (resolution, fps, sample rate). */
+  const [cameraDeviceInfo, setCameraDeviceInfo] = useState<string | null>(null);
+  const [micDeviceInfo, setMicDeviceInfo] = useState<string | null>(null);
   // Warnings are a list: a surface mismatch, a missing system-audio track and a
   // recorder warning can all be true at once, and one slot made the last win.
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -221,6 +247,14 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       // Ignore storage quota errors
     }
   }, [selfViewPos]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('browser-record.shortcuts', JSON.stringify(shortcuts));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [shortcuts]);
 
   // A window that shrinks must not leave the bubble off-screen.
   useEffect(() => {
@@ -394,6 +428,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     if (previewRef.current) previewRef.current.srcObject = null;
     if (cameraPreviewRef.current) cameraPreviewRef.current.srcObject = null;
     if (selfViewRef.current) selfViewRef.current.srcObject = null;
+    stopAreaCropLoop();
     const lock = wakeLockRef.current;
     wakeLockRef.current = null;
     wakeLockGen.current += 1;
@@ -420,6 +455,14 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       }
       cameraPreviewStream.current = stream;
       setCameraPreviewOn(true);
+      const track = stream.getVideoTracks()[0];
+      if (track) {
+        const s = track.getSettings?.() ?? {};
+        const w = s.width ?? 0;
+        const h = s.height ?? 0;
+        const fps = Math.round(s.frameRate ?? 0);
+        setCameraDeviceInfo(`${w}×${h} @ ${fps}fps${s.deviceId ? ` · ${s.deviceId.slice(0, 8)}…` : ''}`);
+      }
       floatingCameraRef.current?.updateStream(stream);
       if (selfViewRef.current) {
         selfViewRef.current.srcObject = stream;
@@ -607,57 +650,93 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     const specs: CaptureAssetSpec[] = [];
     if (screenOn) {
       let stream: MediaStream;
+      let actualWidth = dimensions.width;
+      let actualHeight = dimensions.height;
       try {
-        stream = await navigator.mediaDevices.getDisplayMedia(
-          displayConstraints({ width: dimensions.width, height: dimensions.height, frameRate, systemAudio, surface }),
-        );
+        if (areaMode) {
+          // Area capture: capture the full screen, then crop to the selected region
+          // via a canvas captureStream so MediaRecorder only records the region.
+          if (!areaSelection) throw new Error('No area selected. Draw a capture region before starting.');
+          const cropped = await startAreaCropLoop();
+          if (!cropped) throw new Error('Area capture could not start.');
+          stream = cropped;
+          const croppedTrack = stream.getVideoTracks()[0];
+          if (!croppedTrack) throw new Error('Area capture returned no video track.');
+          const report = reportTrackSettings(croppedTrack, 'Screen (area)');
+          actualWidth = report.width || dimensions.width;
+          actualHeight = report.height || dimensions.height;
+          screenStream.current = stream;
+          setScreenTracks([...stream.getVideoTracks(), ...stream.getAudioTracks()]);
+          const videoTrack = stream.getVideoTracks()[0];
+          if (!videoTrack) throw new Error('Area capture returned no video track.');
+          videoTrack.addEventListener('ended', () => {
+            setScreenTracks([]);
+            addWarning('Screen sharing was stopped from the browser bar.');
+            void stopTake();
+          });
+          specs.push({
+            key: 'screen',
+            kind: 'screen',
+            name: 'Screen (area)',
+            stream,
+            mimeType: chooseRecorderMime('video', false) || 'video/webm',
+            width: actualWidth,
+            height: actualHeight,
+          });
+        } else {
+          stream = await navigator.mediaDevices.getDisplayMedia(
+            displayConstraints({ width: dimensions.width, height: dimensions.height, frameRate, systemAudio, surface }),
+          );
+        }
       } catch (error) {
         // Chrome reports a closed picker as NotAllowedError; name the surface so
         // the message says "sharing was cancelled", not "microphone denied".
         throw new Error(`Screen sharing was cancelled or blocked: ${(error as Error).message}`, { cause: error });
       }
-      screenStream.current = stream;
-      setScreenTracks([...stream.getVideoTracks(), ...stream.getAudioTracks()]);
-      const video = stream.getVideoTracks()[0];
-      if (!video) throw new Error('The screen picker returned no video track.');
-      const report = reportTrackSettings(video, 'Screen');
-      const actualSurface = reportedSurface(video.getSettings());
-      const surfaceLabel = actualSurface === 'screen' ? 'entire screen' : actualSurface === 'window' ? 'a window' : actualSurface === 'tab' ? 'a browser tab' : 'unknown surface';
-      if (actualSurface && actualSurface !== surface) {
-        addWarning(`You picked ${surface === 'screen' ? 'the entire screen' : surface === 'window' ? 'a window' : 'a browser tab'} but the browser shared ${surfaceLabel}. The recording uses what was actually shared.`);
-      }
-      if (previewRef.current) {
-        previewRef.current.srcObject = stream;
-        void previewRef.current.play().catch(() => undefined);
-      }
-      const videoStream = new MediaStream([video]);
-      specs.push({
-        key: 'screen',
-        kind: 'screen',
-        name: 'Screen',
-        stream: videoStream,
-        mimeType: chooseRecorderMime('video', false) || 'video/webm',
-        width: report.width,
-        height: report.height,
-      });
-      const audio = stream.getAudioTracks()[0];
-      if (audio) {
+      if (!areaMode) {
+        screenStream.current = stream;
+        setScreenTracks([...stream.getVideoTracks(), ...stream.getAudioTracks()]);
+        const video = stream.getVideoTracks()[0];
+        if (!video) throw new Error('The screen picker returned no video track.');
+        const report = reportTrackSettings(video, 'Screen');
+        const actualSurface = reportedSurface(video.getSettings());
+        const surfaceLabel = actualSurface === 'screen' ? 'entire screen' : actualSurface === 'window' ? 'a window' : actualSurface === 'tab' ? 'a browser tab' : 'unknown surface';
+        if (actualSurface && actualSurface !== surface) {
+          addWarning(`You picked ${surface === 'screen' ? 'the entire screen' : surface === 'window' ? 'a window' : 'a browser tab'} but the browser shared ${surfaceLabel}. The recording uses what was actually shared.`);
+        }
+        if (previewRef.current) {
+          previewRef.current.srcObject = stream;
+          void previewRef.current.play().catch(() => undefined);
+        }
+        const videoStream = new MediaStream([video]);
         specs.push({
-          key: 'system-audio',
-          kind: 'system-audio',
-          name: 'System audio',
-          stream: new MediaStream([audio]),
-          mimeType: chooseRecorderMime('audio', false) || 'audio/webm',
-          sampleRate: report.sampleRate,
+          key: 'screen',
+          kind: 'screen',
+          name: 'Screen',
+          stream: videoStream,
+          mimeType: chooseRecorderMime('video', false) || 'video/webm',
+          width: actualWidth,
+          height: actualHeight,
         });
-      } else if (systemAudio) {
-        addWarning('The browser did not return a system-audio track for this surface. Recording continues without it.');
+        const audio = stream.getAudioTracks()[0];
+        if (audio) {
+          specs.push({
+            key: 'system-audio',
+            kind: 'system-audio',
+            name: 'System audio',
+            stream: new MediaStream([audio]),
+            mimeType: chooseRecorderMime('audio', false) || 'audio/webm',
+            sampleRate: report.sampleRate,
+          });
+        } else if (systemAudio) {
+          addWarning('The browser did not return a system-audio track for this surface. Recording continues without it.');
+        }
+        video.addEventListener('ended', () => {
+          setScreenTracks([]);
+          addWarning('Screen sharing was stopped from the browser bar.');
+          void stopTake();
+        });
       }
-      video.addEventListener('ended', () => {
-        setScreenTracks([]);
-        addWarning('Screen sharing was stopped from the browser bar.');
-        void stopTake();
-      });
     }
     if (cameraOn) {
       // Reuse the live preview's stream when there is one: opening a second
@@ -668,6 +747,14 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         setCameraPreviewOn(false);
       }
       cameraStream.current = stream;
+      const camTrack = stream.getVideoTracks()[0];
+      if (camTrack) {
+        const s = camTrack.getSettings?.() ?? {};
+        const w = s.width ?? 0;
+        const h = s.height ?? 0;
+        const fps = Math.round(s.frameRate ?? 0);
+        setCameraDeviceInfo(`${w}×${h} @ ${fps}fps${s.deviceId ? ` · ${s.deviceId.slice(0, 8)}…` : ''}`);
+      }
       floatingCameraRef.current?.updateStream(stream);
       if (selfViewRef.current) {
         selfViewRef.current.srcObject = stream;
@@ -708,6 +795,8 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       }
       const audio = micStream.current.getAudioTracks()[0];
       if (!audio) throw new Error('The microphone returned no audio track.');
+      const micTrackSettings = audio.getSettings?.() ?? {};
+      setMicDeviceInfo(`${Math.round(micTrackSettings.sampleRate ?? 0)} Hz${micTrackSettings.channelCount ? ` · ${micTrackSettings.channelCount} ch` : ''}${micTrackSettings.deviceId ? ` · ${micTrackSettings.deviceId.slice(0, 8)}…` : ''}`);
       specs.push({
         key: 'microphone',
         kind: 'microphone',
@@ -753,6 +842,163 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     };
   };
 
+  /** Aspect-ratio target dimensions for a given region box. */
+  const areaAspectRatioDimensions = (box: { width: number; height: number }, ratio: typeof areaAspectRatio): { width: number; height: number } => {
+    if (ratio === 'free') return box;
+    const [rw, rh] = ratio === '16:9' ? [16, 9] : ratio === '4:3' ? [4, 3] : ratio === '1:1' ? [1, 1] : [9, 16];
+    const targetW = Math.round(box.width * (rw / rh));
+    const targetH = Math.round(box.height * (rh / rw));
+    // Fit within the box, keeping the requested aspect ratio.
+    if (targetW <= box.width && targetH <= box.height) {
+      return targetH * (rw / rh) <= box.width ? { width: Math.round(targetH * (rw / rh)), height: targetH } : { width: targetW, height: Math.round(targetW * (rh / rw)) };
+    }
+    const scale = Math.min(box.width / targetW, box.height / targetH);
+    return { width: Math.round(targetW * scale), height: Math.round(targetH * scale) };
+  };
+
+  /** Quality preset multiplier applied to the recording bitrate. */
+  const qualityMultiplier = (): number => qualityPreset === 'smaller' ? 0.5 : qualityPreset === 'maximum' ? 2 : 1;
+
+  /** Start capturing the full screen and cropping to the selected region via canvas. */
+  const startAreaCropLoop = async (): Promise<MediaStream | null> => {
+    if (!areaSelection) return null;
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia(
+        displayConstraints({ width: dimensions.width, height: dimensions.height, frameRate, systemAudio: false, surface: 'screen' }),
+      );
+      const videoTrack = stream.getVideoTracks()[0];
+      if (!videoTrack) throw new Error('Area capture returned no video track.');
+      const videoEl = document.createElement('video');
+      videoEl.muted = true;
+      videoEl.playsInline = true;
+      videoEl.srcObject = stream;
+      await videoEl.play().catch(() => undefined);
+      areaSourceVideoRef.current = videoEl;
+
+      const canvas = document.createElement('canvas');
+      const dims = areaAspectRatioDimensions(areaSelection, areaAspectRatio);
+      canvas.width = dims.width;
+      canvas.height = dims.height;
+      areaCropCanvasRef.current = canvas;
+
+      const cropped = canvas.captureStream(frameRate);
+      areaCroppedStreamRef.current = cropped;
+
+      const draw = () => {
+        if (!areaSourceVideoRef.current || !areaCropCanvasRef.current || !areaCroppedStreamRef.current) return;
+        const ctx = areaCropCanvasRef.current.getContext('2d');
+        if (!ctx) return;
+        const vw = areaSourceVideoRef.current.videoWidth || dimensions.width;
+        const vh = areaSourceVideoRef.current.videoHeight || dimensions.height;
+        const sel = areaSelection;
+        const sx = Math.max(0, Math.min(vw, sel.x / window.innerWidth * vw));
+        const sy = Math.max(0, Math.min(vh, sel.y / window.innerHeight * vh));
+        const sw = Math.max(1, Math.min(vw - sx, sel.width / window.innerWidth * vw));
+        const sh = Math.max(1, Math.min(vh - sy, sel.height / window.innerHeight * vh));
+        ctx.drawImage(areaSourceVideoRef.current, sx, sy, sw, sh, 0, 0, dims.width, dims.height);
+        areaCropLoopRef.current = requestAnimationFrame(draw);
+      };
+      draw();
+      return cropped;
+    } catch (err) {
+      setError(`Area capture failed: ${(err as Error).message}`);
+      stopAreaCropLoop();
+      return null;
+    }
+  };
+
+  /** Stop the area crop loop and release the full-screen capture. */
+  const stopAreaCropLoop = (): void => {
+    if (areaCropLoopRef.current !== null) {
+      cancelAnimationFrame(areaCropLoopRef.current);
+      areaCropLoopRef.current = null;
+    }
+    if (areaSourceVideoRef.current) {
+      stopStream(areaSourceVideoRef.current.srcObject as MediaStream);
+      areaSourceVideoRef.current.srcObject = null;
+      areaSourceVideoRef.current = null;
+    }
+    areaCropCanvasRef.current = null;
+    if (areaCroppedStreamRef.current) {
+      stopStream(areaCroppedStreamRef.current);
+      areaCroppedStreamRef.current = null;
+    }
+  };
+
+  /** Area selection drag/resize state. */
+  const areaDragRef = useRef<{ mode: 'move' | 'resize'; edge: string; startX: number; startY: number; startSel: { x: number; y: number; width: number; height: number } } | null>(null);
+
+  const clampAreaSelection = (sel: { x: number; y: number; width: number; height: number }): { x: number; y: number; width: number; height: number } => {
+    const x = Math.max(0, Math.min(sel.x, window.innerWidth - 20));
+    const y = Math.max(0, Math.min(sel.y, window.innerHeight - 20));
+    const width = Math.max(40, Math.min(sel.width, window.innerWidth - x));
+    const height = Math.max(40, Math.min(sel.height, window.innerHeight - y));
+    return { x, y, width, height };
+  };
+
+  const onAreaPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    const box = event.currentTarget;
+    const rect = box.getBoundingClientRect();
+    const hit = (event.target as HTMLElement).dataset.edge;
+    if (hit) {
+      areaDragRef.current = {
+        mode: 'resize',
+        edge: hit,
+        startX: event.clientX,
+        startY: event.clientY,
+        startSel: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+      };
+      box.setPointerCapture(event.pointerId);
+    } else {
+      areaDragRef.current = {
+        mode: 'move',
+        edge: '',
+        startX: event.clientX,
+        startY: event.clientY,
+        startSel: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+      };
+      box.setPointerCapture(event.pointerId);
+    }
+  };
+
+  const onAreaPointerMove = (event: React.PointerEvent) => {
+    const drag = areaDragRef.current;
+    if (!drag) return;
+    const dx = event.clientX - drag.startX;
+    const dy = event.clientY - drag.startY;
+    let next = { ...drag.startSel };
+    if (drag.mode === 'move') {
+      next = { x: drag.startSel.x + dx, y: drag.startSel.y + dy, width: drag.startSel.width, height: drag.startSel.height };
+    } else {
+      const { edge } = drag;
+      if (edge.includes('n')) { next.y = drag.startSel.y + dy; next.height = drag.startSel.height - dy; }
+      if (edge.includes('s')) { next.height = drag.startSel.height + dy; }
+      if (edge.includes('w')) { next.x = drag.startSel.x + dx; next.width = drag.startSel.width - dx; }
+      if (edge.includes('e')) { next.width = drag.startSel.width + dx; }
+    }
+    setAreaSelection(clampAreaSelection(next));
+  };
+
+  const onAreaPointerUp = () => {
+    if (areaDragRef.current?.mode === 'resize') {
+      // Snap to aspect ratio if not free.
+      if (areaAspectRatio !== 'free' && areaSelection) {
+        const box = { width: areaSelection.width, height: areaSelection.height };
+        const snapped = areaAspectRatioDimensions(box, areaAspectRatio);
+        setAreaSelection({ ...areaSelection, width: snapped.width, height: snapped.height });
+      }
+    }
+    areaDragRef.current = null;
+  };
+
+  const onAreaConfirm = () => {
+    if (!areaSelection) return;
+    setAreaMode(false);
+    // Proceed directly to acquiring sources with the area surface selected.
+    void chooseSource();
+  };
+
   /**
    * Separate source selection from starting the take: acquires sources and
    * enters the Cap-style Ready confirmation state without starting MediaRecorder yet.
@@ -778,7 +1024,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     setStage('selecting');
     try {
       const specs = await acquireSources();
-      const oneMinuteBytes = (recordingBitrate(dimensions.width, dimensions.height, frameRate) / 8) * 60;
+      const oneMinuteBytes = (recordingBitrate(dimensions.width, dimensions.height, frameRate) * qualityMultiplier() / 8) * 60;
       const headroom = await checkStorageHeadroom(oneMinuteBytes);
       if (!headroom.enough) addWarning(headroom.message);
       if (!mountedRef.current) {
@@ -824,6 +1070,35 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stage]);
 
+  // Global area-drag pointers: move/resize the selection box across the whole overlay.
+  useEffect(() => {
+    if (!areaMode) return;
+    const onMove = (event: PointerEvent) => onAreaPointerMove(event as unknown as React.PointerEvent);
+    const onUp = () => onAreaPointerUp();
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    };
+  }, [areaMode]);
+
+  // Escape cancels area selection and returns to the source picker.
+  useEffect(() => {
+    if (!areaMode) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setAreaMode(false);
+        setAreaSelection(null);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [areaMode]);
+
   const start = async () => {
     if (startingRef.current || !isRecording && stage !== 'idle' && stage !== 'ready') return;
     startingRef.current = true;
@@ -847,7 +1122,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       if (!specs) {
         setStage('selecting');
         specs = await acquireSources();
-        const oneMinuteBytes = (recordingBitrate(dimensions.width, dimensions.height, frameRate) / 8) * 60;
+        const oneMinuteBytes = (recordingBitrate(dimensions.width, dimensions.height, frameRate) * qualityMultiplier() / 8) * 60;
         const headroom = await checkStorageHeadroom(oneMinuteBytes);
         if (!headroom.enough) addWarning(headroom.message);
         if (!mountedRef.current) {
@@ -911,7 +1186,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         projectId: project.id,
         assets: specs,
         segmentSeconds: project.settings.segmentSeconds,
-        videoBitsPerSecond: recordingBitrate(dimensions.width, dimensions.height, frameRate),
+        videoBitsPerSecond: recordingBitrate(dimensions.width, dimensions.height, frameRate) * qualityMultiplier(),
         onStats: (next) => {
           sessionStats.current = next;
           if (mountedRef.current) setStats(next);
@@ -977,7 +1252,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       // Preserve the review / post-record sheet when in Instant mode, when
       // forcePostRecordSheet is requested ("Stop & export"), or when warnings occurred.
       const shouldOpenEditorImmediately =
-        !forcePostRecordSheet && capMode !== 'instant' && openEditorAfterStop && result.warnings.length === 0;
+        !forcePostRecordSheet && capMode !== 'instant' && afterStopAction === 'edit' && result.warnings.length === 0;
       if (shouldOpenEditorImmediately) insertTake(result);
     } catch (err) {
       setError(`Could not finalise the take: ${(err as Error).message}`);
@@ -1019,8 +1294,8 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     setMicMuted(!track.enabled);
   };
 
-  // Keyboard control while a take runs: Space/P pause/resume, S or Cmd/Ctrl+Shift+S stop,
-  // M/K marker, U mute, H hide/show controls, Esc restore hidden controls.
+  // Keyboard control while a take runs: shortcuts are configurable in Settings > Shortcuts.
+  // Defaults: P pause/resume, S stop, M/K marker, U mute, H hide controls, Esc restore.
   useEffect(() => {
     if (!isRecording) return;
     const onKey = (event: KeyboardEvent) => {
@@ -1034,29 +1309,21 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       // Plain single-key shortcuts stay with Edit (or other tabs) when recording runs in the background.
       if (hidden) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
-      switch (event.key.toLowerCase()) {
-        case ' ':
-        case 'p':
-          togglePause();
-          break;
-        case 's':
-          void stopTake();
-          break;
-        case 'm':
-        case 'k':
-          addMarker();
-          break;
-        case 'u':
-          if (micOn) toggleMicMute();
-          break;
-        case 'h':
-          setControlsHidden((prev) => !prev);
-          break;
-        case 'escape':
-          if (controlsHidden) setControlsHidden(false);
-          break;
-        default:
-          return;
+      const key = event.key.toLowerCase();
+      if (key === ' ' || key === shortcuts.pause) {
+        togglePause();
+      } else if (key === shortcuts.stop) {
+        void stopTake();
+      } else if (key === shortcuts.marker) {
+        addMarker();
+      } else if (key === shortcuts.mute && micOn) {
+        toggleMicMute();
+      } else if (key === shortcuts.hide) {
+        setControlsHidden((prev) => !prev);
+      } else if (key === 'escape') {
+        if (controlsHidden) setControlsHidden(false);
+      } else {
+        return;
       }
       event.preventDefault();
     };
@@ -1423,6 +1690,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
   const sourceModes = [
     { id: 'screen' as const, iconName: 'screen' as IconName, label: 'Entire screen' },
     { id: 'window', iconName: 'window' as IconName, label: 'Window' },
+    { id: 'area', iconName: 'crop' as IconName, label: 'Area' },
     { id: 'camera', iconName: 'camera' as IconName, label: 'Camera only' },
     { id: 'audio', iconName: 'mic' as IconName, label: 'Audio only' },
   ];
@@ -1461,8 +1729,8 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                       aria-pressed={capMode === m}
                       onClick={() => {
                         setCapMode(m);
-                        if (m === 'instant') setOpenEditorAfterStop(false);
-                        else if (m === 'studio') setOpenEditorAfterStop(true);
+                        if (m === 'instant') setAfterStopAction('review');
+                        else if (m === 'studio') setAfterStopAction('edit');
                       }}
                     >
                       <span>{info.label}</span>
@@ -1494,12 +1762,22 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                         setScreenOn(false);
                         setCameraOn(false);
                         setMicOn(true);
+                        setAreaMode(false);
+                        setSurface('screen');
                       } else if (mode.id === 'camera') {
                         setScreenOn(false);
                         setCameraOn(true);
+                        setAreaMode(false);
+                        setSurface('screen');
+                      } else if (mode.id === 'area') {
+                        setScreenOn(true);
+                        setCameraOn(false);
+                        setMicOn(false);
+                        setAreaMode(true);
                       } else {
                         setScreenOn(true);
                         setSurface(mode.id as 'screen' | 'window' | 'tab');
+                        setAreaMode(false);
                       }
                     }}
                   >
@@ -1535,9 +1813,16 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                   </div>
                 </div>
                 {cameraOn && (
-                  <div className="field-hint">
-                    {devices.camera.find((d) => d.deviceId === cameraId)?.label ?? devices.camera[0]?.label ?? 'Default camera'} · {floatingSupport.label}
-                  </div>
+                  <>
+                    <div className="field-hint">
+                      {devices.camera.find((d) => d.deviceId === cameraId)?.label ?? devices.camera[0]?.label ?? 'Default camera'} · {floatingSupport.label}
+                    </div>
+                    {cameraDeviceInfo && (
+                      <div className="cap-device-detail">
+                        <span className="mono" style={{ fontSize: 11 }}>{cameraDeviceInfo}</span>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
 
@@ -1573,6 +1858,11 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                       <span className="mono">{micLevel ? `${micLevel.peakDb.toFixed(1)} dBFS peak` : 'no signal'}</span>
                       {micLevel?.clipping ? <Badge tone="danger">clipping — lower input gain</Badge> : null}
                     </div>
+                    {micDeviceInfo && (
+                      <div className="cap-device-detail">
+                        <span className="mono" style={{ fontSize: 11 }}>{micDeviceInfo}</span>
+                      </div>
+                    )}
                   </>
                 )}
               </div>
@@ -1591,6 +1881,67 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                 </div>
               )}
             </div>
+
+            {/* Area capture overlay: full-screen dimmed region selector (Cap-style area preflight). */}
+            {areaMode && stage === 'idle' && (
+              <section className="area-capture-overlay" role="region" aria-label="Area capture region selector">
+                <div className="area-overlay-dim" />
+                <div className="area-overlay-header">
+                  <span className="eyebrow">AREA CAPTURE</span>
+                  <h2 style={{ margin: '4px 0 2px', fontSize: 18 }}>Select capture region</h2>
+                  <div className="field-hint">Drag the rectangle to choose the area to record. Aspect-ratio presets snap the selection.</div>
+                </div>
+                <div className="area-overlay-canvas">
+                  <div
+                    className="area-selection-box"
+                    style={{
+                      left: areaSelection?.x ?? 200,
+                      top: areaSelection?.y ?? 120,
+                      width: areaSelection?.width ?? 480,
+                      height: areaSelection?.height ?? 270,
+                    }}
+                    onPointerDown={onAreaPointerDown}
+                  >
+                    <div className="area-selection-handle nw" data-edge="nw" />
+                    <div className="area-selection-handle ne" data-edge="ne" />
+                    <div className="area-selection-handle sw" data-edge="sw" />
+                    <div className="area-selection-handle se" data-edge="se" />
+                    <div className="area-selection-label">
+                      {Math.round(areaSelection?.width ?? 0)}×{Math.round(areaSelection?.height ?? 0)}
+                    </div>
+                  </div>
+                </div>
+                <div className="area-overlay-controls">
+                  <div className="area-aspect-ratio-row" role="group" aria-label="Aspect ratio">
+                    {[
+                      { id: 'free', label: 'Free' },
+                      { id: '16:9', label: '16:9' },
+                      { id: '4:3', label: '4:3' },
+                      { id: '1:1', label: '1:1' },
+                      { id: '9:16', label: '9:16' },
+                    ].map((r) => (
+                      <button
+                        key={r.id}
+                        type="button"
+                        aria-pressed={areaAspectRatio === r.id}
+                        onClick={() => setAreaAspectRatio(r.id as typeof areaAspectRatio)}
+                        className={`area-aspect-btn${areaAspectRatio === r.id ? ' area-aspect-btn-active' : ''}`}
+                      >
+                        {r.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="row" style={{ gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
+                    <Button variant="ghost" size="sm" onClick={() => setAreaMode(false)}>
+                      Cancel
+                    </Button>
+                    <Button variant="primary" size="sm" disabled={!areaSelection} onClick={onAreaConfirm}>
+                      Confirm area
+                    </Button>
+                  </div>
+                </div>
+              </section>
+            )}
 
             {/* Footer: one primary action + optional "Show preview" */}
             <div
@@ -1617,7 +1968,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                 </Button>
               )}
               <span className="field-hint">
-                {openEditorAfterStop ? 'Stop → Edit' : 'Stop → Review take'} ·{' '}
+                {afterStopAction === 'edit' ? 'Stop → Edit' : afterStopAction === 'review' ? 'Stop → Review take' : 'Stop → Save to library'} ·{' '}
                 {countdownSeconds ? `${countdownSeconds}s countdown` : 'No countdown'} · Chrome may still show its own sharing indicator
               </span>
             </div>
@@ -1718,15 +2069,19 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                 <div style={{ flex: 1 }}>
                   <Field label="After recording">
                     <Select
-                      label="After recording"
-                      value={openEditorAfterStop ? 'edit' : 'review'}
+                      label="After recording stops"
+                      value={afterStopAction}
                       disabled={!isRecording && stage !== 'idle'}
-                      onChange={(value) => setOpenEditorAfterStop(value === 'edit')}
+                      onChange={setAfterStopAction}
                       options={[
-                        { value: 'edit', label: 'Edit recording' },
+                        { value: 'edit', label: 'Open editor' },
                         { value: 'review', label: 'Review and download' },
+                        { value: 'none', label: 'Save to library only' },
                       ]}
                     />
+                    <div className="field-hint">
+                      Choose what happens when a take stops: open it in the editor, review and download it, or just save it to the Recordings library.
+                    </div>
                   </Field>
                 </div>
               </div>
@@ -1770,6 +2125,24 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                         { value: '60', label: '60 fps (verify with benchmark)' },
                       ]}
                     />
+                  </Field>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <Field label="Quality preset">
+                    <Select
+                      label="Recording quality"
+                      value={qualityPreset}
+                      disabled={stage !== 'idle'}
+                      onChange={setQualityPreset}
+                      options={[
+                        { value: 'balanced', label: 'Balanced (recommended)' },
+                        { value: 'smaller', label: 'Smaller files' },
+                        { value: 'maximum', label: 'Maximum detail' },
+                      ]}
+                    />
+                    <div className="field-hint">
+                      Balanced = 4× smaller VBR · Smaller = 0.5× bitrate · Maximum = 2× bitrate
+                    </div>
                   </Field>
                 </div>
               </div>
@@ -1892,29 +2265,77 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
           <details open>
             <summary>Shortcuts</summary>
             <div className="stack" style={{ gap: 8, paddingTop: 10 }}>
-              <div className="field-hint">Shortcuts are scoped to this app. Editing shortcuts never control a background recording.</div>
+              <div className="field-hint">Shortcuts are scoped to this app. Click a key to change it. Editing shortcuts never control a background recording.</div>
               <div className="row" style={{ gap: 16, flexWrap: 'wrap' }}>
-                <div>
-                  <div className="row" style={{ gap: 6, alignItems: 'center' }}>
-                    <span className="mono" style={{ fontSize: 11 }}>Space / P</span>
-                    <span>Pause / Resume recording</span>
-                  </div>
-                  <div className="row" style={{ gap: 6, alignItems: 'center' }}>
-                    <span className="mono" style={{ fontSize: 11 }}>S</span>
-                    <span>Stop recording</span>
-                  </div>
-                  <div className="row" style={{ gap: 6, alignItems: 'center' }}>
-                    <span className="mono" style={{ fontSize: 11 }}>M / K</span>
-                    <span>Add marker</span>
-                  </div>
-                  <div className="row" style={{ gap: 6, alignItems: 'center' }}>
-                    <span className="mono" style={{ fontSize: 11 }}>U</span>
-                    <span>Mute / Unmute microphone</span>
-                  </div>
-                  <div className="row" style={{ gap: 6, alignItems: 'center' }}>
-                    <span className="mono" style={{ fontSize: 11 }}>H</span>
-                    <span>Hide / Show recording controls</span>
-                  </div>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <Field label="Pause / Resume">
+                    <input
+                      className="input"
+                      value={shortcuts.pause}
+                      maxLength={1}
+                      onChange={(e) => {
+                        const k = e.target.value.toLowerCase();
+                        if (/^[a-z0-9]$/.test(k)) setShortcuts({ ...shortcuts, pause: k });
+                      }}
+                      placeholder={shortcuts.pause}
+                    />
+                  </Field>
+                </div>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <Field label="Stop recording">
+                    <input
+                      className="input"
+                      value={shortcuts.stop}
+                      maxLength={1}
+                      onChange={(e) => {
+                        const k = e.target.value.toLowerCase();
+                        if (/^[a-z0-9]$/.test(k)) setShortcuts({ ...shortcuts, stop: k });
+                      }}
+                      placeholder={shortcuts.stop}
+                    />
+                  </Field>
+                </div>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <Field label="Add marker">
+                    <input
+                      className="input"
+                      value={shortcuts.marker}
+                      maxLength={1}
+                      onChange={(e) => {
+                        const k = e.target.value.toLowerCase();
+                        if (/^[a-z0-9]$/.test(k)) setShortcuts({ ...shortcuts, marker: k });
+                      }}
+                      placeholder={shortcuts.marker}
+                    />
+                  </Field>
+                </div>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <Field label="Mute / Unmute mic">
+                    <input
+                      className="input"
+                      value={shortcuts.mute}
+                      maxLength={1}
+                      onChange={(e) => {
+                        const k = e.target.value.toLowerCase();
+                        if (/^[a-z0-9]$/.test(k)) setShortcuts({ ...shortcuts, mute: k });
+                      }}
+                      placeholder={shortcuts.mute}
+                    />
+                  </Field>
+                </div>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <Field label="Hide / Show controls">
+                    <input
+                      className="input"
+                      value={shortcuts.hide}
+                      maxLength={1}
+                      onChange={(e) => {
+                        const k = e.target.value.toLowerCase();
+                        if (/^[a-z0-9]$/.test(k)) setShortcuts({ ...shortcuts, hide: k });
+                      }}
+                      placeholder={shortcuts.hide}
+                    />
+                  </Field>
                 </div>
               </div>
             </div>
@@ -1937,8 +2358,8 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                   aria-pressed={capMode === m}
                   onClick={() => {
                     setCapMode(m);
-                    if (m === 'instant') setOpenEditorAfterStop(false);
-                    else if (m === 'studio') setOpenEditorAfterStop(true);
+                    if (m === 'instant') setAfterStopAction('review');
+                    else if (m === 'studio') setAfterStopAction('edit');
                   }}
                 >
                   <span>{info.label}</span>
@@ -1982,12 +2403,19 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
             />
           </div>
 
-          <Toggle
-            label="Open editor when recording stops"
-            checked={openEditorAfterStop}
-            onChange={setOpenEditorAfterStop}
-            disabled={stage !== 'idle' && stage !== 'ready'}
-          />
+          <Field label="Open editor when recording stops">
+            <Select
+              label="After recording"
+              value={afterStopAction}
+              disabled={stage !== 'idle' && stage !== 'ready'}
+              onChange={setAfterStopAction}
+              options={[
+                { value: 'edit', label: 'Open editor' },
+                { value: 'review', label: 'Review and download' },
+                { value: 'none', label: 'Save to library only' },
+              ]}
+            />
+          </Field>
 
           <div className="hint-card stack" style={{ gap: 8 }} role="region" aria-label="Across tabs and display capture">
             <div className="row" style={{ justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
@@ -2168,7 +2596,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
               <div className="rec-dock-actions">
                 <RecordingActions
                   paused={stage === 'paused'}
-                  openEditor={openEditorAfterStop && capMode !== 'instant'}
+                  openEditor={afterStopAction === 'edit' && capMode !== 'instant'}
                   onPause={togglePause}
                   onStop={() => void stopTake()}
                 />
@@ -2186,7 +2614,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
               <div className="rec-dock-actions">
                 <RecordingActions
                   paused={stage === 'paused'}
-                  openEditor={openEditorAfterStop && capMode !== 'instant'}
+                  openEditor={afterStopAction === 'edit' && capMode !== 'instant'}
                   onPause={togglePause}
                   onStop={() => void stopTake()}
                 />

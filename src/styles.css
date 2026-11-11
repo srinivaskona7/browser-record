@@ -1589,6 +1589,7 @@ select:disabled {
 .cap-ready-card { display: grid; gap: 10px; padding: 14px 16px; margin-bottom: 16px; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--line)); background: color-mix(in srgb, var(--accent) 8%, var(--surface-1)); }
 .cap-device-rows { display: grid; gap: 8px; }
 .cap-device-row { display: grid; gap: 6px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); }
+.cap-device-detail { margin-top: 6px; padding: 6px 10px; border-radius: 8px; border: 1px solid color-mix(in oklab, var(--line) 40%, transparent); background: color-mix(in oklab, var(--surface-1) 30%, var(--surface-0)); font-size: 11px; }
 .cap-recorder[data-route-hidden='true'] { padding: 0; margin: 0; max-width: none; min-height: 0; height: 0; overflow: visible; }
 .cap-recorder[data-route-hidden='true'] > :not(.rec-dock):not(.rec-selfview) { display: none !important; }
 
@@ -2278,5 +2279,134 @@ select:disabled {
   .page {
     padding: 16px 12px 40px;
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Area capture overlay: Cap-style region selector preflight          */
+/* ------------------------------------------------------------------ */
+
+.area-capture-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(17, 16, 24, 0.7);
+  backdrop-filter: blur(6px);
+  padding: 24px;
+  touch-action: none;
+}
+
+.area-overlay-dim {
+  position: absolute;
+  inset: 0;
+  background: rgba(17, 16, 24, 0.45);
+}
+
+.area-overlay-header {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--text-1);
+  width: 100%;
+  max-width: 560px;
+  text-align: center;
+}
+
+.area-overlay-canvas {
+  position: relative;
+  z-index: 10;
+  width: 100%;
+  max-width: 700px;
+  height: 420px;
+  background: #0a0a0a;
+  border: 2px dashed color-mix(in oklab, var(--line) 60%, var(--text-3));
+  border-radius: 10px;
+  overflow: hidden;
+  margin: 16px 0;
+  cursor: crosshair;
+}
+
+.area-selection-box {
+  position: absolute;
+  border: 2px solid var(--accent);
+  background: rgba(218, 250, 156, 0.08);
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px var(--accent), 0 10px 30px rgba(0, 0, 0, 0.5);
+  cursor: move;
+  touch-action: none;
+}
+
+.area-selection-handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: var(--accent);
+  border: 1px solid #111018;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+}
+.area-selection-handle.nw { top: -5px; left: -5px; cursor: nwse-resize; }
+.area-selection-handle.ne { top: -5px; right: -5px; cursor: nesw-resize; }
+.area-selection-handle.sw { bottom: -5px; left: -5px; cursor: nesw-resize; }
+.area-selection-handle.se { bottom: -5px; right: -5px; cursor: nwse-resize; }
+
+.area-selection-label {
+  position: absolute;
+  top: -22px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(17, 16, 24, 0.92);
+  border: 1px solid var(--line);
+}
+
+.area-overlay-controls {
+  position: relative;
+  z-index: 10;
+  width: 100%;
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-1);
+}
+
+.area-aspect-ratio-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.area-aspect-btn {
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.area-aspect-btn:hover:not(.area-aspect-btn-active) {
+  border-color: color-mix(in oklab, var(--line) 60%, var(--text-3));
+  background: var(--surface-3);
+}
+.area-aspect-btn-active {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 16%, var(--surface-1));
+  color: var(--accent-ink);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
