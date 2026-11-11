@@ -73,6 +73,7 @@ export function defaultPresenter(): PresenterProps {
     shadow: 12,
     border: 0,
     borderColor: '#ffffff',
+    effect: 'none',
   };
 }
 

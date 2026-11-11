@@ -60,10 +60,6 @@ afterEach(async () => { await act(() => root.unmount()); host.remove(); useEdito
 
 async function startRecording(review = false) {
   await act(async () => root.render(<RecordPage />));
-  // RecordPage starts in Pure Stealth Mode by default; click "Exit stealth" when testing Studio checkboxes
-  if (host.querySelector('[data-testid="stealth-record-panel"]')) {
-    await act(async () => button('Exit stealth').click());
-  }
   await act(() => {
     checkbox('Camera').click();
     checkbox('Microphone').click();
@@ -71,6 +67,7 @@ async function startRecording(review = false) {
     const countdown = host.querySelector('select[aria-label="Recording countdown"]') as HTMLSelectElement;
     countdown.value = '0'; countdown.dispatchEvent(new Event('change', { bubbles: true }));
   });
+  await act(async () => button('Choose source').click());
   await act(async () => button('Start recording').click());
   expect(capture.start).toHaveBeenCalledTimes(1);
 }
@@ -150,7 +147,7 @@ it('separates choosing a source from starting the take via the Ready confirmatio
     countdown.value = '0';
     countdown.dispatchEvent(new Event('change', { bubbles: true }));
   });
-  await act(async () => button('Choose source…').click());
+  await act(async () => button('Choose source').click());
   expect(host.querySelector('[aria-label="Source confirmation"]')).not.toBeNull();
   expect(host.textContent).toContain('SOURCE READY TO RECORD');
   expect(capture.start).not.toHaveBeenCalled();
@@ -377,6 +374,7 @@ it('enforces the 3-case Camera-Duplication Rule so export contains the camera at
     countdown.value = '0';
     countdown.dispatchEvent(new Event('change', { bubbles: true }));
   });
+  await act(async () => button('Choose source').click());
   await act(async () => button('Start recording').click());
 
   // Collapse recording controls into minimal pill — Stop remains available in the collapsed bar
@@ -501,7 +499,7 @@ it('supports bubble-layout hover overlay controls, Teleprompter sync in Document
   expect(capture.stop).toHaveBeenCalledTimes(1);
 });
 
-it('renders standalone CameraBubble with live shape/effect/placement options during recording, compact horizontal stealth record panel with timer, and editor presenter bubble parity', async () => {
+it('renders standalone CameraBubble with live shape/effect/placement options during recording, and editor presenter bubble parity', async () => {
   const { Inspector } = await import('../src/ui/Inspector');
   const { createClip, defaultPresenter } = await import('../src/project/factory');
   const { presenterEffectFilter } = await import('../src/render/layout');
@@ -524,28 +522,23 @@ it('renders standalone CameraBubble with live shape/effect/placement options dur
   ];
 
   await act(async () => root.render(<RecordPage />));
-  await act(async () => root.render(<RecordPage />));
-  // RecordPage opens in the normal Studio setup by default (no Stealth panel, no collapsed bar)
+  // RecordPage opens in the normal Studio setup by default (no Stealth panel)
   expect(host.querySelector('[data-testid="stealth-record-panel"]')).toBeNull();
   expect(host.querySelector('.page-head')).not.toBeNull();
-  expect(host.querySelector('.recorder-entry-actions')).not.toBeNull();
-  expect(host.querySelector('.split-grid')).not.toBeNull();
   expect(host.querySelectorAll('[data-testid="camera-bubble"]')).toHaveLength(0);
   expect(host.querySelector('[aria-label="Camera preview"]')).toBeNull();
 
-  // Disable Microphone and countdown in Studio, then enter Stealth Mode and click Record
+  // Disable Microphone and countdown in Studio, then choose source and record
   await act(() => {
     checkbox('Microphone').click();
     const countdown = host.querySelector('select[aria-label="Recording countdown"]') as HTMLSelectElement;
     countdown.value = '0';
     countdown.dispatchEvent(new Event('change', { bubbles: true }));
   });
-  await act(async () => button('Stealth panel').click());
-  await act(async () => button('Record').click());
+  await act(async () => button('Choose source').click());
+  await act(async () => button('Start recording').click());
 
-  // While recording in Stealth Mode, ONLY the small horizontal stealth bar with timer and ONE CameraBubble exist
-  expect(host.querySelector('[data-testid="stealth-record-panel"].is-recording')).not.toBeNull();
-  expect(host.querySelector('[data-testid="rec-dock-timer"]')).not.toBeNull();
+  // While recording, ONE CameraBubble exists (image-only, no overlay controls)
   expect(host.querySelectorAll('[data-testid="camera-bubble"]')).toHaveLength(1);
   expect(host.querySelector('[aria-label="Camera preview"]')).toBeNull();
 
@@ -554,37 +547,10 @@ it('renders standalone CameraBubble with live shape/effect/placement options dur
   expect(bubbleWidget.getAttribute('data-shape')).toBe('circle');
   expect(bubbleWidget.getAttribute('data-effect')).toBe('none');
 
-  // Open CameraBubble options popover while recording and switch shape to Square, effect to Neon Ring, and placement to Top-Left
-  const optionsToggle = host.querySelector('button[aria-label="Bubble shape and effects"]') as HTMLButtonElement;
-  await act(async () => optionsToggle.click());
-  expect(host.querySelector('[aria-label="Camera bubble options"]')).not.toBeNull();
-
-  const squareBtn = Array.from(host.querySelectorAll('.camera-bubble-pill')).find(
-    (el) => el.textContent?.trim() === 'Square',
-  ) as HTMLButtonElement;
-  await act(async () => squareBtn.click());
-  expect(bubbleWidget.getAttribute('data-shape')).toBe('square');
-
-  const neonEffectBtn = Array.from(host.querySelectorAll('.camera-bubble-pill')).find(
-    (el) => el.textContent?.trim() === 'Neon',
-  ) as HTMLButtonElement;
-  await act(async () => neonEffectBtn.click());
-  expect(bubbleWidget.getAttribute('data-effect')).toBe('neon-ring');
-
-  const topLeftPlaceBtn = host.querySelector('button[aria-label="Move bubble to top-left"]') as HTMLButtonElement;
-  await act(async () => topLeftPlaceBtn.click());
-  expect(bubbleWidget.getAttribute('data-corner')).toBe('top-left');
-
-  const centerPlaceBtn = Array.from(host.querySelectorAll('.camera-bubble-pill')).find(
-    (el) => el.textContent?.includes('Center'),
-  ) as HTMLButtonElement;
-  await act(async () => centerPlaceBtn.click());
-
-  // Stop recording from the horizontal .rec-dock bar
+  // Stop recording
   await act(async () => button('Stop & edit').click());
 
-  // Verify the inserted presenter clip in the project inherited the live Square shape, Neon Ring effect, and centered X/Y coordinates,
-  // and that the Editor Inspector exposes the same shape, effect, quick placement, and Position X / Position Y controls
+  // Verify the inserted presenter clip inherited the default presenter settings
   const project = useEditor.getState().project!;
   const insertedPresenterClip = project.tracks.flatMap((t) => t.clips).find((c) => Boolean(c.presenter));
   const presenterClip =
@@ -592,23 +558,23 @@ it('renders standalone CameraBubble with live shape/effect/placement options dur
     createClip({
       startTicks: 0,
       durationTicks: 90,
-      presenter: { ...defaultPresenter(), shape: 'square', effect: 'neon-ring', x: 0.5, y: 0.5 },
+      presenter: { ...defaultPresenter(), shape: 'circle', effect: 'none', x: 0.5, y: 0.5 },
     });
-  expect(presenterClip.presenter?.shape).toBe('square');
-  expect(presenterClip.presenter?.effect).toBe('neon-ring');
+  expect(presenterClip.presenter?.shape).toBe('circle');
+  expect(presenterClip.presenter?.effect).toBe('none');
 
   await act(async () => root.render(<Inspector clip={presenterClip} trackKind="video" />));
   const shapeSelect = host.querySelector('select[aria-label="Presenter bubble shape"]') as HTMLSelectElement;
   const effectSelect = host.querySelector('select[aria-label="Presenter bubble effect"]') as HTMLSelectElement;
   expect(shapeSelect).not.toBeNull();
-  expect(shapeSelect.value).toBe('square');
+  expect(shapeSelect.value).toBe('circle');
   expect(effectSelect).not.toBeNull();
-  expect(effectSelect.value).toBe('neon-ring');
+  expect(effectSelect.value).toBe('none');
   expect(host.querySelector('[aria-label="Presenter quick placement"]')).not.toBeNull();
   expect(host.textContent).toContain('Position X');
   expect(host.textContent).toContain('Position Y');
 
-  // Verify Editor left-rail Camera tool (EditorToolLibrary tool="presenter") also exposes shapes, visual effects, Center, and X/Y sliders
+  // Verify Editor left-rail Camera tool also exposes shapes, visual effects, Center, and X/Y sliders
   const { EditorToolLibrary } = await import('../src/ui/EditorTools');
   await act(async () => root.render(<EditorToolLibrary tool="presenter" project={project} clip={presenterClip} />));
   expect(host.querySelector('[data-testid="presenter-reframe-panel"]')).not.toBeNull();

@@ -1,12 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ImportMediaButton } from './ImportMediaButton';
 import { RecordingActions } from './RecordingActions';
 import { SvgIcon, type IconName } from './icons';
 import { useSession } from '../app/session';
 import { useEditor } from '../project/store';
-import { Badge, Button, Dialog, Field, Panel, Select, Slider, Stat, Toggle } from './components';
 import {
-  compareSettings,
+  Badge,
+  Button,
+  Dialog,
+  Field,
+  Panel,
+  Select,
+  Slider,
+  Stat,
+  Toggle,
+} from './components';
+import {
   enumerateDevices,
   onDeviceChange,
   openCamera,
@@ -18,7 +26,6 @@ import { InputMeter, meterPosition, type MeterReading } from '../capture/audioMe
 import { chooseRecorderMime } from '../capabilities/codecs';
 import {
   displayConstraints,
-  describeCaptureFidelity,
   describeReturnedSurface,
   reportTrackSettings,
   reportedSurface,
@@ -82,9 +89,8 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
   const session = useSession();
   const [capMode, setCapMode] = useState<CapMode>('studio');
   const [openEditorAfterStop, setOpenEditorAfterStop] = useState(true);
-  const [showMonitor, setShowMonitor] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [teleprompterOpen, setTeleprompterOpen] = useState(false);
+  const [showMonitor, setShowMonitor] = useState(false);
   const [teleprompter, setTeleprompter] = useState<TeleprompterState>(() => loadTeleprompterPrefs());
   const teleprompterScrollRef = useRef<HTMLDivElement>(null);
   const updateTeleprompter = (patch: Partial<TeleprompterState>) => {
@@ -95,70 +101,6 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     });
   };
   const [quietMode, setQuietMode] = useState<QuietMode>('full');
-  const [stealthMode, setStealthMode] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem('browser-record.stealth-mode.v2');
-      return saved === null ? false : saved === 'true';
-    } catch {
-      return false;
-    }
-  });
-  const toggleStealthMode = (next?: boolean) => {
-    setStealthMode((prev) => {
-      const value = typeof next === 'boolean' ? next : !prev;
-      try {
-        localStorage.setItem('browser-record.stealth-mode.v2', String(value));
-      } catch {
-        // Ignore storage quota errors
-      }
-      if (value) {
-        if (cameraOn && !cameraPreviewStream.current && !cameraStream.current) {
-          void startCameraPreview();
-        }
-      }
-      return value;
-    });
-  };
-  const STEALTH_BAR_KEY = 'browser-record.stealth-bar-position';
-  const [stealthBarPos, setStealthBarPos] = useState<{ x: number; y: number } | null>(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(STEALTH_BAR_KEY) ?? 'null') as { x?: unknown; y?: unknown } | null;
-      return saved && typeof saved.x === 'number' && typeof saved.y === 'number' ? { x: saved.x, y: saved.y } : null;
-    } catch {
-      return null;
-    }
-  });
-  const stealthBarDrag = useRef<{ pointerId: number; dx: number; dy: number } | null>(null);
-  const onStealthBarPointerDown = (event: React.PointerEvent<HTMLElement>) => {
-    const target = event.target as HTMLElement;
-    if (target.closest('button, select, input, summary, details, a')) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    stealthBarDrag.current = {
-      pointerId: event.pointerId,
-      dx: event.clientX - rect.left,
-      dy: event.clientY - rect.top,
-    };
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-  };
-  const onStealthBarPointerMove = (event: React.PointerEvent<HTMLElement>) => {
-    const drag = stealthBarDrag.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = clamp(event.clientX - drag.dx, 8, Math.max(8, (window.innerWidth || 1280) - rect.width - 8));
-    const y = clamp(event.clientY - drag.dy, 8, Math.max(8, (window.innerHeight || 720) - rect.height - 8));
-    setStealthBarPos({ x, y });
-    try {
-      localStorage.setItem(STEALTH_BAR_KEY, JSON.stringify({ x, y }));
-    } catch {
-      // Ignore storage errors
-    }
-  };
-  const onStealthBarPointerUp = (event: React.PointerEvent<HTMLElement>) => {
-    if (stealthBarDrag.current?.pointerId === event.pointerId) {
-      event.currentTarget.releasePointerCapture?.(event.pointerId);
-      stealthBarDrag.current = null;
-    }
-  };
   const [controlsHidden, setControlsHidden] = useState(false);
   const [reviewTrimIn, setReviewTrimIn] = useState(0);
   const [reviewTrimOut, setReviewTrimOut] = useState(0);
@@ -217,8 +159,6 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
   const [micId, setMicId] = useState('');
   const [cameraId, setCameraId] = useState('');
   const [micLevel, setMicLevel] = useState<MeterReading | null>(null);
-  const [micTesting, setMicTesting] = useState(false);
-  const [settingsReport, setSettingsReport] = useState<Array<{ label: string; message: string; native: boolean; scaled: boolean }>>([]);
   const [stats, setStats] = useState<CaptureStats | null>(null);
   // Warnings are a list: a surface mismatch, a missing system-audio track and a
   // recorder warning can all be true at once, and one slot made the last win.
@@ -244,7 +184,6 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
   // while rendering the settings table means the table only refreshes when
   // something else happens to re-render the page.
   const [screenTracks, setScreenTracks] = useState<MediaStreamTrack[]>([]);
-  const [cameraTracks, setCameraTracks] = useState<MediaStreamTrack[]>([]);
   const micStream = useRef<MediaStream | null>(null);
   /** Muted by the small control bar; the track is kept alive so resume is instant. */
   const [micMuted, setMicMuted] = useState(false);
@@ -253,16 +192,61 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
   const cameraPreviewRef = useRef<HTMLVideoElement>(null);
   /** Floating self-view shown during a take, so the bubble stays on screen when the monitor scrolls away. */
   const selfViewRef = useRef<HTMLVideoElement>(null);
-  const [cameraReady, setCameraReady] = useState(false);
-  const captureRef = useRef<CaptureSession | null>(null);
+  const [cameraPreviewOn, setCameraPreviewOn] = useState(false);
   const [activeTakeId, setActiveTakeId] = useState<string | null>(null);
   const sessionStats = useRef<CaptureStats | null>(null);
   /** Camera stream owned by the live preview; handed to the take when recording starts. */
   const cameraPreviewStream = useRef<MediaStream | null>(null);
-  const [cameraPreviewOn, setCameraPreviewOn] = useState(false);
   const previewStarting = useRef(false);
+  const captureRef = useRef<CaptureSession | null>(null);
   /** Latest camera-source toggle, so an in-flight permission prompt can bail out. */
   const cameraOnRef = useRef(cameraOn);
+
+  /** Self-view position after the user drags it; null keeps the default corner. Remembered across reloads. */
+  const SELF_VIEW_KEY = 'browser-record.self-view-position';
+  const [selfViewPos, setSelfViewPos] = useState<{ x: number; y: number } | null>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(SELF_VIEW_KEY) ?? 'null') as { x?: unknown; y?: unknown } | null;
+      return saved && typeof saved.x === 'number' && typeof saved.y === 'number' ? { x: saved.x, y: saved.y } : null;
+    } catch {
+      return null;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      if (selfViewPos) localStorage.setItem(SELF_VIEW_KEY, JSON.stringify(selfViewPos));
+      else localStorage.removeItem(SELF_VIEW_KEY);
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [selfViewPos]);
+
+  // A window that shrinks must not leave the bubble off-screen.
+  useEffect(() => {
+    const onResize = () => {
+      setSelfViewPos((current) =>
+        current
+          ? {
+              x: clamp(current.x, 8, Math.max(8, window.innerWidth - 196)),
+              y: clamp(current.y, 8, Math.max(8, window.innerHeight - 196)),
+            }
+          : current,
+      );
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  /** Double-click the bubble or click reset to return it to its default corner. */
+  const resetSelfView = () => {
+    try {
+      localStorage.removeItem(SELF_VIEW_KEY);
+    } catch {
+      // Ignore
+    }
+    setSelfViewPos(null);
+  };
 
   const addWarning = (message: string) => {
     if (!mountedRef.current) return;
@@ -271,10 +255,12 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
 
   const dimensions = captureDimensions(resolution);
   const frameRate = fps === '60' ? 60 : 30;
+  const isRecording =
+    stage === 'countdown' || stage === 'recording' || stage === 'paused' || stage === 'finishing';
+  const isRecordingDisplaySurface =
+    isRecording && screenOn && (surface === 'screen' || surface === 'window' || surface === 'tab');
 
   // Opening Record without a project prepares a temporary local session. This
-  // never asks for camera, microphone or screen permission: devices are only
-  // opened by an explicit control below.
   useEffect(() => {
     if (hidden) return;
     if (project) {
@@ -361,7 +347,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
    * would jump in ten-second steps. Poll the already-public stats() instead.
    */
   useEffect(() => {
-    if (stage !== 'recording' && stage !== 'paused') return;
+    if (!isRecording) return;
     const timer = window.setInterval(() => {
       const next = captureRef.current?.stats();
       if (!next || !mountedRef.current) return;
@@ -369,7 +355,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       setStats(next);
     }, 250);
     return () => window.clearInterval(timer);
-  }, [stage]);
+  }, [isRecording]);
 
   /**
    * Every take on disk, finished or interrupted. The finished ones are what
@@ -402,9 +388,6 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     cameraStream.current = null;
     micStream.current = null;
     setScreenTracks([]);
-    setCameraTracks([]);
-    setCameraReady(false);
-    setMicTesting(false);
     setMicMuted(false);
     micMeter.current?.stop();
     micMeter.current = null;
@@ -415,29 +398,6 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     wakeLockRef.current = null;
     wakeLockGen.current += 1;
     if (lock) void lock.release().catch(() => undefined);
-  };
-
-  const testMic = async () => {
-    setError(null);
-    try {
-      stopStream(micStream.current);
-      micMeter.current?.stop();
-      const stream = await openMicrophone({
-        ...(micId ? { deviceId: micId } : {}),
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        sampleRate: 48_000,
-        channelCount: 1,
-      });
-      micStream.current = stream;
-      const meter = new InputMeter(stream);
-      micMeter.current = meter;
-      meter.start(setMicLevel);
-      setMicTesting(true);
-    } catch (err) {
-      setError(`Microphone unavailable: ${(err as Error).message}`);
-    }
   };
 
   /**
@@ -467,7 +427,6 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       }
       const element = cameraPreviewRef.current;
       if (!element) {
-        if (mountedRef.current) setCameraReady(true);
         return stream;
       }
       element.srcObject = stream;
@@ -475,9 +434,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         // Ready only after the frame actually plays: a dead camera must not
         // render as a frozen "live" picture.
         await element.play();
-        if (mountedRef.current) setCameraReady(true);
       } catch (err) {
-        setCameraReady(false);
         addWarning(`Camera preview could not start playing: ${(err as Error).message}`);
       }
       return stream;
@@ -500,7 +457,6 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     if (cameraPreviewRef.current) cameraPreviewRef.current.srcObject = null;
     if (selfViewRef.current) selfViewRef.current.srcObject = null;
     setCameraPreviewOn(false);
-    setCameraReady(false);
   };
 
   useEffect(() => {
@@ -667,11 +623,6 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       const report = reportTrackSettings(video, 'Screen');
       const actualSurface = reportedSurface(video.getSettings());
       const surfaceLabel = actualSurface === 'screen' ? 'entire screen' : actualSurface === 'window' ? 'a window' : actualSurface === 'tab' ? 'a browser tab' : 'unknown surface';
-      const fidelity = describeCaptureFidelity(report.width, report.height, dimensions.width, dimensions.height);
-      setSettingsReport((current) => [
-        ...current,
-        { label: 'Screen', message: `${fidelity.message} Captured ${surfaceLabel}.`, native: fidelity.native, scaled: fidelity.scaled },
-      ]);
       if (actualSurface && actualSurface !== surface) {
         addWarning(`You picked ${surface === 'screen' ? 'the entire screen' : surface === 'window' ? 'a window' : 'a browser tab'} but the browser shared ${surfaceLabel}. The recording uses what was actually shared.`);
       }
@@ -717,7 +668,6 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         setCameraPreviewOn(false);
       }
       cameraStream.current = stream;
-      setCameraTracks([...stream.getVideoTracks()]);
       floatingCameraRef.current?.updateStream(stream);
       if (selfViewRef.current) {
         selfViewRef.current.srcObject = stream;
@@ -728,22 +678,13 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
         cameraElement.srcObject = stream;
         try {
           await cameraElement.play();
-          if (mountedRef.current) setCameraReady(true);
         } catch (err) {
-          setCameraReady(false);
           addWarning(`Camera preview could not start playing: ${(err as Error).message}`);
         }
       }
       const video = stream.getVideoTracks()[0];
       if (!video) throw new Error('The camera returned no video track.');
       const report = reportTrackSettings(video, 'Camera');
-      setSettingsReport((current) => [
-        ...current,
-        {
-          label: 'Camera',
-          ...describeCaptureFidelity(report.width, report.height, dimensions.width, dimensions.height),
-        },
-      ]);
       specs.push({
         key: 'camera',
         kind: 'camera',
@@ -821,7 +762,6 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     startingRef.current = true;
     setError(null);
     setWarnings([]);
-    setSettingsReport([]);
     if (stage === 'ready') {
       releaseSources();
     }
@@ -885,13 +825,9 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
   }, [stage]);
 
   const start = async () => {
-    if (startingRef.current || (stage !== 'idle' && stage !== 'ready')) return;
+    if (startingRef.current || !isRecording && stage !== 'idle' && stage !== 'ready') return;
     startingRef.current = true;
     setError(null);
-    if (stage === 'idle') {
-      setWarnings([]);
-      setSettingsReport([]);
-    }
     if (!project || !session.workspace || !session.projectFolder) {
       setError('The recording session is still being prepared. Try again in a moment.');
       startingRef.current = false;
@@ -1086,7 +1022,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
   // Keyboard control while a take runs: Space/P pause/resume, S or Cmd/Ctrl+Shift+S stop,
   // M/K marker, U mute, H hide/show controls, Esc restore hidden controls.
   useEffect(() => {
-    if (stage !== 'recording' && stage !== 'paused') return;
+    if (!isRecording) return;
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
@@ -1129,52 +1065,6 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     // The handlers read refs and the current stage; re-binding on stage is enough.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stage, micOn, controlsHidden, hidden]);
-
-  /** Self-view position after the user drags it; null keeps the default corner. Remembered across reloads. */
-  const SELF_VIEW_KEY = 'browser-record.self-view-position';
-  const [selfViewPos, setSelfViewPos] = useState<{ x: number; y: number } | null>(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(SELF_VIEW_KEY) ?? 'null') as { x?: unknown; y?: unknown } | null;
-      return saved && typeof saved.x === 'number' && typeof saved.y === 'number' ? { x: saved.x, y: saved.y } : null;
-    } catch {
-      return null;
-    }
-  });
-
-  useEffect(() => {
-    try {
-      if (selfViewPos) localStorage.setItem(SELF_VIEW_KEY, JSON.stringify(selfViewPos));
-      else localStorage.removeItem(SELF_VIEW_KEY);
-    } catch {
-      // Ignore storage quota errors
-    }
-  }, [selfViewPos]);
-
-  // A window that shrinks must not leave the bubble off-screen.
-  useEffect(() => {
-    const onResize = () => {
-      setSelfViewPos((current) =>
-        current
-          ? {
-              x: clamp(current.x, 8, Math.max(8, window.innerWidth - 196)),
-              y: clamp(current.y, 8, Math.max(8, window.innerHeight - 196)),
-            }
-          : current,
-      );
-    };
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
-
-  /** Double-click the bubble or click reset to return it to its default corner. */
-  const resetSelfView = () => {
-    try {
-      localStorage.removeItem(SELF_VIEW_KEY);
-    } catch {
-      // Ignore
-    }
-    setSelfViewPos(null);
-  };
 
   /** Restart = confirmed discard, then a fresh countdown once the discard has returned the stage to idle. */
   const [restartOpen, setRestartOpen] = useState(false);
@@ -1340,15 +1230,23 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       useEditor.getState().apply('Open recorded take', (p) => {
         // If a screen/window/tab video was recorded AND the live CameraBubble was visible on screen
         // (!hideFloatingPreview) in 'baked-in-screen' mode, the bubble is ALREADY visible in screen.webm
-        // so the Editor never shows two bubbles at once. `cameraLayerRule.compositeInExport` encodes
-        // the capture-surface rule: Window/Tab captures never include the floating bubble in the shared
-        // surface stream, so the camera is composited as a separate layer there; only Entire Screen
+        // for Entire Screen / current-Window / current-Tab captures unless the browser explicitly
+        // reported a separate 'tab' surface that was not this page. Default to compositeInExport=false
+        // when screen + visible bubble were captured so the Editor never shows two bubbles at once!
+        const screenAsset = result.assets.find((a) => a.kind === 'video' && !/camera|webcam/i.test(a.name));
+        const hasScreenAsset = Boolean(screenAsset);
+        // `cameraLayerRule.compositeInExport` encodes the capture-surface rule:
+        // Window/Tab captures never include the floating bubble in the shared surface stream,
+        // so the camera is composited as a separate layer there; only Entire Screen
         // with a visible bubble in baked-in-screen mode skips the second composite.
+        const shouldCompositeCameraLayer =
+          !hasScreenAsset ||
+          hideFloatingPreview ||
+          cameraDuplicationMode === 'separate-layer';
         const effectivePresenter: PresenterProps = {
           ...presenter,
-          visible: presenter.visible !== false && cameraLayerRule.compositeInExport,
+          visible: presenter.visible !== false && shouldCompositeCameraLayer && cameraLayerRule.compositeInExport,
         };
-        const screenAsset = result.assets.find((a) => a.kind === 'video' && !/camera|webcam/i.test(a.name));
         const targetWidth =
           screenAsset?.width && screenAsset.width >= 2560
             ? screenAsset.width
@@ -1414,9 +1312,6 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     () => describeReturnedSurface(activeScreenVideoTrack),
     [activeScreenVideoTrack],
   );
-  const isRecordingDisplaySurface =
-    (stage === 'countdown' || stage === 'recording' || stage === 'paused') &&
-    screenOn;
   const cameraLayerRule = useMemo(
     () =>
       resolveCameraLayerVisibility({
@@ -1522,752 +1417,97 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
     );
   }
 
-  const isActiveTake =
-    stage === 'countdown' || stage === 'recording' || stage === 'paused' || stage === 'finishing';
-  const inStealthView = stealthMode;
+  // ------------------------------------------------------------------
+  // Compact recorder card (setup UI): shown when idle and not hidden.
+  // ------------------------------------------------------------------
+  const sourceModes = [
+    { id: 'screen' as const, iconName: 'screen' as IconName, label: 'Entire screen' },
+    { id: 'window', iconName: 'window' as IconName, label: 'Window' },
+    { id: 'camera', iconName: 'camera' as IconName, label: 'Camera only' },
+    { id: 'audio', iconName: 'mic' as IconName, label: 'Audio only' },
+  ];
 
   return (
     <div
-      className={`page recorder-page cap-recorder${showMonitor ? ' monitor-expanded' : ''}${inStealthView ? ' is-stealth-mode' : ''}`}
+      className={`page recorder-page cap-recorder${showMonitor ? ' monitor-expanded' : ''}`}
       data-route-hidden={hidden ? 'true' : undefined}
-      data-stealth-mode={inStealthView ? 'true' : 'false'}
     >
-      {!hidden && !inStealthView && (
-      <>
-      <header className="page-head">
-        <div>
-          <span className="eyebrow">LOCAL CREATOR STUDIO</span>
-          <h1 className="page-title">Ready when you are.</h1>
-          <p className="page-subtitle">Record a take or jump straight into your next edit.</p>
-        </div>
-        <div className="row" style={{ gap: 8 }}>
-          {stage === 'recording' && <Badge tone="danger">Recording</Badge>}
-          {stage === 'paused' && <Badge tone="warn">Paused</Badge>}
-          {stage === 'selecting' && <Badge>Selecting source…</Badge>}
-          {stage === 'ready' && <Badge tone="ok">Source ready</Badge>}
-          <Badge>{project.name}</Badge>
-        </div>
-      </header>
+      {/* Compact recorder card: header / body / footer. Shown only while idle and visible. */}
+      {!hidden && !isRecording && (
+        <>
+          <header className="page-head">
+            <div>
+              <span className="eyebrow">LOCAL CREATOR STUDIO</span>
+              <h1 className="page-title">Record</h1>
+              <p className="page-subtitle">Record a take or jump straight into your next edit.</p>
+            </div>
+            <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <Button
+                size="sm"
+                variant={settingsOpen ? 'primary' : 'ghost'}
+                aria-expanded={settingsOpen}
+                onClick={() => setSettingsOpen((prev) => !prev)}
+              >
+                ⚙ Settings
+              </Button>
+              <div className="cap-mode-switcher" role="group" aria-label="Recording mode">
+                {(['instant', 'studio', 'screenshot'] as const).map((m) => {
+                  const info = describeCapMode(m);
+                  return (
+                    <button
+                      key={m}
+                      type="button"
+                      disabled={stage !== 'idle'}
+                      aria-pressed={capMode === m}
+                      onClick={() => {
+                        setCapMode(m);
+                        if (m === 'instant') setOpenEditorAfterStop(false);
+                        else if (m === 'studio') setOpenEditorAfterStop(true);
+                      }}
+                    >
+                      <span>{info.label}</span>
+                      <span className="mode-sub">{info.subLabel}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </header>
 
-      <div className="recorder-entry-actions" role="group" aria-label="Record and edit entry points">
-        <span className="recorder-mode-label"><span className="rec-dot still" aria-hidden /> Record</span>
-        <ImportMediaButton disabled={stage !== 'idle'} />
-        <Button
-          size="sm"
-          variant={stealthMode ? 'primary' : 'ghost'}
-          aria-pressed={stealthMode}
-          onClick={() => toggleStealthMode(true)}
-          title="Collapse the entire Record tab into Pure Stealth Mode: only the small horizontal control bar with timer and the separate CameraBubble"
-        >
-          Stealth panel
-        </Button>
-        {cameraOn && (
-          <Button
-            size="sm"
-            variant={cameraPreviewOn && !hideFloatingPreview ? 'primary' : 'ghost'}
-            aria-pressed={cameraPreviewOn && !hideFloatingPreview}
-            onClick={() => {
-              if (stage === 'idle') {
-                if (cameraPreviewOn) {
-                  stopCameraPreview();
-                } else {
-                  setHideFloatingPreview(false);
-                  void startCameraPreview();
-                }
-              } else {
-                setHideFloatingPreview((prev) => !prev);
-              }
-            }}
-            title="Preview and position the standalone draggable camera bubble"
-          >
-            {cameraPreviewOn && !hideFloatingPreview ? 'Hide bubble' : 'Preview camera bubble'}
-          </Button>
-        )}
-        <Button
-          size="sm"
-          variant={teleprompterOpen || teleprompter.enabled ? 'primary' : 'ghost'}
-          aria-expanded={teleprompterOpen}
-          onClick={() => setTeleprompterOpen(!teleprompterOpen)}
-        >
-          Teleprompter
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          aria-expanded={settingsOpen}
-          onClick={() => setSettingsOpen(!settingsOpen)}
-        >
-          ⚙ Advanced
-        </Button>
-      </div>
-      </>
-      )}
-
-      {/* Small Horizontal Stealth Record Panel (with live recording timer & independent bubble controls).
-          When Stealth Mode is active or when recording is running, the ENTIRE Record tab collapses
-          into ONLY this small draggable horizontal bar + the standalone <CameraBubble />. */}
-      {inStealthView && (
-        <section
-          className={`stealth-record-panel rec-bar rec-dock rec-dock-stealth${stage === 'recording' ? ' is-recording' : stage === 'paused' ? ' is-paused paused' : ''}${controlsHidden ? ' rec-dock-collapsed' : ''}`}
-          role="region"
-          aria-label="Stealth horizontal record panel"
-          data-testid="stealth-record-panel"
-          data-stealth="true"
-          title="Drag anywhere on screen"
-          onPointerDown={onStealthBarPointerDown}
-          onPointerMove={onStealthBarPointerMove}
-          onPointerUp={onStealthBarPointerUp}
-          onPointerCancel={onStealthBarPointerUp}
-          style={
-            stealthBarPos
-              ? {
-                  position: 'fixed',
-                  left: stealthBarPos.x,
-                  top: stealthBarPos.y,
-                  right: 'auto',
-                  bottom: 'auto',
-                  transform: 'none',
-                }
-              : undefined
-          }
-        >
-          <div className="stealth-panel-status rec-dock-status">
-            <span className={stage === 'recording' || stage === 'countdown' ? 'rec-dot' : 'rec-dot still'} aria-hidden />
-            <strong className="stealth-panel-state rec-state" role="status" aria-live="polite">
-              {stage === 'countdown'
-                ? 'STARTING'
-                : stage === 'recording'
-                  ? 'REC'
-                  : stage === 'paused'
-                    ? 'PAUSED'
-                    : stage === 'finishing'
-                      ? 'SAVING'
-                      : stage === 'ready'
-                        ? 'READY'
-                        : 'STEALTH'}
-            </strong>
-            <span className="stealth-panel-timer rec-timer mono" data-testid="stealth-panel-timer">
-              {stage === 'countdown' ? `00:00:0${countdown}` : formatElapsed(elapsedSeconds)}
-            </span>
-            <span data-testid="rec-dock-timer" style={{ display: 'none' }} aria-hidden="true">
-              {stage === 'countdown' ? countdown : formatElapsed(elapsedSeconds)}
-            </span>
-            {!controlsHidden && (error || warnings[0]) && (
-              <Badge tone={error ? 'danger' : 'warn'}>{error ?? warnings[0]}</Badge>
-            )}
-          </div>
-
-          {!controlsHidden && (
-            <div className="stealth-panel-sources" role="group" aria-label="Stealth quick sources">
-              {(stage === 'idle' || stage === 'ready') && (
-                <>
+          <div className="recorder-body" role="group" aria-label="Capture sources">
+            <div className="capture-mode-grid" role="group" aria-label="Recording source">
+              {sourceModes.map((mode) => {
+                const pressed =
+                  mode.id === 'audio'
+                    ? !screenOn && !cameraOn && micOn
+                    : mode.id === 'camera'
+                      ? !screenOn && cameraOn
+                      : screenOn && surface === mode.id;
+                return (
                   <button
                     type="button"
-                    className="stealth-chip"
+                    key={mode.id}
                     disabled={stage !== 'idle'}
-                    aria-pressed={screenOn}
-                    onClick={() => setScreenOn((prev) => !prev)}
-                    title="Toggle screen capture"
-                  >
-                    Screen {screenOn ? 'On' : 'Off'}
-                  </button>
-                  <button
-                    type="button"
-                    className="stealth-chip"
-                    disabled={stage !== 'idle'}
-                    aria-pressed={cameraOn}
-                    onClick={() => setCameraOn((prev) => !prev)}
-                    title="Toggle camera bubble"
-                  >
-                    Cam {cameraOn ? 'On' : 'Off'}
-                  </button>
-                  <button
-                    type="button"
-                    className="stealth-chip"
-                    disabled={stage !== 'idle'}
-                    aria-pressed={micOn}
-                    onClick={() => setMicOn((prev) => !prev)}
-                    title="Toggle microphone"
-                  >
-                    Mic {micOn ? 'On' : 'Off'}
-                  </button>
-                  <select
-                    aria-label="Stealth capture resolution"
-                    className="stealth-chip"
-                    disabled={stage !== 'idle'}
-                    value={resolution}
-                    onChange={(e) => setResolution(e.target.value as CaptureResolution)}
-                    title="4K Ultra-Compact VBR capture resolution"
-                  >
-                    <option value="4k">4K Ultra-Compact</option>
-                    <option value="1440">1440p QHD</option>
-                    <option value="1080">1080p FHD</option>
-                  </select>
-                </>
-              )}
-              {cameraOn && (
-                <>
-                  <button
-                    type="button"
-                    className="stealth-chip"
-                    aria-pressed={!hideFloatingPreview}
+                    aria-pressed={pressed}
                     onClick={() => {
-                      if (hideFloatingPreview) {
-                        setHideFloatingPreview(false);
-                        if (!cameraPreviewOn && stage === 'idle') void startCameraPreview();
+                      if (mode.id === 'audio') {
+                        setScreenOn(false);
+                        setCameraOn(false);
+                        setMicOn(true);
+                      } else if (mode.id === 'camera') {
+                        setScreenOn(false);
+                        setCameraOn(true);
                       } else {
-                        setHideFloatingPreview(true);
+                        setScreenOn(true);
+                        setSurface(mode.id as 'screen' | 'window' | 'tab');
                       }
                     }}
-                    title="Show or hide the standalone draggable camera bubble"
                   >
-                    {hideFloatingPreview ? 'Show bubble' : 'Hide bubble'}
+                    <SvgIcon name={mode.iconName} size={20} />
+                    {mode.label}
                   </button>
-                  <select
-                    aria-label="Stealth bubble shape"
-                    className="stealth-chip"
-                    value={presenter.shape}
-                    onChange={(e) =>
-                      setPresenter((current) => ({ ...current, shape: e.target.value as PresenterProps['shape'] }))
-                    }
-                  >
-                    {PRESENTER_BUBBLE_SHAPES.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.shortLabel}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    aria-label="Stealth bubble effect"
-                    className="stealth-chip"
-                    value={presenter.effect ?? 'none'}
-                    onChange={(e) =>
-                      setPresenter((current) => ({
-                        ...current,
-                        effect: e.target.value as NonNullable<PresenterProps['effect']>,
-                      }))
-                    }
-                  >
-                    {PRESENTER_BUBBLE_EFFECTS.map((fx) => (
-                      <option key={fx.id} value={fx.id}>
-                        {fx.shortLabel}
-                      </option>
-                    ))}
-                  </select>
-                </>
-              )}
-            </div>
-          )}
-
-          <div className="stealth-panel-actions rec-dock-actions">
-            {(stage === 'idle' || stage === 'ready') && (
-              <Button size="sm" variant="primary" onClick={() => void start()}>
-                <span aria-hidden>●</span> {stage === 'ready' ? 'Start take' : 'Record'}
-              </Button>
-            )}
-            {(stage === 'recording' || stage === 'paused') && (
-              <>
-                <RecordingActions
-                  paused={stage === 'paused'}
-                  openEditor={openEditorAfterStop && capMode !== 'instant'}
-                  onPause={togglePause}
-                  onStop={() => void stopTake()}
-                />
-                {!controlsHidden && micOn && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={toggleMicMute}
-                    aria-label={micMuted ? 'Unmute the microphone' : 'Mute the microphone'}
-                  >
-                    {micMuted ? 'Unmute' : 'Mute'}
-                  </Button>
-                )}
-                {!controlsHidden && (
-                  <details className="rec-more-menu">
-                    <summary className="btn btn-ghost btn-sm" aria-label="More recording controls">
-                      More
-                    </summary>
-                    <div className="rec-more-popover" role="group" aria-label="Secondary recording actions">
-                      {cameraOn && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          aria-pressed={hideFloatingPreview}
-                          onClick={() => setHideFloatingPreview((prev) => !prev)}
-                        >
-                          {hideFloatingPreview ? 'Show camera preview' : 'Hide camera preview'}
-                        </Button>
-                      )}
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="rec-restart"
-                        onClick={() => setRestartOpen(true)}
-                        aria-label="Restart take"
-                      >
-                        ↻ Restart
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => setDiscardOpen(true)}>
-                        Discard
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={addMarker}>
-                        Marker
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => void stopTake(true)}>
-                        Stop &amp; export
-                      </Button>
-                    </div>
-                  </details>
-                )}
-              </>
-            )}
-            {floatingSupport.supported && !controlsHidden && (
-              <Button
-                size="sm"
-                variant={floatingCameraOpen ? 'primary' : 'ghost'}
-                aria-pressed={floatingCameraOpen}
-                onClick={() => void toggleFloatingCamera()}
-                title={floatingSupport.detail}
-              >
-                {floatingCameraOpen ? 'Close PiP' : 'PiP'}
-              </Button>
-            )}
-            {isActiveTake ? (
-              <Button
-                size="sm"
-                variant="ghost"
-                aria-label={controlsHidden ? 'Show recording controls' : 'Hide recording controls'}
-                onClick={() => setControlsHidden((prev) => !prev)}
-              >
-                {controlsHidden ? 'Show controls ▴' : 'Hide controls ▾'}
-              </Button>
-            ) : null}
-            <Button
-              size="sm"
-              variant="ghost"
-              aria-label="Expand full studio panel"
-              onClick={() => setStealthMode(false)}
-            >
-              Exit stealth ▾
-            </Button>
-          </div>
-        </section>
-      )}
-
-      {!hidden && !inStealthView && (
-      <>
-      {teleprompterOpen && (
-        <section className="cap-ready-card stack" style={{ gap: 10 }} role="region" aria-label="Teleprompter">
-          <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-            <div>
-              <span className="eyebrow">TELEPROMPTER · FLOATING NOTES</span>
-              <div className="field-hint">
-                Hidden from Window &amp; Tab recordings · Syncs live to Floating controls (Document PiP)
-              </div>
-            </div>
-            <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-              <Toggle
-                label="Show in Floating PiP"
-                checked={teleprompter.enabled}
-                onChange={(checked) => updateTeleprompter({ enabled: checked, ...(checked ? {} : { playing: false }) })}
-              />
-              <Button
-                size="sm"
-                variant={teleprompter.playing ? 'primary' : 'ghost'}
-                onClick={() => updateTeleprompter({ enabled: true, playing: !teleprompter.playing })}
-              >
-                {teleprompter.playing ? '⏸ Pause scroll' : '▶ Play scroll'}
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                aria-label="Reset teleprompter scroll"
-                onClick={() => {
-                  if (teleprompterScrollRef.current) teleprompterScrollRef.current.scrollTop = 0;
-                  updateTeleprompter({ playing: false });
-                }}
-              >
-                ↺ Reset
-              </Button>
-            </div>
-          </div>
-
-          <textarea
-            className="input"
-            rows={4}
-            aria-label="Teleprompter script"
-            placeholder="Paste your presenter script or talking points here…"
-            value={teleprompter.script}
-            onChange={(event) => updateTeleprompter({ script: event.target.value })}
-            style={{ width: '100%', resize: 'vertical', lineHeight: 1.5 }}
-          />
-
-          <div className="row" style={{ gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-            <div style={{ flex: '1 1 180px' }}>
-              <Slider
-                label="Scroll speed"
-                min={60}
-                max={300}
-                step={10}
-                value={teleprompter.wpm}
-                format={(v) => `${v} wpm`}
-                onChange={(wpm) => updateTeleprompter({ wpm })}
-              />
-            </div>
-            <div style={{ flex: '1 1 160px' }}>
-              <Slider
-                label="Backdrop opacity"
-                min={0.35}
-                max={0.98}
-                step={0.03}
-                value={teleprompter.opacity}
-                format={(v) => `${Math.round(v * 100)}%`}
-                onChange={(opacity) => updateTeleprompter({ opacity })}
-              />
-            </div>
-            <div className="row" style={{ gap: 6, alignItems: 'center' }} role="group" aria-label="Teleprompter text size">
-              <Button
-                size="sm"
-                variant="ghost"
-                aria-label="Decrease teleprompter text size"
-                onClick={() => updateTeleprompter({ fontSize: Math.max(14, teleprompter.fontSize - 2) })}
-              >
-                −
-              </Button>
-              <span className="mono" style={{ minWidth: 44, textAlign: 'center', fontSize: 12 }}>
-                {teleprompter.fontSize}px
-              </span>
-              <Button
-                size="sm"
-                variant="ghost"
-                aria-label="Increase teleprompter text size"
-                onClick={() => updateTeleprompter({ fontSize: Math.min(36, teleprompter.fontSize + 2) })}
-              >
-                +
-              </Button>
-            </div>
-          </div>
-
-          {teleprompter.script.trim().length > 0 && (
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '16px 1fr 16px',
-                alignItems: 'center',
-                background: `rgba(17, 16, 24, ${teleprompter.opacity})`,
-                border: '1px solid var(--border)',
-                borderRadius: 10,
-                padding: '8px 10px',
-                maxHeight: 132,
-                overflow: 'hidden',
-              }}
-            >
-              <span aria-hidden style={{ color: '#60a5fa', fontWeight: 700 }}>▸</span>
-              <div
-                ref={teleprompterScrollRef}
-                data-testid="studio-teleprompter-preview"
-                style={{
-                  maxHeight: 112,
-                  overflowY: 'auto',
-                  fontSize: teleprompter.fontSize,
-                  lineHeight: 1.5,
-                  whiteSpace: 'pre-wrap',
-                  fontWeight: 600,
-                  padding: '0 6px',
-                }}
-              >
-                {teleprompter.script}
-              </div>
-              <span aria-hidden style={{ color: '#60a5fa', fontWeight: 700, textAlign: 'right' }}>◂</span>
-            </div>
-          )}
-        </section>
-      )}
-
-      {stage === 'ready' && preparedSummary && (
-        <section className="cap-ready-card" role="region" aria-label="Source confirmation">
-          <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-            <div>
-              <span className="eyebrow">SOURCE READY TO RECORD</span>
-              <h2 style={{ margin: '4px 0 2px', fontSize: 16 }}>{preparedSummary.sourceName}</h2>
-              <div className="field-hint">
-                {preparedSummary.surfaceType} · <span className="mono">{preparedSummary.dimensions}</span>
-              </div>
-            </div>
-            <Badge tone="ok">Ready</Badge>
-          </div>
-          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-            <Badge tone={cameraOn ? 'ok' : 'neutral'}>Camera: {preparedSummary.cameraStatus}</Badge>
-            <Badge tone={micOn ? 'ok' : 'neutral'}>Mic: {preparedSummary.micStatus}</Badge>
-            <Badge tone={systemAudio ? 'ok' : 'neutral'}>System audio: {preparedSummary.systemAudioStatus}</Badge>
-          </div>
-          <div className="row" style={{ gap: 8, flexWrap: 'wrap', justifyContent: 'space-between' }}>
-            <span className="field-hint">
-              Source confirmed. Click Start recording below when ready.
-            </span>
-            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-              <Button variant="ghost" onClick={cancelReadyState}>
-                Cancel
-              </Button>
-              <Button variant="ghost" onClick={() => void chooseSource()}>
-                Change source
-              </Button>
-              <Button variant="primary" onClick={() => void start()}>
-                <span aria-hidden>●</span> Start recording
-              </Button>
-            </div>
-          </div>
-        </section>
-      )}
-
-      {/* One primary action + one Floating controls entry */}
-      {stage === 'idle' && !stealthMode && (
-        <div className="start-dock" role="toolbar" aria-label="Recording launcher">
-          <Button variant="primary" onClick={start}>
-            <span aria-hidden>●</span>{' '}
-            {screenOn && !preparedSummary ? 'Choose what to record · Start recording' : 'Start recording'}
-          </Button>
-          {floatingSupport.supported && (
-            <Button
-              variant={floatingCameraOpen ? 'primary' : 'ghost'}
-              aria-pressed={floatingCameraOpen}
-              onClick={() => void toggleFloatingCamera()}
-              title={floatingSupport.detail}
-            >
-              {floatingCameraOpen ? 'Close floating controls' : 'Floating controls'}
-            </Button>
-          )}
-          <span className="field-hint">
-            {openEditorAfterStop ? 'Stop → Edit' : 'Stop → Review take'} ·{' '}
-            {countdownSeconds ? `${countdownSeconds}s countdown` : 'No countdown'} · Chrome may still show its own sharing indicator
-          </span>
-        </div>
-      )}
-      </>
-      )}
-      {/* Standalone CameraBubble component: completely separate from the horizontal
-          recording control bar, movable to any place during preview or recording, with live shape
-          (Circle, Square, Rounded, Portrait, Pill, Hexagon) and visual effect options.
-          Hidden when Document/Video PiP (floatingCameraOpen) is open so the user never sees two camera bubbles. */}
-      {cameraOn &&
-        !hideFloatingPreview &&
-        !floatingCameraOpen &&
-        ((!hidden && inStealthView) ||
-          cameraPreviewOn ||
-          stage === 'ready' ||
-          stage === 'countdown' ||
-          stage === 'recording' ||
-          stage === 'paused' ||
-          stage === 'finishing') && (
-          <CameraBubble
-            videoRef={selfViewRef}
-            presenter={presenter}
-            stage={stage}
-            position={selfViewPos}
-            cameraLive={cameraPreviewOn || stage === 'ready' || stage === 'countdown' || stage === 'recording' || stage === 'paused'}
-            onStartPreview={() => void startCameraPreview()}
-            onPositionChange={setSelfViewPos}
-            onUpdatePresenter={(patch) =>
-              setPresenter((current) => {
-                const next = { ...current, ...patch };
-                if ('x' in patch && patch.x === undefined) delete next.x;
-                if ('y' in patch && patch.y === undefined) delete next.y;
-                return next;
-              })
-            }
-          />
-        )}
-
-      {/* Active recording bar: only shown when the user explicitly expands the full Studio UI while recording */}
-      {!inStealthView && (stage === 'countdown' || stage === 'recording' || stage === 'paused' || stage === 'finishing') && (
-        <div
-          className={`rec-bar rec-dock${stage === 'paused' ? ' paused' : ''}${controlsHidden ? ' rec-dock-collapsed' : ''}${stealthMode ? ' rec-dock-stealth' : ''}`}
-          role="group"
-          aria-label="Recording controls"
-          data-stealth={stealthMode ? 'true' : 'false'}
-        >
-          <span className="rec-dock-status">
-            <span className={stage === 'recording' || stage === 'countdown' ? 'rec-dot' : 'rec-dot still'} aria-hidden />
-            <strong className="rec-state" role="status" aria-live="polite">
-              {stage === 'countdown' ? 'STARTING' : stage === 'paused' ? 'PAUSED' : stage === 'finishing' ? 'SAVING' : 'REC'}
-            </strong>
-            <span className="rec-timer" data-testid="rec-dock-timer" aria-hidden="true">
-              {stage === 'countdown' ? countdown : formatElapsed(elapsedSeconds)}
-            </span>
-            {!controlsHidden && !stealthMode && (stats?.markers.length ?? 0) > 0 && (
-              <span className="rec-markers">
-                {stats?.markers.length} marker{stats?.markers.length === 1 ? '' : 's'}
-              </span>
-            )}
-            {!controlsHidden && (error || warnings[0]) && (
-              <Badge tone={error ? 'danger' : 'warn'}>{error ?? warnings[0]}</Badge>
-            )}
-          </span>
-
-          {stage === 'finishing' && <span className="field-hint">Flushing segments to disk…</span>}
-          {stage === 'countdown' && <span className="field-hint">Waiting for the countdown</span>}
-          {(stage === 'recording' || stage === 'paused') &&
-            (controlsHidden ? (
-              <div className="rec-dock-actions">
-                <RecordingActions
-                  paused={stage === 'paused'}
-                  openEditor={openEditorAfterStop && capMode !== 'instant'}
-                  onPause={togglePause}
-                  onStop={() => void stopTake()}
-                />
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  aria-label="Show recording controls"
-                  title="Restore full recording controls (Shortcut: H)"
-                  onClick={() => setControlsHidden(false)}
-                >
-                  Show controls ▴
-                </Button>
-              </div>
-            ) : (
-              <div className="rec-dock-actions">
-                <RecordingActions paused={stage === 'paused'} openEditor={openEditorAfterStop && capMode !== 'instant'} onPause={togglePause} onStop={() => void stopTake()} />
-                <details className="rec-more-menu">
-                  <summary className="btn btn-ghost btn-sm" aria-label="More recording controls">
-                    More
-                  </summary>
-                  <div className="rec-more-popover" role="group" aria-label="Secondary recording actions">
-                    {micOn && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={toggleMicMute}
-                        aria-label={micMuted ? 'Unmute the microphone' : 'Mute the microphone'}
-                        title={micMuted ? 'Microphone is muted in the recording' : 'Mute the microphone'}
-                      >
-                        {micMuted ? 'Unmute' : 'Mute'}
-                      </Button>
-                    )}
-                    {cameraOn && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        aria-pressed={hideFloatingPreview}
-                        onClick={() => setHideFloatingPreview((prev) => !prev)}
-                        title="Hide floating camera preview on display while continuing to record camera separately for the editor"
-                      >
-                        {hideFloatingPreview ? 'Show camera preview' : 'Hide camera preview'}
-                      </Button>
-                    )}
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      aria-pressed={stealthMode}
-                      onClick={() => toggleStealthMode()}
-                      title="Toggle small horizontal stealth record panel"
-                    >
-                      {stealthMode ? 'Exit stealth panel' : 'Stealth panel'}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="rec-restart"
-                      onClick={() => setRestartOpen(true)}
-                      aria-label="Restart take"
-                      title="Restart: discards this take, then counts down again"
-                    >
-                      ↻ Restart
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => setDiscardOpen(true)}
-                      title="Abandon this take without keeping it"
-                    >
-                      Discard
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={addMarker} title="Shortcut: M or K">
-                      Marker
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => void stopTake(true)}
-                      title="Stop and open Quick Export / Post-record sheet"
-                    >
-                      Stop &amp; export
-                    </Button>
-                    {floatingSupport.supported && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => void toggleFloatingCamera()}
-                        title={floatingSupport.detail}
-                      >
-                        {floatingCameraOpen ? 'Close floating controls' : 'Floating controls'}
-                      </Button>
-                    )}
-                  </div>
-                </details>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  aria-label="Hide recording controls"
-                  title="Collapse recording controls into a minimal pill (Shortcut: H)"
-                  onClick={() => setControlsHidden(true)}
-                >
-                  Hide controls ▾
-                </Button>
-              </div>
-            ))}
-        </div>
-      )}
-
-      {!hidden && !inStealthView && (
-      <div className="split-grid">
-        <div className="stack" style={{ gap: 14 }}>
-          <Panel
-            title="Sources"
-            action={
-              <Button size="sm" variant="ghost" aria-pressed={showMonitor} onClick={() => setShowMonitor((prev) => !prev)}>
-                {showMonitor ? 'Hide preview' : 'Show preview'}
-              </Button>
-            }
-            bodyClassName="stack"
-          >
-            <div className="capture-mode-grid" role="group" aria-label="Recording source">
-              {([
-                { id: 'screen', iconName: 'screen' as IconName, label: 'Entire screen' },
-                { id: 'window', iconName: 'window' as IconName, label: 'Window' },
-                { id: 'camera', iconName: 'camera' as IconName, label: 'Camera only' },
-                { id: 'audio', iconName: 'mic' as IconName, label: 'Audio only' },
-              ] as const).map((mode) => (
-                <button
-                  type="button"
-                  key={mode.id}
-                  disabled={stage !== 'idle'}
-                  aria-pressed={
-                    mode.id === 'audio'
-                      ? !screenOn && !cameraOn && micOn
-                      : mode.id === 'camera'
-                        ? !screenOn && cameraOn
-                        : screenOn && surface === mode.id
-                  }
-                  onClick={() => {
-                    if (mode.id === 'audio') {
-                      setScreenOn(false);
-                      setCameraOn(false);
-                      setMicOn(true);
-                    } else if (mode.id === 'camera') {
-                      setScreenOn(false);
-                      setCameraOn(true);
-                    } else {
-                      setScreenOn(true);
-                      setSurface(mode.id);
-                    }
-                  }}
-                >
-                  <SvgIcon name={mode.iconName} size={20} />
-                  {mode.label}
-                </button>
-              ))}
+                );
+              })}
             </div>
 
             <div className="cap-device-rows">
@@ -2322,12 +1562,18 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                   </div>
                 </div>
                 {micOn && (
-                  <div className="meter" aria-label="Live microphone input level" style={{ height: 5 }}>
-                    <div
-                      className="meter-fill"
-                      style={{ width: `${Math.round(meterPosition(micLevel?.peakDb ?? -Infinity) * 100)}%` }}
-                    />
-                  </div>
+                  <>
+                    <div className="meter" aria-label="Live microphone input level" style={{ height: 5 }}>
+                      <div
+                        className="meter-fill"
+                        style={{ width: `${Math.round(meterPosition(micLevel?.peakDb ?? -Infinity) * 100)}%` }}
+                      />
+                    </div>
+                    <div className="row" style={{ justifyContent: 'space-between', fontSize: 11.5, color: 'var(--text-3)' }}>
+                      <span className="mono">{micLevel ? `${micLevel.peakDb.toFixed(1)} dBFS peak` : 'no signal'}</span>
+                      {micLevel?.clipping ? <Badge tone="danger">clipping — lower input gain</Badge> : null}
+                    </div>
+                  </>
                 )}
               </div>
 
@@ -2346,188 +1592,206 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
               )}
             </div>
 
-            <details className="record-details recorder-advanced" open={settingsOpen} onToggle={(e) => setSettingsOpen((e.currentTarget as HTMLDetailsElement).open)}>
-              <summary>Advanced<span>Capture modes, Browser tab, quality, countdown, storage &amp; camera appearance</span></summary>
-              <div className="stack" style={{ gap: 12, paddingTop: 12 }}>
-                <div className="cap-mode-switcher" role="group" aria-label="Capture mode">
-                  {(['instant', 'studio', 'screenshot'] as const).map((m) => {
-                    const info = describeCapMode(m);
-                    return (
-                      <button
-                        key={m}
-                        type="button"
-                        disabled={stage !== 'idle' && stage !== 'ready'}
-                        aria-pressed={capMode === m}
-                        onClick={() => {
-                          setCapMode(m);
-                          if (m === 'instant') setOpenEditorAfterStop(false);
-                          else if (m === 'studio') setOpenEditorAfterStop(true);
-                        }}
-                      >
-                        <span>{info.label}</span>
-                        <span className="mode-sub">{info.subLabel}</span>
-                      </button>
-                    );
-                  })}
-                </div>
+            {/* Footer: one primary action + optional "Show preview" */}
+            <div
+              className="recorder-footer"
+              style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)', gap: 8, display: 'flex', flexWrap: 'wrap', alignItems: 'center' }}
+            >
+              <Button
+                variant="primary"
+                disabled={isRecording || stage === 'selecting'}
+                onClick={stage === 'ready' ? () => void start() : () => void chooseSource()}
+              >
+                <span aria-hidden>●</span>{' '}
+                {stage === 'ready' ? 'Start recording' : 'Choose source'}
+              </Button>
+              {cameraOn && (
+                <Button
+                  size="sm"
+                  variant={showMonitor ? 'primary' : 'ghost'}
+                  aria-pressed={showMonitor}
+                  onClick={() => setShowMonitor((prev) => !prev)}
+                  title="Show preview of the captured source"
+                >
+                  {showMonitor ? 'Hide preview' : 'Show preview'}
+                </Button>
+              )}
+              <span className="field-hint">
+                {openEditorAfterStop ? 'Stop → Edit' : 'Stop → Review take'} ·{' '}
+                {countdownSeconds ? `${countdownSeconds}s countdown` : 'No countdown'} · Chrome may still show its own sharing indicator
+              </span>
+            </div>
+          </div>
+        </>
+      )}
 
-                <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-                    <Button
-                      size="sm"
-                      variant={screenOn && surface === 'tab' ? 'primary' : 'ghost'}
-                      disabled={stage !== 'idle'}
-                      aria-pressed={screenOn && surface === 'tab'}
-                      onClick={() => {
-                        setScreenOn(true);
-                        setSurface('tab');
-                      }}
-                    >
-                      Browser tab source
-                    </Button>
-                    {stage === 'idle' && (
-                      <Button size="sm" variant="ghost" onClick={() => void chooseSource()}>
-                        Choose source…
-                      </Button>
-                    )}
-                  </div>
-                  <Select
-                    label="Recording countdown"
-                    value={String(countdownSeconds)}
-                    disabled={stage !== 'idle' && stage !== 'ready'}
-                    onChange={(value) => setCountdownSeconds(Number(value))}
-                    options={[
-                      { value: '0', label: 'No countdown' },
-                      { value: '3', label: '3s countdown' },
-                      { value: '5', label: '5s countdown' },
-                      { value: '10', label: '10s countdown' },
-                    ]}
-                  />
-                </div>
+      {/* Source confirmation: shown after Chrome returns the chosen source. */}
+      {stage === 'ready' && preparedSummary && (
+        <section className="cap-ready-card" role="region" aria-label="Source confirmation">
+          <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+            <div>
+              <span className="eyebrow">SOURCE READY TO RECORD</span>
+              <h2 style={{ margin: '4px 0 2px', fontSize: 16 }}>{preparedSummary.sourceName}</h2>
+              <div className="field-hint">
+                {preparedSummary.surfaceType} · <span className="mono">{preparedSummary.dimensions}</span>
+              </div>
+            </div>
+            <Badge tone="ok">Ready</Badge>
+          </div>
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <Badge tone={cameraOn ? 'ok' : 'neutral'}>Camera: {preparedSummary.cameraStatus}</Badge>
+            <Badge tone={micOn ? 'ok' : 'neutral'}>Mic: {preparedSummary.micStatus}</Badge>
+            <Badge tone={systemAudio ? 'ok' : 'neutral'}>System audio: {preparedSummary.systemAudioStatus}</Badge>
+          </div>
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap', justifyContent: 'space-between' }}>
+            <span className="field-hint">Source confirmed. Click Start recording when ready.</span>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              <Button variant="ghost" onClick={cancelReadyState}>Cancel</Button>
+              <Button variant="ghost" onClick={() => void chooseSource()}>Change source</Button>
+              <Button variant="primary" onClick={() => void start()}>
+                <span aria-hidden>●</span> Start recording
+              </Button>
+            </div>
+          </div>
+        </section>
+      )}
 
-                <Toggle
-                  label="Open editor when recording stops"
-                  checked={openEditorAfterStop}
-                  onChange={setOpenEditorAfterStop}
-                  disabled={stage !== 'idle' && stage !== 'ready'}
-                />
+      {/* Settings panel: one panel with General / Capture quality / Camera appearance / Shortcuts. */}
+      {settingsOpen && (
+        <section className="settings-panel" role="region" aria-label="Recording settings" style={{ marginTop: 14 }}>
+          <div className="row" style={{ justifyContent: 'flex-end', marginBottom: 8 }}>
+            <Button variant="ghost" size="sm" onClick={() => setSettingsOpen(false)}>
+              Done
+            </Button>
+          </div>
 
-                <div className="hint-card stack" style={{ gap: 8 }} role="region" aria-label="Across tabs and display capture">
-                  <div className="row" style={{ justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-                    <strong style={{ fontSize: 12.5 }}>Floating controls &amp; capture rules</strong>
-                    <Badge tone={actualReturnedSurface.surface ? 'ok' : 'neutral'}>
-                      {actualReturnedSurface.surface ? `Captured: ${actualReturnedSurface.label}` : 'Cap Stealth Ready'}
-                    </Badge>
-                  </div>
-                  <div className="field-hint" style={{ lineHeight: 1.5 }}>
-                    • <strong>Entire screen</strong> captures across terminals, browsers, and desktop apps. Chrome may still show its own native sharing indicator.
-                    <br />
-                    • <strong>Window</strong> captures a single application window with a separate movable camera layer in the Studio editor.
-                    <br />
-                    • <strong>Floating controls</strong>: Keep timer, Pause/Resume, and Stop floating above tabs via Document PiP. Closing the floating window leaves the take running.
-                  </div>
-                  <div className="row" style={{ gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+          <details open>
+            <summary>General</summary>
+            <div className="stack" style={{ gap: 10, paddingTop: 10 }}>
+              <div className="field-hint">
+                Remembered devices, countdown length, and what happens after a take stops.
+              </div>
+              <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
+                <div style={{ flex: 1 }}>
+                  <Field label="Camera device">
                     <Select
-                      label="Quiet mode"
-                      value={quietMode}
-                      onChange={(v) => {
-                        const next = v as QuietMode;
-                        setQuietMode(next);
-                        setControlsHidden(next === 'controls-only');
+                      label="Camera device"
+                      value={cameraId}
+                      onChange={(id) => {
+                        setCameraId(id);
+                        if (cameraPreviewOn) stopCameraPreview();
                       }}
-                      options={QUIET_MODES.map((m) => ({ value: m.id, label: m.label }))}
+                      disabled={stage !== 'idle' || !cameraOn}
+                      options={devices.camera.length > 0 ? devices.camera.map((d) => ({ value: d.deviceId, label: d.label })) : [{ value: '', label: 'No camera found' }]}
                     />
-                    <Toggle
-                      label="Hide floating preview (keep recording camera separately for editor to avoid double bubble)"
-                      checked={hideFloatingPreview}
-                      onChange={setHideFloatingPreview}
+                  </Field>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <Field label="Microphone device">
+                    <Select
+                      label="Microphone device"
+                      value={micId}
+                      onChange={setMicId}
+                      disabled={stage !== 'idle' || !micOn}
+                      options={devices.mic.length > 0 ? devices.mic.map((d) => ({ value: d.deviceId, label: d.label })) : [{ value: '', label: 'No microphone found' }]}
                     />
-                    <Toggle
-                      label="Hide live screen monitor while recording display (reduce mirror effect)"
-                      checked={hideMonitorDuringDisplay}
-                      onChange={setHideMonitorDuringDisplay}
+                  </Field>
+                </div>
+              </div>
+              <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
+                <div style={{ flex: 1 }}>
+                  <Field label="Countdown">
+                    <Select
+                      label="Recording countdown"
+                      value={String(countdownSeconds)}
+                      disabled={!isRecording && stage !== 'idle'}
+                      onChange={(value) => setCountdownSeconds(Number(value))}
+                      options={[
+                        { value: '0', label: 'No countdown' },
+                        { value: '3', label: '3s countdown' },
+                        { value: '5', label: '5s countdown' },
+                        { value: '10', label: '10s countdown' },
+                      ]}
                     />
-                    {cameraOn && screenOn && surface === 'screen' && (
-                      <Select
-                        label="Camera export mode on Display"
-                        value={cameraDuplicationMode}
-                        onChange={(v) => setCameraDuplicationMode(v as CameraDuplicationMode)}
-                        options={[
-                          { value: 'baked-in-screen', label: 'Bubble baked into screen (no duplicate layer in export)' },
-                          { value: 'separate-layer', label: 'Separate camera layer in editor/export' },
-                        ]}
-                      />
-                    )}
-                  </div>
-                  {cameraOn && (
+                  </Field>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <Field label="After recording">
+                    <Select
+                      label="After recording"
+                      value={openEditorAfterStop ? 'edit' : 'review'}
+                      disabled={!isRecording && stage !== 'idle'}
+                      onChange={(value) => setOpenEditorAfterStop(value === 'edit')}
+                      options={[
+                        { value: 'edit', label: 'Edit recording' },
+                        { value: 'review', label: 'Review and download' },
+                      ]}
+                    />
+                  </Field>
+                </div>
+              </div>
+              <div className="field-hint">
+                Screen sources use Chrome's display picker. If a remembered device is missing, the fallback is shown and you can reselect it.
+              </div>
+            </div>
+          </details>
+
+          <details open>
+            <summary>Capture quality</summary>
+            <div className="stack" style={{ gap: 10, paddingTop: 10 }}>
+              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                <div style={{ flex: 1 }}>
+                  <Field label="Quality target">
+                    <Select
+                      label="Quality target"
+                      value={resolution}
+                      disabled={stage !== 'idle'}
+                      onChange={setResolution}
+                      options={[
+                        { value: '4k', label: '3840×2160 @ 30 — 4K' },
+                        { value: '1440', label: '2560×1440' },
+                        { value: '1080', label: '1920×1080' },
+                      ]}
+                    />
                     <div className="field-hint">
-                      Camera export rule: <strong>{cameraLayerRule.summary}</strong>
+                      Requested size. The browser may deliver less; actual track settings appear in the Applied track settings report.
                     </div>
-                  )}
+                  </Field>
                 </div>
+                <div style={{ flex: 1 }}>
+                  <Field label="Frame rate">
+                    <Select
+                      label="Frame rate"
+                      value={fps}
+                      disabled={stage !== 'idle'}
+                      onChange={setFps}
+                      options={[
+                        { value: '30', label: '30 fps' },
+                        { value: '60', label: '60 fps (verify with benchmark)' },
+                      ]}
+                    />
+                  </Field>
+                </div>
+              </div>
+              <div className="field-hint">
+                Resolution, frame rate, and storage details live under Advanced. Compare requested and applied values; browsers silently clamp capture sizes on some machines.
+              </div>
+            </div>
+          </details>
 
-                <div className={session.storageMode === 'opfs' ? 'warn-card' : 'hint-card'} role="status">
-                  {session.storageMode === 'opfs' ? (
-                    <>
-                      This session lives in <strong>browser storage</strong> ({session.workspace?.info.name ?? 'OPFS'}). Use{' '}
-                      <strong>Save to a folder…</strong> after recording for a durable copy.
-                    </>
-                  ) : (
-                    <>
-                      Recording to <strong>{session.workspace?.info.name}</strong> on this computer.
-                    </>
-                  )}
-                  <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-                    {project.assets.length === 0 && takes.length === 0 && takeResult === null && (
-                      <Button size="sm" variant="ghost" disabled={stage !== 'idle'} onClick={() => void chooseFolderWorkspace()}>
-                        Choose a folder for this session…
-                      </Button>
-                    )}
-                    {session.storageMode === 'opfs' && (
-                      <Button size="sm" variant="ghost" disabled={stage !== 'idle'} onClick={() => void saveSessionToFolder()}>
-                        Save recordings to a folder…
-                      </Button>
-                    )}
-                  </div>
-                </div>
-
-                <Toggle label="Screen / window" checked={screenOn} onChange={setScreenOn} disabled={stage !== 'idle'} />
-                <Field label="Camera device">
-                  <Select
-                    label="Camera device"
-                    value={cameraId}
-                    onChange={(id) => {
-                      setCameraId(id);
-                      if (cameraPreviewOn) stopCameraPreview();
-                    }}
-                    disabled={stage !== 'idle' || !cameraOn}
-                    options={devices.camera.length > 0 ? devices.camera.map((d) => ({ value: d.deviceId, label: d.label })) : [{ value: '', label: 'No camera found' }]}
-                  />
-                </Field>
-                <div className="row" style={{ gap: 10, alignItems: 'center' }}>
-                  <Button
-                    variant="ghost"
-                    onClick={() => (cameraPreviewOn ? stopCameraPreview() : void startCameraPreview())}
-                    disabled={stage !== 'idle' || !cameraOn}
-                  >
-                    {cameraPreviewOn ? 'Stop camera preview' : 'Preview camera'}
-                  </Button>
-                  <span className="field-hint" style={{ flex: 1 }}>
-                    Shows the live camera in the shape and corner below. The preview stays on this machine and is not recorded.
-                  </span>
-                </div>
-                <details className="record-details"><summary>Camera appearance<span>Shape, position &amp; background</span></summary>
-                <div className="stack" style={{ gap: 10, paddingTop: 10 }}>
-                  <div className="panel-title">Camera style (applied as a presenter layer)</div>
-                  <div className="row" style={{ gap: 8 }}>
-                    <div style={{ flex: 1 }}>
-                      <Field label="Shape">
-                        <Select
-                          label="Bubble shape"
-                          value={presenter.shape}
-                          onChange={(value) => setPresenter((current) => ({ ...current, shape: value as PresenterProps['shape'] }))}
-                          disabled={!cameraOn}
-                          options={PRESENTER_BUBBLE_SHAPES.map((s) => ({ value: s.id, label: s.label }))}
+          <details open>
+            <summary>Camera appearance</summary>
+            <div className="stack" style={{ gap: 10, paddingTop: 10 }}>
+              <div className="panel-title">Camera style (applied as a presenter layer)</div>
+              <div className="row" style={{ gap: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <Field label="Shape">
+                    <Select
+                      label="Bubble shape"
+                      value={presenter.shape}
+                      onChange={(value) => setPresenter((current) => ({ ...current, shape: value as PresenterProps['shape'] }))}
+                      disabled={!cameraOn}
+                      options={PRESENTER_BUBBLE_SHAPES.map((s) => ({ value: s.id, label: s.label }))}
                     />
                   </Field>
                 </div>
@@ -2580,16 +1844,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                 onChange={(value) => setPresenter((current) => ({ ...current, size: value }))}
               />
               <Slider
-                label="Shadow"
-                min={0}
-                max={60}
-                step={1}
-                value={presenter.shadow}
-                format={(value) => (value === 0 ? 'none' : `${value} px`)}
-                onChange={(value) => setPresenter((current) => ({ ...current, shadow: value }))}
-              />
-              <Slider
-                label="Outline"
+                label="Border"
                 min={0}
                 max={24}
                 step={1}
@@ -2618,11 +1873,9 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                 checked={presenter.visible !== false}
                 onChange={(value) => setPresenter((current) => ({ ...current, visible: value }))}
               />
-              <Toggle
-                label="Chroma key (experimental — green background)"
-                checked={presenter.chromaKey}
-                onChange={(value) => setPresenter((current) => ({ ...current, chromaKey: value }))}
-              />
+              <div className="field-hint">
+                Changes preview immediately. Position presets apply to the bubble. The camera is always recorded as its own full-size track; this style shapes the presenter layer and can be changed later without re-recording.
+              </div>
               <Button
                 size="sm"
                 variant="ghost"
@@ -2633,137 +1886,396 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
               >
                 Reset camera position
               </Button>
-              <div className="field-hint">
-                The camera is always recorded as its own full-size track. This style shapes the presenter layer on the
-                timeline and can be changed later without re-recording.
-              </div>
             </div>
-            </details>
-            <Field label="Microphone device">              <Select
-                label="Microphone device"
-                value={micId}
-                onChange={setMicId}
-                disabled={stage !== 'idle' || !micOn}
-                options={devices.mic.length > 0 ? devices.mic.map((d) => ({ value: d.deviceId, label: d.label })) : [{ value: '', label: 'No microphone found' }]}
-              />
-            </Field>
-            <div className="row" style={{ gap: 6 }}>
-              <Button size="sm" onClick={testMic} disabled={stage !== 'idle'}>
-                {micTesting ? 'Re-test microphone' : 'Test microphone'}
-              </Button>
-              <span className="field-hint">Speech processing in the mix is applied later and is non-destructive.</span>
-            </div>
-            <div className="meter" aria-label="Microphone level">
-              <div className="meter-fill" style={{ width: `${Math.round(meterPosition(micLevel?.peakDb ?? -Infinity) * 100)}%` }} />
-            </div>
-            <div className="row" style={{ justifyContent: 'space-between', fontSize: 11.5, color: 'var(--text-3)' }}>
-              <span className="mono">{micLevel ? `${micLevel.peakDb.toFixed(1)} dBFS peak` : 'no signal'}</span>
-              {micLevel?.clipping ? <Badge tone="danger">clipping — lower input gain</Badge> : null}
-            </div>
-            <div className="row" style={{ gap: 8 }}>
-              <div style={{ flex: 1 }}>
-                <Field label="Quality target">
-                  <Select
-                    label="Quality target"
-                    value={resolution}
-                    disabled={stage !== 'idle'}
-                    onChange={setResolution}
-                    options={[
-                      { value: '4k', label: '3840×2160 @ 30 — 4K' },
-                      { value: '1440', label: '2560×1440' },
-                      { value: '1080', label: '1920×1080' },
-                    ]}
-                  />
-                </Field>
-              </div>
-              <div style={{ flex: 1 }}>
-                <Field label="Frame rate">
-                  <Select
-                    label="Frame rate"
-                    value={fps}
-                    disabled={stage !== 'idle'}
-                    onChange={setFps}
-                    options={[
-                      { value: '30', label: '30 fps' },
-                      { value: '60', label: '60 fps (verify with benchmark)' },
-                    ]}
-                  />
-                </Field>
-              </div>
-            </div>
-            <div className="field-hint">
-              Quality targets request capture size; the browser may deliver less. The actual track settings are shown
-              below, and no 1080p source is ever labelled 4K.
-            </div>
-            </div></details>
-          </Panel>
+          </details>
 
-          <details className="record-details" open={stage !== 'idle' || Boolean(error) || warnings.length > 0}><summary>Take status & recording details</summary>
-          <Panel title="Take" bodyClassName="stack">
-            {stats ? (
-              <div className="stack" style={{ gap: 10 }}>
-                <div className="row" style={{ gap: 20, flexWrap: 'wrap' }}>
-                  <Stat label="Elapsed" value={formatElapsed(elapsedSeconds)} />
-                  <Stat label="Written" value={formatBytes(stats.bytes)} />
-                  <Stat label="Uncommitted" value={formatBytes(stats.uncommittedBytes)} hint="lost on a crash" />
-                  <Stat label="Write latency" value={`${stats.writeLatencyMs.toFixed(1)} ms`} />
-                </div>
-                <div className="table-scroll">
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th>Asset</th>
-                        <th>State</th>
-                        <th>Chunks</th>
-                        <th>Bytes</th>
-                        <th>Committed</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {assetsByKey.map((asset) => (
-                        <tr key={asset.key}>
-                          <td>{asset.key}</td>
-                          <td>{asset.state}</td>
-                          <td className="mono">{asset.chunks}</td>
-                          <td className="mono">{formatBytes(asset.bytes)}</td>
-                          <td className="mono">{formatBytes(asset.committedBytes)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="field-hint">
-                  Commit interval {project.settings.segmentSeconds}s — a crash can lose at most that window; everything
-                  before the last commit stays recoverable.
+          <details open>
+            <summary>Shortcuts</summary>
+            <div className="stack" style={{ gap: 8, paddingTop: 10 }}>
+              <div className="field-hint">Shortcuts are scoped to this app. Editing shortcuts never control a background recording.</div>
+              <div className="row" style={{ gap: 16, flexWrap: 'wrap' }}>
+                <div>
+                  <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+                    <span className="mono" style={{ fontSize: 11 }}>Space / P</span>
+                    <span>Pause / Resume recording</span>
+                  </div>
+                  <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+                    <span className="mono" style={{ fontSize: 11 }}>S</span>
+                    <span>Stop recording</span>
+                  </div>
+                  <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+                    <span className="mono" style={{ fontSize: 11 }}>M / K</span>
+                    <span>Add marker</span>
+                  </div>
+                  <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+                    <span className="mono" style={{ fontSize: 11 }}>U</span>
+                    <span>Mute / Unmute microphone</span>
+                  </div>
+                  <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+                    <span className="mono" style={{ fontSize: 11 }}>H</span>
+                    <span>Hide / Show recording controls</span>
+                  </div>
                 </div>
               </div>
-            ) : (
-              <div className="field-hint">No take in progress. Start recording; stats appear here.</div>
-            )}
-            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-              {(stage === 'countdown' || stage === 'recording' || stage === 'paused' || stage === 'finishing') && (
-                <span className="field-hint">
-                  Recording controls float at the bottom of the screen while a take is running; the live
-                  mic meter is under "Microphone" above.
-                </span>
+            </div>
+          </details>
+        </section>
+      )}
+
+      {/* Advanced settings (requested vs actual capture details). */}
+      <details className="record-details recorder-advanced" open={settingsOpen} onToggle={(e) => setSettingsOpen((e.currentTarget as HTMLDetailsElement).open)}>
+        <summary>Advanced<span>Capture modes, Browser tab, quality, countdown, storage &amp; camera appearance</span></summary>
+        <div className="stack" style={{ gap: 12, paddingTop: 12 }}>
+          <div className="cap-mode-switcher" role="group" aria-label="Capture mode">
+            {(['instant', 'studio', 'screenshot'] as const).map((m) => {
+              const info = describeCapMode(m);
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  disabled={stage !== 'idle' && stage !== 'ready'}
+                  aria-pressed={capMode === m}
+                  onClick={() => {
+                    setCapMode(m);
+                    if (m === 'instant') setOpenEditorAfterStop(false);
+                    else if (m === 'studio') setOpenEditorAfterStop(true);
+                  }}
+                >
+                  <span>{info.label}</span>
+                  <span className="mode-sub">{info.subLabel}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+              <Button
+                size="sm"
+                variant={screenOn && surface === 'tab' ? 'primary' : 'ghost'}
+                disabled={stage !== 'idle'}
+                aria-pressed={screenOn && surface === 'tab'}
+                onClick={() => {
+                  setScreenOn(true);
+                  setSurface('tab');
+                }}
+              >
+                Browser tab source
+              </Button>
+              {stage === 'idle' && (
+                <Button size="sm" variant="ghost" onClick={() => void chooseSource()}>
+                  Choose source…
+                </Button>
               )}
             </div>
-            {warnings.length > 0 && (
-              <div className="warn-card" role="status" aria-live="polite">
-                {warnings.map((line) => (
-                  <div key={line}>{line}</div>
-                ))}
-              </div>
-            )}
-            {error && (
-              <div className="danger-card" role="alert">
-                {error}
-              </div>
-            )}
-          </Panel></details>
-        </div>
+            <Select
+              label="Recording countdown"
+              value={String(countdownSeconds)}
+              disabled={stage !== 'idle' && stage !== 'ready'}
+              onChange={(value) => setCountdownSeconds(Number(value))}
+              options={[
+                { value: '0', label: 'No countdown' },
+                { value: '3', label: '3s countdown' },
+                { value: '5', label: '5s countdown' },
+                { value: '10', label: '10s countdown' },
+              ]}
+            />
+          </div>
 
-        <div className="stack record-monitor-column" style={{ gap: 14 }}>
+          <Toggle
+            label="Open editor when recording stops"
+            checked={openEditorAfterStop}
+            onChange={setOpenEditorAfterStop}
+            disabled={stage !== 'idle' && stage !== 'ready'}
+          />
+
+          <div className="hint-card stack" style={{ gap: 8 }} role="region" aria-label="Across tabs and display capture">
+            <div className="row" style={{ justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+              <strong style={{ fontSize: 12.5 }}>Floating controls &amp; capture rules</strong>
+              <Badge tone={actualReturnedSurface.surface ? 'ok' : 'neutral'}>
+                {actualReturnedSurface.surface ? `Captured: ${actualReturnedSurface.label}` : 'Cap Stealth Ready'}
+              </Badge>
+            </div>
+            <div className="field-hint" style={{ lineHeight: 1.5 }}>
+              • <strong>Entire screen</strong> captures across terminals, browsers, and desktop apps. Chrome may still show its own native sharing indicator.<br />
+              • <strong>Window</strong> captures a single application window with a separate movable camera layer in the Studio editor.<br />
+              • <strong>Floating controls</strong>: Keep timer, Pause/Resume, and Stop floating above tabs via Document PiP. Closing the floating window leaves the take running.
+            </div>
+            <div className="row" style={{ gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+              <Select
+                label="Quiet mode"
+                value={quietMode}
+                onChange={(v) => {
+                  const next = v as QuietMode;
+                  setQuietMode(next);
+                  setControlsHidden(next === 'controls-only');
+                }}
+                options={QUIET_MODES.map((m) => ({ value: m.id, label: m.label }))}
+              />
+              <Toggle
+                label="Hide floating preview (keep recording camera separately for editor to avoid double bubble)"
+                checked={hideFloatingPreview}
+                onChange={setHideFloatingPreview}
+              />
+              <Toggle
+                label="Hide live screen monitor while recording display (reduce mirror effect)"
+                checked={hideMonitorDuringDisplay}
+                onChange={setHideMonitorDuringDisplay}
+              />
+              {cameraOn && screenOn && surface === 'screen' && (
+                <Select
+                  label="Camera export mode on Display"
+                  value={cameraDuplicationMode}
+                  onChange={(v) => setCameraDuplicationMode(v as CameraDuplicationMode)}
+                  options={[
+                    { value: 'baked-in-screen', label: 'Bubble baked into screen (no duplicate layer in export)' },
+                    { value: 'separate-layer', label: 'Separate camera layer in editor/export' },
+                  ]}
+                />
+              )}
+              {cameraOn && (
+                <div className="field-hint">
+                  Camera export rule: <strong>{cameraLayerRule.summary}</strong>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className={session.storageMode === 'opfs' ? 'warn-card' : 'hint-card'} role="status">
+            {session.storageMode === 'opfs' ? (
+              <>
+                This session lives in <strong>browser storage</strong> ({session.workspace?.info.name ?? 'OPFS'}). Use{' '}
+                <strong>Save to a folder…</strong> after recording for a durable copy.
+              </>
+            ) : (
+              <>
+                Recording to <strong>{session.workspace?.info.name}</strong> on this computer.
+              </>
+            )}
+            <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+              {project.assets.length === 0 && takes.length === 0 && takeResult === null && (
+                <Button size="sm" variant="ghost" disabled={stage !== 'idle'} onClick={() => void chooseFolderWorkspace()}>
+                  Choose a folder for this session…
+                </Button>
+              )}
+              {session.storageMode === 'opfs' && (
+                <Button size="sm" variant="ghost" disabled={stage !== 'idle'} onClick={() => void saveSessionToFolder()}>
+                  Save recordings to a folder…
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <div className="field-hint">
+            Quality targets request capture size; the browser may deliver less. The actual track settings are shown below, and no 1080p source is ever labelled 4K.
+          </div>
+        </div>
+      </details>
+
+      <details className="record-details" open={stage !== 'idle' || Boolean(error) || warnings.length > 0}><summary>Take status &amp; recording details</summary>
+      <Panel title="Take" bodyClassName="stack">
+        {stats ? (
+          <div className="stack" style={{ gap: 10 }}>
+            <div className="row" style={{ gap: 20, flexWrap: 'wrap' }}>
+              <Stat label="Elapsed" value={formatElapsed(elapsedSeconds)} />
+              <Stat label="Written" value={formatBytes(stats.bytes)} />
+              <Stat label="Uncommitted" value={formatBytes(stats.uncommittedBytes)} hint="lost on a crash" />
+              <Stat label="Write latency" value={`${stats.writeLatencyMs.toFixed(1)} ms`} />
+            </div>
+            <div className="table-scroll">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Asset</th>
+                    <th>State</th>
+                    <th>Chunks</th>
+                    <th>Bytes</th>
+                    <th>Committed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {assetsByKey.map((asset) => (
+                    <tr key={asset.key}>
+                      <td>{asset.key}</td>
+                      <td>{asset.state}</td>
+                      <td className="mono">{asset.chunks}</td>
+                      <td className="mono">{formatBytes(asset.bytes)}</td>
+                      <td className="mono">{formatBytes(asset.committedBytes)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="field-hint">
+              Commit interval {project.settings.segmentSeconds}s — a crash can lose at most that window; everything
+              before the last commit stays recoverable.
+            </div>
+          </div>
+        ) : (
+          <div className="field-hint">No take in progress. Start recording; stats appear here.</div>
+        )}
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+          {isRecording && (
+            <span className="field-hint">
+              Recording controls float at the bottom of the screen while a take is running; the live
+              mic meter is under "Microphone" above.
+            </span>
+          )}
+        </div>
+        {warnings.length > 0 && (
+          <div className="warn-card" role="status" aria-live="polite">
+            {warnings.map((line) => (
+              <div key={line}>{line}</div>
+            ))}
+          </div>
+        )}
+        {error && (
+          <div className="danger-card" role="alert">
+            {error}
+          </div>
+        )}
+      </Panel></details>
+
+      {/* Compact control bar during recording: visible even when hidden (switching to Edit). */}
+      {isRecording && (
+        <div
+          className={`rec-bar rec-dock${stage === 'paused' ? ' paused' : ''}${controlsHidden ? ' rec-dock-collapsed' : ''}`}
+          role="group"
+          aria-label="Recording controls"
+        >
+          <span className="rec-dock-status">
+            <span className={stage === 'recording' || stage === 'countdown' ? 'rec-dot' : 'rec-dot still'} aria-hidden />
+            <strong className="rec-state" role="status" aria-live="polite">
+              {stage === 'countdown' ? 'STARTING' : stage === 'paused' ? 'PAUSED' : stage === 'finishing' ? 'SAVING' : 'REC'}
+            </strong>
+            <span className="rec-timer" data-testid="rec-dock-timer">
+              {stage === 'countdown' ? countdown : formatElapsed(elapsedSeconds)}
+            </span>
+            {!controlsHidden && (stats?.markers.length ?? 0) > 0 && (
+              <span className="rec-markers">
+                {stats?.markers.length} marker{stats?.markers.length === 1 ? '' : 's'}
+              </span>
+            )}
+            {!controlsHidden && (error || warnings[0]) && (
+              <Badge tone={error ? 'danger' : 'warn'}>{error ?? warnings[0]}</Badge>
+            )}
+          </span>
+
+          {stage === 'finishing' && <span className="field-hint">Flushing segments to disk…</span>}
+          {stage === 'countdown' && <span className="field-hint">Waiting for the countdown</span>}
+          {(stage === 'recording' || stage === 'paused') &&
+            (controlsHidden ? (
+              <div className="rec-dock-actions">
+                <RecordingActions
+                  paused={stage === 'paused'}
+                  openEditor={openEditorAfterStop && capMode !== 'instant'}
+                  onPause={togglePause}
+                  onStop={() => void stopTake()}
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-label="Show recording controls"
+                  title="Restore full recording controls (Shortcut: H)"
+                  onClick={() => setControlsHidden(false)}
+                >
+                  Show controls ▴
+                </Button>
+              </div>
+            ) : (
+              <div className="rec-dock-actions">
+                <RecordingActions
+                  paused={stage === 'paused'}
+                  openEditor={openEditorAfterStop && capMode !== 'instant'}
+                  onPause={togglePause}
+                  onStop={() => void stopTake()}
+                />
+                <details className="rec-more-menu">
+                  <summary className="btn btn-ghost btn-sm" aria-label="More recording controls">
+                    More
+                  </summary>
+                  <div className="rec-more-popover" role="group" aria-label="Secondary recording actions">
+                    {micOn && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={toggleMicMute}
+                        aria-label={micMuted ? 'Unmute the microphone' : 'Mute the microphone'}
+                        title={micMuted ? 'Microphone is muted in the recording' : 'Mute the microphone'}
+                      >
+                        {micMuted ? 'Unmute' : 'Mute'}
+                      </Button>
+                    )}
+                    {cameraOn && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        aria-pressed={hideFloatingPreview}
+                        onClick={() => setHideFloatingPreview((prev) => !prev)}
+                        title="Hide floating camera preview on display while continuing to record camera separately for the editor"
+                      >
+                        {hideFloatingPreview ? 'Show camera preview' : 'Hide camera preview'}
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="rec-restart"
+                      onClick={() => setRestartOpen(true)}
+                      aria-label="Restart take"
+                      title="Restart: discards this take, then counts down again"
+                    >
+                      ↻ Restart
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setDiscardOpen(true)}
+                      title="Abandon this take without keeping it"
+                    >
+                      Discard
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={addMarker} title="Shortcut: M or K">
+                      Marker
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => void stopTake(true)}
+                      title="Stop and open Quick Export / Post-record sheet"
+                    >
+                      Stop &amp; export
+                    </Button>
+                    {floatingSupport.supported && (
+                      <Button
+                        size="sm"
+                        variant={floatingCameraOpen ? 'primary' : 'ghost'}
+                        aria-pressed={floatingCameraOpen}
+                        onClick={() => void toggleFloatingCamera()}
+                        title={floatingSupport.detail}
+                      >
+                        {floatingCameraOpen ? 'Close floating controls' : 'Floating controls'}
+                      </Button>
+                    )}
+                  </div>
+                </details>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-label="Hide recording controls"
+                  title="Collapse recording controls into a minimal pill (Shortcut: H)"
+                  onClick={() => setControlsHidden(true)}
+                >
+                  Hide controls ▾
+                </Button>
+              </div>
+            ))}
+        </div>
+      )}
+
+      {/* Live monitor panel during recording: shown when capturing a screen surface. */}
+      {isRecordingDisplaySurface && (
+        <section className="record-monitor-column" role="region" aria-label="Live monitor" style={{ marginTop: 14 }}>
           <Panel title="Preview">
             <div
               style={{
@@ -2771,8 +2283,6 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                 background: '#05070a',
                 borderRadius: 10,
                 overflow: 'hidden',
-                // The monitor is the project's canvas, not a fixed 16:9: a vertical
-                // Instagram project must preview as vertical here too.
                 aspectRatio: `${project.canvas.width} / ${project.canvas.height}`,
                 display: 'grid',
                 placeItems: 'center',
@@ -2782,15 +2292,10 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                 ref={previewRef}
                 muted
                 playsInline
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'contain',
-                  display: isRecordingDisplaySurface && hideMonitorDuringDisplay ? 'none' : 'block',
-                }}
+                style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
                 aria-label="Screen capture preview"
               />
-              {isRecordingDisplaySurface && hideMonitorDuringDisplay && (
+              {hideMonitorDuringDisplay && (
                 <div
                   role="status"
                   style={{
@@ -2818,24 +2323,6 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                   </div>
                 </div>
               )}
-              {stage === 'idle' && !cameraReady && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    inset: 0,
-                    display: 'grid',
-                    placeItems: 'center',
-                    padding: 24,
-                    textAlign: 'center',
-                    color: 'var(--text-2)',
-                    fontSize: 13,
-                    lineHeight: 1.5,
-                    pointerEvents: 'none',
-                  }}
-                >
-                  The screen preview appears when recording starts. Use Preview camera bubble to check and position the bubble first.
-                </div>
-              )}
               {stage === 'recording' && (
                 <div className="rec-monitor-tag" aria-hidden>
                   <span className="rec-dot small" />
@@ -2843,73 +2330,37 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
                 </div>
               )}
               {stage === 'paused' && <div className="rec-monitor-tag paused">PAUSED</div>}
-              {stage === 'countdown' && (
-                <div className="rec-countdown" aria-hidden>
-                  {countdown}
-                </div>
-              )}
-            </div>
-            <div className="stack" style={{ gap: 6, marginTop: 10 }}>
-              {settingsReport.map((report) => (
-                <div key={report.label} className="row" style={{ gap: 8, fontSize: 12 }}>
-                  <Badge tone={report.native ? 'ok' : 'warn'}>{report.label}</Badge>
-                  <span style={{ color: 'var(--text-2)' }}>{report.message}</span>
-                </div>
-              ))}
+              {stage === 'countdown' && <div className="rec-countdown" aria-hidden>{countdown}</div>}
             </div>
           </Panel>
-
-          <details className="record-details"><summary>Capture quality report<span>Actual track settings</span></summary>
-          <Panel title="Applied track settings">
-            <div className="table-scroll">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Track</th>
-                    <th>Size</th>
-                    <th>Rate</th>
-                    <th>Audio</th>
-                  </tr>
-                </thead>
-              <tbody>
-                {screenTracks.filter((track) => track.kind === 'video').map((track) => {
-                  const report = reportTrackSettings(track, 'Screen');
-                  return (
-                    <tr key={track.id}>
-                      <td>Screen</td>
-                      <td className="mono">{report.width}×{report.height}</td>
-                      <td className="mono">{report.frameRate} fps</td>
-                      <td>{screenTracks.some((t) => t.kind === 'audio') ? 'yes' : 'no'}</td>
-                    </tr>
-                  );
-                })}
-                {cameraTracks.filter((track) => track.kind === 'video').map((track) => {
-                  const report = reportTrackSettings(track, 'Camera');
-                  const compared = compareSettings({ width: dimensions.width, height: dimensions.height, frameRate }, track.getSettings());
-                  return (
-                    <tr key={track.id}>
-                      <td>Camera</td>
-                      <td className="mono">{report.width}×{report.height}</td>
-                      <td className="mono">
-                        {report.frameRate} fps
-                        {compared.mismatches.some((m) => m.field === 'frameRate') ? ` (asked ${frameRate})` : ''}
-                      </td>
-                      <td>—</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            </div>
-            <div className="field-hint" style={{ marginTop: 8 }}>
-              Compare requested and applied values; browsers silently clamp capture sizes on some machines.
-            </div>
-          </Panel>
-
-          </details>
-        </div>
-      </div>
+        </section>
       )}
+
+      {/* Standalone CameraBubble component: image only — no timer, buttons, labels, or toolbar over the camera image.
+          Draggable; position presets live in Camera appearance settings. Hidden when Document/Video PiP (floatingCameraOpen)
+          is open so the user never sees two camera bubbles. */}
+      {cameraOn &&
+        !hideFloatingPreview &&
+        !floatingCameraOpen &&
+        (cameraPreviewOn || isRecording) && (
+          <CameraBubble
+            videoRef={selfViewRef}
+            presenter={presenter}
+            stage={stage}
+            position={selfViewPos}
+            cameraLive={cameraPreviewOn || isRecording}
+            onStartPreview={() => void startCameraPreview()}
+            onPositionChange={setSelfViewPos}
+            onUpdatePresenter={(patch) =>
+              setPresenter((current) => {
+                const next = { ...current, ...patch };
+                if ('x' in patch && patch.x === undefined) delete next.x;
+                if ('y' in patch && patch.y === undefined) delete next.y;
+                return next;
+              })
+            }
+          />
+        )}
 
       <Dialog
         open={restartOpen}
@@ -2954,7 +2405,7 @@ export function RecordPage({ hidden = false }: { hidden?: boolean } = {}) {
       </Dialog>
 
       {/* Shared Recordings Library with project filter and preview-first Clear unused recordings */}
-      {!hidden && !inStealthView && (quietMode === 'full' || (stage !== 'recording' && stage !== 'paused')) && (
+      {!hidden && (quietMode === 'full' || !isRecording) && (
         <RecordingsLibrary
           activeTakeId={activeTakeId}
           defaultProjectFolder={session.projectFolder ?? 'all'}
@@ -3249,7 +2700,8 @@ export function describeCaptureError(raw: string): string {
   return raw;
 }
 
-function formatElapsed(seconds: number): string {  const total = Math.max(0, Math.floor(seconds));
+function formatElapsed(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds));
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
