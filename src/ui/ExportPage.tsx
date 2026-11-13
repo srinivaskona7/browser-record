@@ -34,6 +34,7 @@ import { checkStorageHeadroom, fileExists, readBlob } from '../workspace/workspa
 import { WORKSPACE_LAYOUT } from '../workspace/types';
 import { formatClock, TICKS_PER_SECOND } from '../core/time';
 import { snapshotThumbnail } from './Preview';
+import type { Project } from '../project/types';
 
 const CUSTOM_ID: PresetId = 'custom';
 
@@ -55,14 +56,36 @@ export function ExportPage() {
   const session = useSession();
   // Start at the composition's own size. Picking a bigger preset is allowed,
   // but it is never the default: an upscaled 1080p export is not 4K.
-  const [presetId, setPresetId] = useState<PresetId>(() => (project ? defaultPresetId(project.canvas) : '4k-balanced'));
-  const [width, setWidth] = useState(project?.canvas.width ?? 1920);
-  const [height, setHeight] = useState(project?.canvas.height ?? 1080);
-  const [outputFps, setOutputFps] = useState<number>(() =>
-    project ? Math.round(project.canvas.fps.num / project.canvas.fps.den) : 30,
-  );
-  const [videoMbps, setVideoMbps] = useState(10);
-  const [audioKbps, setAudioKbps] = useState(128);
+  const [initial] = useState(() => projectDefaults(project));
+  const [presetId, setPresetId] = useState<PresetId>(initial.presetId);
+  const [width, setWidth] = useState(initial.width);
+  const [height, setHeight] = useState(initial.height);
+  const [outputFps, setOutputFps] = useState<number>(initial.outputFps);
+  const [videoMbps, setVideoMbps] = useState(initial.videoMbps);
+  const [audioKbps, setAudioKbps] = useState(initial.audioKbps);
+  const applyFields = (fields: OutputFields) => {
+    setWidth(fields.width);
+    setHeight(fields.height);
+    setOutputFps(fields.outputFps);
+    setVideoMbps(fields.videoMbps);
+    setAudioKbps(fields.audioKbps);
+  };
+  // A project loaded after this page mounted must not inherit the previous project's
+  // preset: restart from the new composition's own size (adjusted during render, not in
+  // an effect, so the old preset never paints).
+  const projectId = project?.id;
+  const [fieldsProjectId, setFieldsProjectId] = useState(projectId);
+  if (project && fieldsProjectId !== projectId) {
+    setFieldsProjectId(projectId);
+    const next = projectDefaults(project);
+    setPresetId(next.presetId);
+    applyFields(next);
+  }
+  /** Picking a preset copies its size, bitrates and frame rate into the editable fields. */
+  const choosePreset = (id: PresetId) => {
+    setPresetId(id);
+    applyFields(presetFields(id, project?.canvas, { width, height, outputFps, videoMbps, audioKbps }));
+  };
   const [targetGb, setTargetGb] = useState('');
   const [includeCaptions, setIncludeCaptions] = useState(true);
   const [turboMode, setTurboMode] = useState(true);
@@ -82,6 +105,7 @@ export function ExportPage() {
   const [error, setError] = useState<string | null>(null);
   const [support, setSupport] = useState<CodecSupport[]>([]);
   const [supportBusy, setSupportBusy] = useState(false);
+  const [probedKey, setProbedKey] = useState<string | null>(null);
   const [sampleUrl, setSampleUrl] = useState<string | null>(null);
   const [sampleInfo, setSampleInfo] = useState<string | null>(null);
   const [sampleBusy, setSampleBusy] = useState(false);
@@ -174,137 +198,74 @@ export function ExportPage() {
     [preset.width, preset.height, outputFps, preset.container, effectiveVideoBitrate, compactRates.audioBitrate, project?.settings.sampleRate],
   );
 
-  useEffect(() => {
-    if (!project) return;
-    // A project loaded after this page mounted must not inherit the previous
-    // project's preset. Restart from this composition's own size.
-    const target = defaultPresetId(project.canvas);
-    setPresetId(target);
-    const defaultFps = presetById(target)?.fps ?? Math.round(project.canvas.fps.num / project.canvas.fps.den);
-    setOutputFps(defaultFps);
-    if (target === CUSTOM_ID) {
-      setWidth(project.canvas.width);
-      setHeight(project.canvas.height);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project?.id]);
-
-  useEffect(() => {
-    if (!project) return;
-    setWidth((current) => (presetId === CUSTOM_ID ? current : presetById(presetId)?.width ?? current));
-    setHeight((current) => (presetId === CUSTOM_ID ? current : presetById(presetId)?.height ?? current));
-    const next = presetById(presetId);
-    if (next) {
-      setVideoMbps(next.videoBitrate / 1_000_000);
-      setAudioKbps(next.audioBitrate / 1000);
-      if (next.fps) {
-        setOutputFps(next.fps);
-      } else {
-        setOutputFps(Math.round(project.canvas.fps.num / project.canvas.fps.den));
-      }
-    }
-  }, [presetId, project]);
+  const publishSupport = (list: CodecSupport[]) => {
+    setSupport(list);
+    useSession.getState().setCodecSupport(list);
+  };
 
   const probeCodecs = async () => {
     if (!project) return;
     setSupportBusy(true);
     try {
-      const list: CodecSupport[] = [];
-      for (const codec of VIDEO_CODECS) {
-        list.push(
-          await probeVideoEncoder(
-            codec,
-            resolvedOutput.width,
-            resolvedOutput.height,
-            resolvedOutput.fps,
-            resolvedOutput.videoBitrate,
-          ),
-        );
-      }
-      for (const codec of AUDIO_CODECS) {
-        list.push(
-          await probeAudioEncoder(codec, resolvedOutput.sampleRate, 2, resolvedOutput.audioBitrate),
-        );
-      }
-      setSupport(list);
-      session.setCodecSupport(list);
+      publishSupport(await probeOutputSupport(resolvedOutput));
     } finally {
       setSupportBusy(false);
     }
   };
 
-  useEffect(() => {
-    if (!project) return;
-    let cancelled = false;
+  // Re-probe whenever the output shape changes. The busy flag flips during render for the
+  // new key; the effect only does the async work.
+  const { width: outWidth, height: outHeight, fps: outFps, videoBitrate: outVideo, audioBitrate: outAudio, sampleRate: outRate } =
+    resolvedOutput;
+  const probeKey = projectId ? [projectId, outWidth, outHeight, outFps, outVideo, outAudio, outRate].join('|') : null;
+  if (probeKey && probedKey !== probeKey) {
+    setProbedKey(probeKey);
     setSupportBusy(true);
-    void (async () => {
-      const list: CodecSupport[] = [];
-      for (const codec of VIDEO_CODECS) {
-        list.push(
-          await probeVideoEncoder(
-            codec,
-            resolvedOutput.width,
-            resolvedOutput.height,
-            resolvedOutput.fps,
-            resolvedOutput.videoBitrate,
-          ),
-        );
-      }
-      for (const codec of AUDIO_CODECS) {
-        list.push(
-          await probeAudioEncoder(codec, resolvedOutput.sampleRate, 2, resolvedOutput.audioBitrate),
-        );
-      }
-      if (!cancelled) {
-        setSupport(list);
-        session.setCodecSupport(list);
-      }
-      if (!cancelled) setSupportBusy(false);
-    })();
+  }
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    probeOutputSupport({ width: outWidth, height: outHeight, fps: outFps, videoBitrate: outVideo, audioBitrate: outAudio, sampleRate: outRate })
+      .then((list) => {
+        if (!cancelled) publishSupport(list);
+      })
+      .finally(() => {
+        if (!cancelled) setSupportBusy(false);
+      });
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    project?.id,
-    resolvedOutput.width,
-    resolvedOutput.height,
-    resolvedOutput.fps,
-    resolvedOutput.videoBitrate,
-    resolvedOutput.audioBitrate,
-    resolvedOutput.sampleRate,
-  ]);
+  }, [projectId, outWidth, outHeight, outFps, outVideo, outAudio, outRate]);
 
+  // A crop preview is only shown for a reframed or chapter export; otherwise the last one
+  // stays hidden until it is replaced (and revoked) or the page unmounts.
+  const showCropPreview =
+    Boolean(exportTargetProject) &&
+    (Boolean(activeSegment) ||
+      outWidth < outHeight ||
+      Math.abs(outWidth / outHeight - (exportTargetProject?.canvas.width ?? 1) / (exportTargetProject?.canvas.height ?? 1)) > 0.01);
   useEffect(() => {
-    if (!exportTargetProject) return;
+    if (!exportTargetProject || !showCropPreview) return;
     let cancelled = false;
-    const isReframedOrSegment =
-      Boolean(activeSegment) ||
-      resolvedOutput.width < resolvedOutput.height ||
-      Math.abs(resolvedOutput.width / resolvedOutput.height - exportTargetProject.canvas.width / exportTargetProject.canvas.height) > 0.01;
-    if (!isReframedOrSegment) {
-      setCropPreviewUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return null;
-      });
-      return;
-    }
-    const previewW = resolvedOutput.width < resolvedOutput.height ? 360 : 640;
-    const previewH = Math.round((previewW * resolvedOutput.height) / resolvedOutput.width);
+    const previewW = outWidth < outHeight ? 360 : 640;
+    const previewH = Math.round((previewW * outHeight) / outWidth);
     void snapshotThumbnail(exportTargetProject, null, 0, includeCaptions, previewW, previewH)
       .then((blob) => {
-        if (cancelled || !blob) return;
-        const url = URL.createObjectURL(blob);
-        setCropPreviewUrl((prev) => {
-          if (prev) URL.revokeObjectURL(prev);
-          return url;
-        });
+        if (!cancelled && blob) setCropPreviewUrl(URL.createObjectURL(blob));
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [exportTargetProject, activeSegment, resolvedOutput.width, resolvedOutput.height, includeCaptions]);
+  }, [exportTargetProject, showCropPreview, activeSegment, outWidth, outHeight, includeCaptions]);
+  // Each crop preview URL is revoked once it has been replaced, and the last one on unmount.
+  useEffect(
+    () => () => {
+      if (cropPreviewUrl) URL.revokeObjectURL(cropPreviewUrl);
+    },
+    [cropPreviewUrl],
+  );
+  const shownCropPreviewUrl = showCropPreview ? cropPreviewUrl : null;
 
   useEffect(
     () => () => {
@@ -586,7 +547,7 @@ export function ExportPage() {
           </p>
         </div>
         <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-          <div className="row" role="tablist" aria-label="Export sections" style={{ gap: 6 }}>
+          <div className="row" role="tablist" aria-label="Export sections" style={{ gap: 6, flexWrap: 'wrap' }}>
             <Button
               size="sm"
               variant={exportSection === 'video' ? 'primary' : 'ghost'}
@@ -738,11 +699,11 @@ export function ExportPage() {
                       cursor: 'pointer',
                       borderColor: presetId === item.id ? 'var(--accent)' : 'var(--line)',
                     }}
-                    onClick={() => setPresetId(item.id)}
+                    onClick={() => choosePreset(item.id)}
                   >
                     <div className="row" style={{ justifyContent: 'space-between' }}>
-                      <strong style={{ fontSize: 13 }}>{item.label}</strong>
-                      <span className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
+                      <strong style={{ fontSize: 'var(--token-font-base)' }}>{item.label}</strong>
+                      <span className="mono" style={{ fontSize: 'var(--token-font-sm)', color: 'var(--text-3)' }}>
                         {item.width}×{item.height}
                         {item.fps ? ` · ${item.fps} fps` : ''} · {Number((item.videoBitrate / 1e6).toFixed(1))} Mbps
                       </span>
@@ -773,24 +734,16 @@ export function ExportPage() {
                 <Toggle label="Include captions in the picture" checked={includeCaptions} onChange={setIncludeCaptions} />
               </Field>
               <Field
-                label="Export speed (4× Turbo Pipeline)"
-                hint="Uses single-pass sequential packet decoding, GPU hardware encoder acceleration, and 4-frame async pipelining."
+                label="Export speed"
+                hint="Decodes each source once in order, prefers the hardware encoder in realtime mode, keeps up to 4 frames encoding at once and decodes no larger than the output needs. How much faster depends on this machine; the progress line shows the measured frame rate."
               >
-                <Toggle
-                  label="⚡ 4× Faster Turbo Export (Hardware Accelerated)"
-                  checked={turboMode}
-                  onChange={setTurboMode}
-                />
+                <Toggle label="Faster export pipeline" checked={turboMode} onChange={setTurboMode} />
               </Field>
               <Field
-                label="File size (4× Smaller Ultra-Compact VBR)"
-                hint="Uses HEVC/AV1/H.264 High VBR, 8s long-GOP keyframe spacing, and screen-detail hints for 4× smaller files."
+                label="File size"
+                hint="Targets a quarter of the preset bitrate (never below 350 kbps), prefers HEVC or AV1 when this browser encodes them, spaces keyframes 8 s apart and tunes for screen detail. The saving depends on the footage; the estimate below uses the reduced bitrate."
               >
-                <Toggle
-                  label="📦 4× Smaller File Size (Ultra-Compact VBR)"
-                  checked={compactSizeMode}
-                  onChange={setCompactSizeMode}
-                />
+                <Toggle label="Quarter-bitrate compact encode" checked={compactSizeMode} onChange={setCompactSizeMode} />
               </Field>
             </div>
 
@@ -814,11 +767,11 @@ export function ExportPage() {
                         cursor: 'pointer',
                         borderColor: presetId === item.id ? 'var(--accent)' : 'var(--line)',
                       }}
-                      onClick={() => setPresetId(item.id)}
+                      onClick={() => choosePreset(item.id)}
                     >
                       <div className="row" style={{ justifyContent: 'space-between' }}>
-                        <strong style={{ fontSize: 12.5 }}>{item.label}</strong>
-                        <span className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
+                        <strong style={{ fontSize: 'var(--token-font-base)' }}>{item.label}</strong>
+                        <span className="mono" style={{ fontSize: 'var(--token-font-sm)', color: 'var(--text-3)' }}>
                           {item.width}×{item.height}
                           {item.fps ? ` · ${item.fps} fps` : ''} · {Number((item.videoBitrate / 1e6).toFixed(1))} Mbps
                         </span>
@@ -837,9 +790,9 @@ export function ExportPage() {
                       cursor: 'pointer',
                       borderColor: presetId === CUSTOM_ID ? 'var(--accent)' : 'var(--line)',
                     }}
-                    onClick={() => setPresetId(CUSTOM_ID)}
+                    onClick={() => choosePreset(CUSTOM_ID)}
                   >
-                    <strong style={{ fontSize: 12.5 }}>Custom</strong>
+                    <strong style={{ fontSize: 'var(--token-font-base)' }}>Custom</strong>
                     <div className="field-hint" style={{ marginTop: 3 }}>
                       Set size, frame rate, bitrate or a target file size. The budget calculator explains what that actually buys.
                     </div>
@@ -927,7 +880,7 @@ export function ExportPage() {
           <Panel title="Export" bodyClassName="stack">
             <div
               className="hint-card mono"
-              style={{ fontSize: 12.5, fontWeight: 600 }}
+              style={{ fontSize: 'var(--token-font-base)', fontWeight: 600 }}
               data-testid="export-output-summary"
             >
               {resolvedOutput.height}p ({resolvedOutput.width}×{resolvedOutput.height}) · {resolvedOutput.fps} fps ·{' '}
@@ -935,20 +888,20 @@ export function ExportPage() {
               {formatDuration(durationSeconds)} · Estimated size: ~{formatBytes(budget?.estimatedBytes ?? 0)}
               {activeSegment ? ` · Chapter: ${activeSegment.label}` : ' · Full timeline'}
               {resolvedOutput.width < resolvedOutput.height ? ' · Vertical 9:16' : ' · Landscape'}
-              {turboMode ? ' · ⚡ 4× Faster' : ''}
-              {compactSizeMode ? ' · 📦 4× Smaller' : ''}
+              {turboMode ? ' · Faster pipeline' : ''}
+              {compactSizeMode ? ' · ¼ bitrate' : ''}
             </div>
             <div className="field-hint mono" style={{ wordBreak: 'break-all' }}>
               {destinationPath}
             </div>
-            {cropPreviewUrl && (
+            {shownCropPreviewUrl && (
               <div className="stack" style={{ gap: 4 }}>
                 <span className="field-hint">
                   Intended delivery framing preview ({resolvedOutput.width}×{resolvedOutput.height}
                   {activeSegment ? ` · ${activeSegment.label}` : ''}):
                 </span>
                 <img
-                  src={cropPreviewUrl}
+                  src={shownCropPreviewUrl}
                   alt="Intended export framing preview"
                   style={{
                     width: '100%',
@@ -963,7 +916,7 @@ export function ExportPage() {
             )}
             {(progress || verifying) ? (
               <div className="stack" style={{ gap: 8 }}>
-                <div className="row" style={{ gap: 6, flexWrap: 'wrap', fontSize: 12 }}>
+                <div className="row" style={{ gap: 6, flexWrap: 'wrap', fontSize: 'var(--token-font-sm)' }}>
                   <Badge tone={progress?.phase === 'prepare' || progress?.phase === 'audio' ? 'ok' : 'default'}>
                     1 · Preparing
                   </Badge>
@@ -974,15 +927,15 @@ export function ExportPage() {
                 {progress && (
                   <>
                     <div className="row" style={{ justifyContent: 'space-between' }}>
-                      <span style={{ fontSize: 12.5 }}>{progress.phase}</span>
-                      <span className="mono" style={{ fontSize: 12 }}>
+                      <span style={{ fontSize: 'var(--token-font-base)' }}>{progress.phase}</span>
+                      <span className="mono" style={{ fontSize: 'var(--token-font-sm)' }}>
                         {(progress.progress * 100).toFixed(1)}%
                       </span>
                     </div>
                     <div className="meter">
-                      <div className="meter-fill" style={{ width: `${Math.min(100, progress.progress * 100)}%` }} />
+                      <div className="meter-fill" style={{ transform: `scaleX(${(Math.min(100, progress.progress * 100)) / 100})` }} />
                     </div>
-                    <div className="row" style={{ justifyContent: 'space-between', fontSize: 11.5, color: 'var(--text-3)' }}>
+                    <div className="row" style={{ justifyContent: 'space-between', fontSize: 'var(--token-font-sm)', color: 'var(--text-3)' }}>
                       <span className="mono">
                         frame {progress.frame}/{progress.totalFrames}
                       </span>
@@ -1040,6 +993,7 @@ export function ExportPage() {
               <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
                 <Button
                   variant="primary"
+                  data-magnetic
                   onClick={() => void runExport()}
                   disabled={!session.workspace}
                 >
@@ -1132,7 +1086,7 @@ export function ExportPage() {
               <Panel
                 title="Encoder support"
                 action={
-                  <div className="row" style={{ gap: 6 }}>
+                  <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
                     <Button size="sm" variant="ghost" onClick={() => void probeCodecs()} disabled={supportBusy}>
                       {supportBusy ? 'Probing…' : 'Re-probe codecs'}
                     </Button>
@@ -1331,4 +1285,64 @@ function NumberField({
       </Field>
     </div>
   );
+}
+
+interface OutputFields {
+  width: number;
+  height: number;
+  outputFps: number;
+  videoMbps: number;
+  audioKbps: number;
+}
+
+function canvasFps(canvas: Project['canvas'] | undefined): number {
+  return canvas ? Math.round(canvas.fps.num / canvas.fps.den) : 30;
+}
+
+/**
+ * The editable output fields a preset implies. Custom (no preset) keeps every current value
+ * so the user tweaks from where they were; a preset without a fixed rate uses the canvas rate.
+ */
+function presetFields(id: PresetId, canvas: Project['canvas'] | undefined, current: OutputFields): OutputFields {
+  const preset = id === CUSTOM_ID ? undefined : presetById(id);
+  if (!preset) return current;
+  return {
+    width: preset.width,
+    height: preset.height,
+    outputFps: preset.fps ?? canvasFps(canvas),
+    videoMbps: preset.videoBitrate / 1_000_000,
+    audioKbps: preset.audioBitrate / 1000,
+  };
+}
+
+/** Start at the composition's own size: an upscaled 1080p export is not 4K. */
+function projectDefaults(project: Project | null): OutputFields & { presetId: PresetId } {
+  const presetId = project ? defaultPresetId(project.canvas) : '4k-balanced';
+  const fallback: OutputFields = {
+    width: project?.canvas.width ?? 1920,
+    height: project?.canvas.height ?? 1080,
+    outputFps: canvasFps(project?.canvas),
+    videoMbps: 10,
+    audioKbps: 128,
+  };
+  return { presetId, ...presetFields(presetId, project?.canvas, fallback) };
+}
+
+/** Encoder support for every listed codec at this exact output. Pure: no React state. */
+async function probeOutputSupport(output: {
+  width: number;
+  height: number;
+  fps: number;
+  videoBitrate: number;
+  audioBitrate: number;
+  sampleRate: number;
+}): Promise<CodecSupport[]> {
+  const list: CodecSupport[] = [];
+  for (const codec of VIDEO_CODECS) {
+    list.push(await probeVideoEncoder(codec, output.width, output.height, output.fps, output.videoBitrate));
+  }
+  for (const codec of AUDIO_CODECS) {
+    list.push(await probeAudioEncoder(codec, output.sampleRate, 2, output.audioBitrate));
+  }
+  return list;
 }

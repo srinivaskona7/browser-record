@@ -59,12 +59,21 @@ export function ColorWheel({
           if (!dragging || pointerId.current !== event.pointerId) return;
           updateFromEvent(event);
         }}
-        onPointerUp={() => {
+        onPointerUp={(event) => {
+          if (pointerId.current !== event.pointerId) return;
           setDragging(false);
           pointerId.current = null;
           onCommit();
         }}
-        onPointerCancel={() => {
+        onPointerCancel={(event) => {
+          if (pointerId.current !== event.pointerId) return;
+          setDragging(false);
+          pointerId.current = null;
+          onCancel();
+        }}
+        onLostPointerCapture={(event) => {
+          // Pointer-up clears pointerId first, so this only reverts a capture lost mid-drag.
+          if (pointerId.current !== event.pointerId) return;
           setDragging(false);
           pointerId.current = null;
           onCancel();
@@ -83,7 +92,11 @@ export function ColorWheel({
           }
         }}
       >
-        <span className="color-wheel-knob" style={{ left: knobX, top: knobY }} />
+        {/* Placed by transform alone so a wheel drag never re-lays out the inspector. */}
+        <span
+          className="color-wheel-knob"
+          style={{ transform: `translate3d(${knobX}px, ${knobY}px, 0) translate(-50%, -50%)` }}
+        />
       </div>
       <div className="color-wheel-meta">
         <span>{label}</span>

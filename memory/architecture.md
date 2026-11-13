@@ -21,6 +21,8 @@ src/captions/glossary.ts
 src/captions/subtitles.ts
 src/captions/transcribe.ts
 src/captions/transcribe.worker.ts
+src/capture/areaCrop.ts
+src/capture/areaSelection.ts
 src/capture/audioMeter.ts
 src/capture/devices.ts
 src/capture/floatingCamera.ts
@@ -52,6 +54,7 @@ src/render/text.ts
 src/styles.css
 src/styles/tokens.css
 src/ui/AboutDialog.tsx
+src/ui/AreaSelector.tsx
 src/ui/CapabilityMatrix.tsx
 src/ui/CaptionsPanel.tsx
 src/ui/ColorGrading.tsx
@@ -73,8 +76,12 @@ src/ui/Timeline.tsx
 src/ui/TranscribeDialog.tsx
 src/ui/VoiceoverDialog.tsx
 src/ui/components.tsx
+src/ui/focusTrap.ts
 src/ui/icons.tsx
+src/ui/labels.ts
+src/ui/magnetic.ts
 src/ui/player.ts
+src/ui/popoverPlacement.ts
 src/workspace/memoryFs.ts
 src/workspace/takeRefs.ts
 src/workspace/types.ts
@@ -102,7 +109,13 @@ src/workspace/workspace.ts
 
 - `ManipulationOverlay.tsx` renders move/corner-scale/rotate handles over the selected media clip at the playhead, supports snapping, keyboard nudge (`←↑→↓`, `Shift` = 5%), `[`/`]` rotation, and click-to-select of the topmost visible clip. `.edits-workspace .preview-shell` must stay `overflow: visible` so edge handles are not clipped.
 - `gradingPass.ts` is the WebGL2 grading engine (3D LUT trilinear, four wheels, eight HSL bands, RGB/R/G/B curves). `compose.ts` uses it first and falls back to CPU `applyPixelGradingToImageData`; the split-tone gradient is only a fallback for stylized built-in looks or unreadable canvases. Only imported `.cube` lattices are graded on pixels; the 16 built-in cinematic looks stay stylized.
+- Motion animates only `transform`/`opacity` and never fills (`both`/`forwards`): a filled transform/opacity on a page root re-parents every `position: fixed` child (`.rec-dock`, camera bubble, dialogs). The route-entry fade skips `.cap-recorder`; meters/progress use `scaleX`, the playhead and a dragged camera bubble use `translate3d`. Enforced by `tests/designInvariants.test.ts`, which also pins the `--token-font-*` ramp and WCAG AA (4.5:1) text/primary-button contrast in both themes. See `docs/UI_MOTION_PASS.md`.
+- Every `details.rec-more-menu` popover is placed on open by `src/ui/popoverPlacement.ts` (`data-placement` top/bottom, `data-align` start/end, measured against the viewport ∩ clipping ancestors). `.topbar` must not get `overflow` back — it clipped the app Menu off-screen. At ≤860px the top bar collapses to brand + `.nav-toggle`; nav and session meta live in the `#app-drawer` dialog (`inert` when closed, `main` inert while open).
 - The editor History panel and Undo/Redo disabled states subscribe to `history.length` / `future.length` / `lastAction`; reading them with `useEditor.getState()` inside render leaves the panel stale after a gesture commits.
+- Spacing in `src/styles.css` comes from the `--token-space-*` ramp in `src/styles/tokens.css` (1px hairline, then a 2px rhythm to 24px, then 4px steps: 28/32/40/48/64/96/144). Every `gap`, `padding` and `margin` declaration resolves to a token; `auto` and unitless `0` are the only exceptions, and `inset` is positioning, not spacing. Enforced by `tests/designInvariants.test.ts`.
+- Stored preset ids never reach the screen: `src/ui/labels.ts` maps `ColorLookPreset`, `PipPreset` and `ShadowGlowPreset` to their labels (also used for the undo/redo entry). `src/audio/chain.ts` holds `VOICE_PRESET_LABELS` the same way.
+- The area-capture overlay label (`.area-size-label`) paints its own opaque surface (`--surface-1`) with `--accent` text: a fixed dark background left the light theme at 3.6:1. The drawer attention dot uses `--warn` (6.0:1 in light). Both are checked in `tests/designInvariants.test.ts`.
+- The ≤860px drawer is modal: Tab is contained by `src/ui/focusTrap.ts` (listeners on the document, not the drawer, because focus can fall to `<body>`), Escape closes an open app Menu first and then the drawer, focus returns to the `.nav-toggle`, and the editor's single-key shortcuts must not fire while it is open (`EditPage.tsx` ignores keys when `.app-main[inert]` or a `.topbar`/`[inert]` ancestor has focus).
 
 ## Validation commands
 
@@ -112,5 +125,5 @@ src/workspace/workspace.ts
 - `npm run build` (`tsc --noEmit && vite build`)
 - `npm run smoke` (`node scripts/smoke-static.mjs`)
 - `BASE_PATH=/browser-record/ npm run build && BASE_PATH=/browser-record/ npm run smoke`
-- Current totals: 24 test files / 219 tests; lint has 0 errors and 16 pre-existing warnings.
+- Current totals: 27 test files / 273 tests; lint has 0 errors and 0 warnings.
 - `npm run verify:cloudflare` (`node scripts/build-cloudflare.mjs`)

@@ -2254,7 +2254,7 @@ export function addAlertBanner(
   project: Project,
   atTicks: Tick,
   tone: AlertBannerTone = 'warning',
-  message = 'Check your kubeconfig context before applying to prod',
+  message = 'Double-check this step before you run it',
   durationTicks = Math.round(4 * TICKS_PER_SECOND),
 ): { project: Project; clipId: string } {
   const ensured = ensureOverlayVideoTrack(project, 'Alerts');
@@ -2366,7 +2366,7 @@ export function addCountdownOverlay(
   project: Project,
   atTicks: Tick,
   seconds = 10,
-  label = 'Deploy in',
+  label = 'Starting in',
 ): { project: Project; clipId: string } {
   const ensured = ensureOverlayVideoTrack(project, 'Countdown');
   const clampedSeconds = Math.max(1, Math.min(3600, Math.round(seconds)));

@@ -20,7 +20,8 @@ export type IconName =
   | 'pause'
   | 'play'
   | 'stop'
-  | 'crop';
+  | 'crop'
+  | 'settings';
 
 export function SvgIcon({ name, size = 18 }: { name: IconName; size?: number }): ReactNode {
   const common = {
@@ -197,6 +198,13 @@ export function SvgIcon({ name, size = 18 }: { name: IconName; size?: number }):
           <path d="M12 4h8v8" />
           <path d="M4 12h8v8" />
           <path d="M12 12h8v8" />
+        </svg>
+      );
+    case 'settings':
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="3.2" />
+          <path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.2 5.2l1.6 1.6M17.2 17.2l1.6 1.6M18.8 5.2l-1.6 1.6M6.8 17.2l-1.6 1.6" />
         </svg>
       );
   }

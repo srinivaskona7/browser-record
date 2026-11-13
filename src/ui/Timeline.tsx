@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TICKS_PER_SECOND, type Tick } from '../core/time';
 import { useEditor } from '../project/store';
 import * as ops from '../project/ops';
@@ -173,13 +173,13 @@ export function Timeline({ project }: { project: Project }) {
           Out [O]
         </Button>
         <div style={{ flex: 1 }} />
-        <span className="timecode" style={{ fontSize: 12, color: 'var(--text-2)' }} title="Playhead timecode">
+        <span className="timecode" style={{ fontSize: 'var(--token-font-sm)', color: 'var(--text-2)' }} title="Playhead timecode">
           {formatTimecode(playhead, project.canvas.fps)}
         </span>
         <Button size="sm" variant="ghost" onClick={() => setZoom(zoom / 1.4)} aria-label="Zoom out">
           −
         </Button>
-        <span className="mono" style={{ fontSize: 11, width: 62, textAlign: 'center', color: 'var(--text-3)' }}>
+        <span className="mono" style={{ fontSize: 'var(--token-font-xs)', width: 62, textAlign: 'center', color: 'var(--text-3)' }}>
           {Math.round(zoom)} px/s
         </span>
         <Button size="sm" variant="ghost" onClick={() => setZoom(zoom * 1.4)} aria-label="Zoom in">
@@ -204,7 +204,7 @@ export function Timeline({ project }: { project: Project }) {
                   bottom: 0,
                   borderLeft: '1px solid var(--line)',
                   paddingLeft: 4,
-                  fontSize: 10,
+                  fontSize: 'var(--token-font-2xs)',
                   color: 'var(--text-3)',
                   fontFamily: 'var(--font-mono)',
                   whiteSpace: 'nowrap',
@@ -215,7 +215,10 @@ export function Timeline({ project }: { project: Project }) {
               </div>
             ))}
             {hoverTick !== null && (
-              <div style={{ position: 'absolute', left: hoverTick * pxPerTick, top: 0, bottom: 0, width: 1, background: 'var(--text-3)', pointerEvents: 'none' }} />
+              <div
+                className="ruler-hover-line"
+                style={{ transform: `translate3d(${hoverTick * pxPerTick}px, 0, 0)` }}
+              />
             )}
           </div>
           <div
@@ -274,7 +277,7 @@ export function Timeline({ project }: { project: Project }) {
               }}
             />
           )}
-          <div className="playhead" style={{ left: playhead * pxPerTick, height: '100%' }} />
+          <div className="playhead" style={{ transform: `translate3d(${playhead * pxPerTick}px, 0, 0)` }} />
         </div>
       </div>
     </section>
@@ -308,16 +311,15 @@ function TrackRow({
   const setTrackFlag = (patch: Partial<Track>) => apply('Track setting', (p) => ops.setTrackFlag(p, track.id, patch));
   return (
     <div className="track-row" style={{ minHeight: track.height }}>
-      <div className="track-head" style={{ height: track.height }}>
+      <div className="track-head" style={{ minHeight: track.height }}>
         <div className="track-name" title={track.name}>
           <span className="dot" style={{ background: track.kind === 'audio' ? 'var(--ok)' : track.kind === 'caption' ? 'var(--accent)' : 'var(--cyan)' }} />
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{track.name}</span>
         </div>
-        <div className="row" style={{ gap: 2 }}>
+        <div className="row track-toggles" style={{ gap: 2 }}>
           <button
             type="button"
-            className="btn btn-ghost btn-sm"
-            style={{ padding: '0 5px', fontSize: 10, height: 18 }}
+            className="btn btn-ghost btn-sm btn-glyph track-toggle"
             onClick={() => setTrackFlag({ muted: !track.muted })}
             aria-pressed={track.muted}
             title={track.kind === 'audio' ? 'Mute track' : 'Mute'}
@@ -327,8 +329,7 @@ function TrackRow({
           {track.kind === 'video' && (
             <button
               type="button"
-              className="btn btn-ghost btn-sm"
-              style={{ padding: '0 5px', fontSize: 10, height: 18 }}
+              className="btn btn-ghost btn-sm btn-glyph track-toggle"
               onClick={() => setTrackFlag({ hidden: !track.hidden })}
               aria-pressed={track.hidden}
               title="Hide track"
@@ -338,8 +339,7 @@ function TrackRow({
           )}
           <button
             type="button"
-            className="btn btn-ghost btn-sm"
-            style={{ padding: '0 5px', fontSize: 10, height: 18 }}
+            className="btn btn-ghost btn-sm btn-glyph track-toggle"
             onClick={() => setTrackFlag({ locked: !track.locked })}
             aria-pressed={track.locked}
             title="Lock track"
@@ -350,7 +350,7 @@ function TrackRow({
       </div>
       <div
         className="track-lane"
-        style={{ height: track.height, cursor: track.locked ? 'not-allowed' : 'default' }}
+        style={{ minHeight: track.height, cursor: track.locked ? 'not-allowed' : 'default' }}
         onDragOver={(event) => {
           event.preventDefault();
           event.dataTransfer.dropEffect = track.locked ? 'none' : 'copy';
@@ -366,68 +366,88 @@ function TrackRow({
       >
         {track.clips.map((clip) => {
           const dragging = drag?.clipId === clip.id ? drag : null;
-          const offset = dragging?.mode === 'move' ? dragging.deltaTicks : 0;
-          const startOffset = dragging?.mode === 'trim-start' ? Math.max(0, dragging.deltaTicks) : 0;
-          const endOffset = dragging?.mode === 'trim-end' ? dragging.deltaTicks : 0;
-          const left = (clip.startTicks + offset + startOffset) * pxPerTick;
-          const width = Math.max(2, (clip.durationTicks - startOffset + endOffset) * pxPerTick);
+          // Rest layout comes from the clip's data and changes once, on commit. A drag in
+          // progress is drawn with transforms only (move offset, trim shade, ghost, edge).
+          const left = clip.startTicks * pxPerTick;
+          const width = Math.max(2, clip.durationTicks * pxPerTick);
+          const trim = dragging ? trimPreview(dragging, left, width, pxPerTick) : null;
           const isSelected = selected.includes(clip.id);
           const keyframes = clip.keyframes.flatMap((g) => g.keyframes);
           return (
-            <div
-              key={clip.id}
-              className="clip"
-              data-selected={isSelected}
-              data-kind={clip.kind}
-              data-track={track.kind}
-              style={{ left, width }}
-              title={`${clip.label ?? clip.kind} · ${formatClock(clip.durationTicks)}`}
-              onPointerDown={(event) => {
-                if (event.button !== 0) return;
-                onSelect(clip, event.shiftKey);
-                onStartDrag(event, clip, 'move');
-              }}
-            >
-              <div className="clip-label">{clip.label ?? clip.text?.text ?? clip.kind}</div>
-              {keyframes.map((kf) => (
-                <span
-                  key={kf.id}
-                  className="clip-keyframe-diamond"
-                  title={`Keyframe at ${formatClock(kf.atTicks)} (${kf.easing})`}
-                  style={{
-                    position: 'absolute',
-                    left: Math.max(4, Math.min(width - 8, kf.atTicks * pxPerTick)),
-                    bottom: 3,
-                    fontSize: 9,
-                    color: '#ffd166',
-                    pointerEvents: 'none',
+            <Fragment key={clip.id}>
+              <div
+                className="clip"
+                data-selected={isSelected}
+                data-dragging={dragging ? 'true' : undefined}
+                data-kind={clip.kind}
+                data-track={track.kind}
+                style={{ width, transform: `translate3d(${left + (trim?.moveX ?? 0)}px, 0, 0)` }}
+                title={`${clip.label ?? clip.kind} · ${formatClock(clip.durationTicks)}`}
+                onPointerDown={(event) => {
+                  if (event.button !== 0) return;
+                  onSelect(clip, event.shiftKey);
+                  onStartDrag(event, clip, 'move');
+                }}
+              >
+                <div className="clip-label">{clip.label ?? clip.text?.text ?? clip.kind}</div>
+                {keyframes.map((kf) => (
+                  <span
+                    key={kf.id}
+                    className="clip-keyframe-diamond"
+                    title={`Keyframe at ${formatClock(kf.atTicks)} (${kf.easing})`}
+                    style={{
+                      position: 'absolute',
+                      left: Math.max(4, Math.min(width - 8, kf.atTicks * pxPerTick)),
+                      bottom: 3,
+                      fontSize: 'var(--token-font-2xs)',
+                      color: '#ffd166',
+                      pointerEvents: 'none',
+                    }}
+                  >
+                    ◆
+                  </span>
+                ))}
+                {track.kind === 'audio' && <Waveform assetId={clip.assetId} color="rgba(255,255,255,0.65)" />}
+                {trim && trim.shade > 0 && (
+                  <div
+                    className="clip-trim-shade"
+                    data-edge={trim.edge}
+                    aria-hidden="true"
+                    style={{ transform: `scaleX(${trim.shade})` }}
+                  />
+                )}
+                <div
+                  className="clip-handle"
+                  data-edge="start"
+                  onPointerDown={(event) => {
+                    event.stopPropagation();
+                    onSelect(clip, false);
+                    onStartDrag(event, clip, 'trim-start');
                   }}
-                >
-                  ◆
-                </span>
-              ))}
-              {track.kind === 'audio' && <Waveform assetId={clip.assetId} color="rgba(255,255,255,0.65)" />}
-              <div
-                className="clip-handle"
-                style={{ left: 0 }}
-                onPointerDown={(event) => {
-                  event.stopPropagation();
-                  onSelect(clip, false);
-                  onStartDrag(event, clip, 'trim-start');
-                }}
-                aria-label="Trim clip start"
-              />
-              <div
-                className="clip-handle"
-                style={{ right: 0 }}
-                onPointerDown={(event) => {
-                  event.stopPropagation();
-                  onSelect(clip, false);
-                  onStartDrag(event, clip, 'trim-end');
-                }}
-                aria-label="Trim clip end"
-              />
-            </div>
+                  aria-label="Trim clip start"
+                />
+                <div
+                  className="clip-handle"
+                  data-edge="end"
+                  onPointerDown={(event) => {
+                    event.stopPropagation();
+                    onSelect(clip, false);
+                    onStartDrag(event, clip, 'trim-end');
+                  }}
+                  aria-label="Trim clip end"
+                />
+              </div>
+              {trim && trim.ghostWidth > 0 && (
+                <div
+                  className="clip-trim-ghost"
+                  aria-hidden="true"
+                  style={{ transform: `translate3d(${trim.ghostX}px, 0, 0) scaleX(${trim.ghostWidth / TRIM_GHOST_BASE})` }}
+                />
+              )}
+              {trim && trim.edgeX !== null && (
+                <div className="clip-trim-edge" aria-hidden="true" style={{ transform: `translate3d(${trim.edgeX - 1}px, 0, 0)` }} />
+              )}
+            </Fragment>
           );
         })}
       </div>
@@ -452,6 +472,42 @@ function TrackRow({
       )}
     </div>
   );
+}
+
+/** Unscaled width of `.clip-trim-ghost`; the drag scales it to the extension in px. */
+const TRIM_GHOST_BASE = 100;
+
+/**
+ * How a clip drag in progress is drawn: a move offset, or for a trim the fraction of the
+ * clip that is shaded (removed), an extension ghost past the old edge, and the new edge's
+ * x in lane px. Mirrors the commit rules in `onPointerUp` (trim-start only shortens).
+ */
+function trimPreview(
+  drag: DragState,
+  left: number,
+  width: number,
+  pxPerTick: number,
+): { moveX: number; edge: 'start' | 'end'; shade: number; ghostX: number; ghostWidth: number; edgeX: number | null } {
+  const none = { moveX: 0, edge: 'start' as const, shade: 0, ghostX: 0, ghostWidth: 0, edgeX: null };
+  if (drag.mode === 'move') return { ...none, moveX: drag.deltaTicks * pxPerTick };
+  if (drag.mode === 'trim-start') {
+    const cut = Math.min(Math.max(0, drag.deltaTicks * pxPerTick), Math.max(0, width - 2));
+    return { ...none, edge: 'start', shade: width > 0 ? cut / width : 0, edgeX: left + cut };
+  }
+  if (drag.mode === 'trim-end') {
+    const delta = drag.deltaTicks * pxPerTick;
+    const newWidth = Math.max(2, width + delta);
+    const cut = Math.max(0, width - newWidth);
+    return {
+      ...none,
+      edge: 'end',
+      shade: width > 0 ? cut / width : 0,
+      ghostX: left + width,
+      ghostWidth: Math.max(0, newWidth - width),
+      edgeX: left + newWidth,
+    };
+  }
+  return none;
 }
 
 const waveformCache = new Map<string, number[]>();

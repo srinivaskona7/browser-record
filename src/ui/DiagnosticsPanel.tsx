@@ -12,7 +12,8 @@ export function DiagnosticsPanel() {
   const session = useSession();
   const features = session.features;
   const [codecs, setCodecs] = useState<CodecSupport[]>([]);
-  const [probing, setProbing] = useState(false);
+  // The panel probes on mount, so it starts in the probing state.
+  const [probing, setProbing] = useState(true);
   const [benchmark, setBenchmark] = useState<BenchmarkResult | null>(session.benchmark);
   const [benchmarkSize, setBenchmarkSize] = useState<'4k' | '1080'>('1080');
   const [benchmarking, setBenchmarking] = useState(false);
@@ -21,31 +22,47 @@ export function DiagnosticsPanel() {
   const [persisted, setPersisted] = useState<boolean | null>(null);
   const recorderMimes = probeRecorderMimeTypes();
 
+  const workspaceMode = session.workspace?.info.mode;
   useEffect(() => {
+    let cancelled = false;
     void (async () => {
-      setQuota(await readQuota());
-      if (session.workspace) setStorageMode(await storageModeLabel(session.workspace.info.mode));
+      const nextQuota = await readQuota();
+      const label = workspaceMode ? await storageModeLabel(workspaceMode) : null;
+      if (cancelled) return;
+      setQuota(nextQuota);
+      if (label) setStorageMode(label);
     })();
-  }, [session.storageMode]);
+    return () => {
+      cancelled = true;
+    };
+  }, [session.storageMode, workspaceMode]);
 
-  const probe = async (width = 3840, height = 2160) => {
+  const publishCodecs = (list: CodecSupport[]) => {
+    setCodecs(list);
+    useSession.getState().setCodecSupport(list);
+  };
+
+  const probe = async () => {
     setProbing(true);
     try {
-      const fps = session.workspace ? 30 : 30;
-      const list: CodecSupport[] = [];
-      for (const codec of VIDEO_CODECS) list.push(await probeVideoEncoder(codec, width, height, fps, 10_000_000));
-      for (const codec of AUDIO_CODECS) list.push(await probeAudioEncoder(codec, 48_000, 2, 128_000));
-      setCodecs(list);
-      session.setCodecSupport(list);
-      return list;
+      publishCodecs(await probeCodecList());
     } finally {
       setProbing(false);
     }
   };
 
   useEffect(() => {
-    void probe();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    let cancelled = false;
+    probeCodecList()
+      .then((list) => {
+        if (!cancelled) publishCodecs(list);
+      })
+      .finally(() => {
+        if (!cancelled) setProbing(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const runBenchmark = async () => {
@@ -113,7 +130,7 @@ export function DiagnosticsPanel() {
           {quota && (
             <div className="stack" style={{ gap: 6, marginTop: 12 }}>
               <div className="meter">
-                <div className="meter-fill" style={{ width: `${Math.min(100, (quota.usage / Math.max(1, quota.quota)) * 100).toFixed(1)}%` }} />
+                <div className="meter-fill" style={{ transform: `scaleX(${Math.min(1, quota.usage / Math.max(1, quota.quota)).toFixed(3)})` }} />
               </div>
               <div className="field-hint mono">
                 {formatBytes(quota.usage)} used of {formatBytes(quota.quota)} available
@@ -235,7 +252,7 @@ export function DiagnosticsPanel() {
                   { value: '4k', label: '3840×2160' },
                 ]}
               />
-              <Button size="sm" onClick={() => void runBenchmark()} disabled={benchmarking}>
+              <Button size="sm" data-magnetic onClick={() => void runBenchmark()} disabled={benchmarking}>
                 {benchmarking ? 'Running…' : 'Run benchmark'}
               </Button>
             </div>
@@ -278,4 +295,12 @@ export function DiagnosticsPanel() {
       </div>
     </div>
   );
+}
+
+/** Encoder support at 4K30 for every listed video and audio codec. Pure: no React state. */
+async function probeCodecList(width = 3840, height = 2160): Promise<CodecSupport[]> {
+  const list: CodecSupport[] = [];
+  for (const codec of VIDEO_CODECS) list.push(await probeVideoEncoder(codec, width, height, 30, 10_000_000));
+  for (const codec of AUDIO_CODECS) list.push(await probeAudioEncoder(codec, 48_000, 2, 128_000));
+  return list;
 }

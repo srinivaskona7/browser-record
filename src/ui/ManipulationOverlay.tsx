@@ -12,6 +12,8 @@ interface Rect {
 }
 
 const HANDLES = ['nw', 'ne', 'sw', 'se'] as const;
+/** Base size of the scaled box pieces (styles.css .manipulation-fill / -edge), in px. */
+const PIECE_BASE = 100;
 type Handle = (typeof HANDLES)[number];
 
 interface ManipulableTarget {
@@ -84,10 +86,12 @@ export function ManipulationOverlay({ project }: { project: Project }) {
   const beginGesture = useEditor((state) => state.beginGesture);
   const updateGesture = useEditor((state) => state.updateGesture);
   const endGesture = useEditor((state) => state.endGesture);
+  const cancelGesture = useEditor((state) => state.cancelGesture);
   const showSafeAreas = useEditor((state) => state.showSafeAreas);
   const playheadTicks = useEditor((state) => state.playheadTicks);
   const [canvasRect, setCanvasRect] = useState<Rect | null>(null);
   const drag = useRef<{
+    pointerId: number;
     mode: 'move' | Handle | 'rotate';
     isPresenterBubble: boolean;
     startX: number;
@@ -174,8 +178,13 @@ export function ManipulationOverlay({ project }: { project: Project }) {
     event.preventDefault();
     event.stopPropagation();
     (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
-    const centerX = canvasRect.left + (placement.x + placement.width / 2) * (canvasRect.width / project.canvas.width);
-    const centerY = canvasRect.top + (placement.y + placement.height / 2) * (canvasRect.height / project.canvas.height);
+    // canvasRect is relative to the preview shell; pointer events are in viewport pixels, so the
+    // pivot for rotate and corner-scale must be too, or it sits wherever the shell is offset to.
+    const shell = canvasHostRef.current?.parentElement?.getBoundingClientRect();
+    const centerX =
+      (shell?.left ?? 0) + canvasRect.left + (placement.x + placement.width / 2) * (canvasRect.width / project.canvas.width);
+    const centerY =
+      (shell?.top ?? 0) + canvasRect.top + (placement.y + placement.height / 2) * (canvasRect.height / project.canvas.height);
     beginGesture(
       selected.isPresenterBubble
         ? mode === 'move'
@@ -188,6 +197,7 @@ export function ManipulationOverlay({ project }: { project: Project }) {
             : 'Scale clip',
     );
     drag.current = {
+      pointerId: event.pointerId,
       mode,
       isPresenterBubble: selected.isPresenterBubble,
       startX: event.clientX,
@@ -206,7 +216,7 @@ export function ManipulationOverlay({ project }: { project: Project }) {
 
   const onMove = (event: React.PointerEvent) => {
     const state = drag.current;
-    if (!state || !canvasRect || !selected || !placement) return;
+    if (!state || event.pointerId !== state.pointerId || !canvasRect || !selected || !placement) return;
     event.preventDefault();
     const dx = event.clientX - state.startX;
     const dy = event.clientY - state.startY;
@@ -235,8 +245,9 @@ export function ManipulationOverlay({ project }: { project: Project }) {
 
     if (state.mode === 'move') {
       const delta = toFractions(dx, dy);
-      const widthFraction = (placement.width / project.canvas.width) * state.startTransform.scale;
-      const heightFraction = (placement.height / project.canvas.height) * state.startTransform.scale;
+      // The placement is already scaled; its half-size is what snaps a clip edge to the canvas edge.
+      const widthFraction = placement.width / project.canvas.width;
+      const heightFraction = placement.height / project.canvas.height;
       patchTransform({
         x: snappedX(state.startTransform.x + delta.x, widthFraction),
         y: snappedY(state.startTransform.y + delta.y, heightFraction),
@@ -259,11 +270,29 @@ export function ManipulationOverlay({ project }: { project: Project }) {
     patchTransform({ scale });
   };
 
-  const endDrag = () => {
-    if (!drag.current) return;
+  const endDrag = (event: React.PointerEvent) => {
+    if (!drag.current || drag.current.pointerId !== event.pointerId) return;
     drag.current = null;
     endGesture();
   };
+
+  // A cancelled pointer (the OS took it, a palm, a scroll) reverts the drag instead of leaving
+  // the gesture open for the next edit to land in.
+  const cancelDrag = (event: React.PointerEvent) => {
+    if (!drag.current || drag.current.pointerId !== event.pointerId) return;
+    drag.current = null;
+    cancelGesture();
+  };
+
+  // Unmounting mid-drag (the selection was cleared) still closes the gesture as one entry.
+  useEffect(
+    () => () => {
+      if (!drag.current) return;
+      drag.current = null;
+      useEditor.getState().endGesture();
+    },
+    [],
+  );
 
   const nudge = (event: React.KeyboardEvent) => {
     if (!selected) return;
@@ -356,14 +385,20 @@ export function ManipulationOverlay({ project }: { project: Project }) {
     return <div ref={canvasHostRef} className="manipulation-layer" aria-hidden />;
   }
 
+  // Every piece hangs off the clip centre, rotated with the clip, and moves by transform only:
+  // a drag never touches left/top/width/height (styles.css "Direct manipulation").
   const scaleX = canvasRect.width / project.canvas.width;
   const scaleY = canvasRect.height / project.canvas.height;
-  const box = {
-    left: canvasRect.left + placement.x * scaleX,
-    top: canvasRect.top + placement.y * scaleY,
-    width: placement.width * scaleX,
-    height: placement.height * scaleY,
-  };
+  const width = placement.width * scaleX;
+  const height = placement.height * scaleY;
+  const halfW = width / 2;
+  const halfH = height / 2;
+  const centreX = canvasRect.left + (placement.x + placement.width / 2) * scaleX;
+  const centreY = canvasRect.top + (placement.y + placement.height / 2) * scaleY;
+  const rotation = selected.isPresenterBubble ? 0 : selected.clip.transform.rotationDeg;
+  const origin = `translate3d(${centreX}px, ${centreY}px, 0) rotate(${rotation}deg)`;
+  const at = (x: number, y: number | string) =>
+    `${origin} translate3d(${x}px, ${typeof y === 'number' ? `${y}px` : y}, 0)`;
   const scaleLabel = selected.isPresenterBubble
     ? `${Math.round((selected.clip.presenter?.size ?? 0.24) * 100)}%`
     : `${Math.round(selected.clip.transform.scale * 100)}%`;
@@ -400,27 +435,26 @@ export function ManipulationOverlay({ project }: { project: Project }) {
         />
       )}
       <div
-        className="manipulation-box"
-        role="group"
-        aria-label={`Selected clip ${selected.clip.label ?? selected.clip.kind}. Arrow keys move, [ and ] rotate.`}
-        tabIndex={0}
-        style={{
-          left: box.left,
-          top: box.top,
-          width: box.width,
-          height: box.height,
-          transform: `rotate(${selected.isPresenterBubble ? 0 : selected.clip.transform.rotationDeg}deg)`,
-          transformOrigin: 'center',
-        }}
-        onPointerDown={(event) => startDrag(event, 'move')}
+        className="manipulation-layer"
         onPointerMove={onMove}
         onPointerUp={endDrag}
-        onPointerCancel={() => {
-          drag.current = null;
-        }}
-        onKeyDown={nudge}
+        onPointerCancel={cancelDrag}
+        onLostPointerCapture={cancelDrag}
       >
-        <span className="manipulation-badge">
+        <div
+          className="manipulation-fill"
+          role="group"
+          aria-label={`Selected clip ${selected.clip.label ?? selected.clip.kind}. Arrow keys move, [ and ] rotate.`}
+          tabIndex={0}
+          style={{ transform: `${at(-halfW, -halfH)} scale(${width / PIECE_BASE}, ${height / PIECE_BASE})` }}
+          onPointerDown={(event) => startDrag(event, 'move')}
+          onKeyDown={nudge}
+        />
+        <div className="manipulation-edge" data-side="top" aria-hidden style={{ transform: `${at(-halfW, -halfH)} translateY(-50%) scaleX(${width / PIECE_BASE})` }} />
+        <div className="manipulation-edge" data-side="bottom" aria-hidden style={{ transform: `${at(-halfW, halfH)} translateY(-50%) scaleX(${width / PIECE_BASE})` }} />
+        <div className="manipulation-edge" data-side="left" aria-hidden style={{ transform: `${at(-halfW, -halfH)} translateX(-50%) scaleY(${height / PIECE_BASE})` }} />
+        <div className="manipulation-edge" data-side="right" aria-hidden style={{ transform: `${at(halfW, -halfH)} translateX(-50%) scaleY(${height / PIECE_BASE})` }} />
+        <span className="manipulation-badge" style={{ transform: `${at(-halfW, -halfH)} translateY(calc(-100% - 6px))` }}>
           {selected.clip.label ?? (selected.isPresenterBubble ? 'Presenter' : 'Clip')} · {scaleLabel}
         </span>
         {!selected.isPresenterBubble && (
@@ -429,9 +463,8 @@ export function ManipulationOverlay({ project }: { project: Project }) {
             role="button"
             tabIndex={-1}
             aria-label="Rotate clip"
+            style={{ transform: `${at(0, `calc(${-halfH}px - var(--rotate-gap))`)} translate(-50%, -50%)` }}
             onPointerDown={(event) => startDrag(event, 'rotate')}
-            onPointerMove={onMove}
-            onPointerUp={endDrag}
           />
         )}
         {HANDLES.map((handle) => (
@@ -441,9 +474,10 @@ export function ManipulationOverlay({ project }: { project: Project }) {
             role="button"
             tabIndex={-1}
             aria-label={`Scale from ${handle} corner`}
+            style={{
+              transform: `${at(handle.endsWith('w') ? -halfW : halfW, handle.startsWith('n') ? -halfH : halfH)} translate(-50%, -50%)`,
+            }}
             onPointerDown={(event) => startDrag(event, handle)}
-            onPointerMove={onMove}
-            onPointerUp={endDrag}
           />
         ))}
       </div>

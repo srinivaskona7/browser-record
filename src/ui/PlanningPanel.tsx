@@ -162,15 +162,15 @@ export function PlanningPanel({ project }: { project: Project }) {
               <div className="storyboard-list" style={{ marginTop: 6 }}>
                 {shots.map((shot) => (
                   <div key={shot.id} className={`storyboard-item ${shot.done ? 'done' : ''}`}>
-                    <input
-                      type="checkbox"
-                      checked={shot.done}
-                      aria-label={`Complete ${shot.title}`}
-                      onChange={() => apply('Toggle shot', (p) => ops.toggleStoryboardItem(p, shot.id))}
-                    />
-                    <span className="storyboard-text" style={{ flex: 1 }}>
-                      {shot.title}
-                    </span>
+                    <label className="storyboard-check" style={{ flex: 1 }}>
+                      <input
+                        type="checkbox"
+                        checked={shot.done}
+                        aria-label={`Complete ${shot.title}`}
+                        onChange={() => apply('Toggle shot', (p) => ops.toggleStoryboardItem(p, shot.id))}
+                      />
+                      <span className="storyboard-text">{shot.title}</span>
+                    </label>
                     {shot.durationSeconds && <Badge>{shot.durationSeconds}s</Badge>}
                     <Button
                       size="sm"

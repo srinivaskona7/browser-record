@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useEditor } from '../project/store';
+import type { Clip, Project, Track } from '../project/types';
 import { useSession } from '../app/session';
 import * as ops from '../project/ops';
 import { formatTimecode, parseTimecode, TICKS_PER_SECOND } from '../core/time';
@@ -65,24 +66,34 @@ export function EditPage() {
 
   const assetSignature = project?.assets.map((asset) => `${asset.id}:${asset.path}`).join('|') ?? '';
 
+  const projectId = project?.id;
+  // One player per project and asset set; edits reach it through updateProject below. It is
+  // published once it can draw, so the editor never holds one that is loading or disposed
+  // (StrictMode's first mount disposes its instance while load() is still in flight).
   useEffect(() => {
-    if (!project) return;
-    const instance = new PreviewPlayer({
-      project,
+    const current = useEditor.getState().project;
+    if (!projectId || !current) return;
+    let live = true;
+    const instance: PreviewPlayer = new PreviewPlayer({
+      project: current,
       provider: { getFile: (path) => ensureAssetFile(path) },
       onTick: (ticks) => useEditor.getState().setPlayhead(ticks),
       onEnded: () => useEditor.getState().setPlaying(false),
-      onReady: () => setPlayerRevision((value) => value + 1),
+      onReady: () => {
+        if (!live) return;
+        setPlayer(instance);
+        setPlayerRevision((value) => value + 1);
+      },
     });
-    setPlayer(instance);
     void instance.load();
     instance.seek(useEditor.getState().playheadTicks);
     instance.setMuted(true);
     return () => {
+      live = false;
       instance.dispose();
       setPlayer(null);
     };
-  }, [project?.id, assetSignature]);
+  }, [projectId, assetSignature]);
 
   useEffect(() => {
     if (!player || !project) return;
@@ -119,15 +130,7 @@ export function EditPage() {
     player?.setMuted(muted);
   }, [muted, player]);
 
-  const selectedClip = useMemo(() => {
-    if (!project || selectedClipIds.length === 0) return null;
-    const id = selectedClipIds[0]!;
-    for (const track of project.tracks) {
-      const clip = track.clips.find((c) => c.id === id);
-      if (clip) return { clip, track };
-    }
-    return null;
-  }, [project, selectedClipIds]);
+  const selectedClip = findSelectedClip(project, selectedClipIds);
 
   useEffect(() => useEditor.subscribe((state, previous) => {
     if (state.selectedClipIds !== previous.selectedClipIds && state.selectedClipIds.length > 0) {
@@ -141,7 +144,13 @@ export function EditPage() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      // A focused control that already handled the key wins: the canvas box's arrows must not
+      // also move the playhead, and its `]` (rotate) must not also trim the clip.
+      if (event.defaultPrevented) return;
       const target = event.target as HTMLElement | null;
+      // The editor sits behind the open ≤860px drawer (main is inert) or under the top bar's
+      // own controls: its single-key shortcuts must not fire from there.
+      if (document.querySelector('.app-main[inert]') || target?.closest?.('.topbar, [inert]')) return;
       if (event.key === 'Escape') {
         if (
           transcribeOpen ||
@@ -165,7 +174,7 @@ export function EditPage() {
           return;
         }
       }
-      if (target && /^(INPUT|TEXTAREA|SELECT|BUTTON|A)$/.test(target.tagName)) return;
+      if (target && /^(INPUT|TEXTAREA|SELECT|BUTTON|A|SUMMARY)$/.test(target.tagName)) return;
       if (target?.isContentEditable) return;
       const project = useEditor.getState().project;
       if (!project) return;
@@ -385,7 +394,7 @@ export function EditPage() {
             onChange={(event) =>
               useEditor.getState().apply('Rename project', (p) => ops.renameProject(p, event.target.value))
             }
-            style={{ width: 190, padding: '4px 8px', fontSize: 13, fontWeight: 600 }}
+            style={{ width: 190, padding: '4px 8px', fontSize: 'var(--token-font-base)', fontWeight: 600 }}
           />
           <Select
             label="Canvas aspect ratio"
@@ -667,7 +676,7 @@ export function EditPage() {
                 setTimecodeDraft(null);
               }}
               className="input timecode"
-              style={{ width: 132, padding: '5px 8px', fontSize: 12.5 }}
+              style={{ width: 132, padding: '5px 8px', fontSize: 'var(--token-font-base)' }}
               aria-label="Playhead timecode"
             />
             <Button size="sm" variant="ghost" type="submit">
@@ -802,4 +811,15 @@ function ShortcutTable() {
       </tbody>
     </table>
   );
+}
+
+/** The first selected clip and its track; a plain lookup, cheap enough to run each render. */
+function findSelectedClip(project: Project | null, selectedClipIds: readonly string[]): { clip: Clip; track: Track } | null {
+  const id = selectedClipIds[0];
+  if (!project || !id) return null;
+  for (const track of project.tracks) {
+    const clip = track.clips.find((c) => c.id === id);
+    if (clip) return { clip, track };
+  }
+  return null;
 }

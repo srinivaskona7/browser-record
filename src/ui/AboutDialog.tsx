@@ -28,7 +28,7 @@ export function AboutDialog({ open, onClose }: { open: boolean; onClose: () => v
           </Button>
         </div>
         <section className="stack" style={{ gap: 6 }}>
-          <h3 style={{ margin: 0, fontSize: 14 }}>Features</h3>
+          <h3 style={{ margin: 0, fontSize: 'var(--token-font-md)' }}>Features</h3>
           <table className="table">
             <tbody>
               {FEATURES.map(([area, text]) => (
@@ -41,7 +41,7 @@ export function AboutDialog({ open, onClose }: { open: boolean; onClose: () => v
           </table>
         </section>
         <section className="stack" style={{ gap: 6 }}>
-          <h3 style={{ margin: 0, fontSize: 14 }}>Walkthrough</h3>
+          <h3 style={{ margin: 0, fontSize: 'var(--token-font-md)' }}>Walkthrough</h3>
           <ol className="stack" style={{ gap: 6, paddingLeft: 20, margin: 0 }}>
             {STEPS.map(([title, text]) => (
               <li key={title}>

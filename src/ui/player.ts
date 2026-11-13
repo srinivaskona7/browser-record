@@ -49,6 +49,8 @@ export class PreviewPlayer {
   private onEnded: () => void;
   private onReady: () => void;
   private warned = new Set<string>();
+  /** Set by dispose(); load() can still be awaiting files and must not resurrect state. */
+  private disposed = false;
 
   constructor(options: {
     project: Project;
@@ -121,20 +123,23 @@ export class PreviewPlayer {
         if (asset.kind === 'image') {
           try {
             const file = await this.provider.getFile(asset.path);
+            if (this.disposed) return;
             const url = URL.createObjectURL(file);
             this.urls.push(url);
             this.assetUrls.set(asset.id, url);
             const image = new Image();
             image.src = url;
             await waitForImage(image);
+            if (this.disposed) return;
             this.images.set(asset.id, image);
           } catch (error) {
-            console.warn(`Preview: cannot load ${asset.name}`, error);
+            if (!this.disposed) console.warn(`Preview: cannot load ${asset.name}`, error);
           }
           return;
         }
         try {
           const file = await this.provider.getFile(asset.path);
+          if (this.disposed) return;
           const url = URL.createObjectURL(file);
           this.urls.push(url);
           this.assetUrls.set(asset.id, url);
@@ -148,13 +153,20 @@ export class PreviewPlayer {
             video.disablePictureInPicture = true;
           }
           await waitForMetadata(element);
+          if (this.disposed) {
+            element.removeAttribute('src');
+            element.load();
+            return;
+          }
           this.elements.set(asset.id, element);
         } catch (error) {
-          console.warn(`Preview: cannot load ${asset.name}`, error);
+          if (!this.disposed) console.warn(`Preview: cannot load ${asset.name}`, error);
         }
       }),
     );
+    if (this.disposed) return;
     await this.settleActive(this.anchorTicks);
+    if (this.disposed) return;
     this.onReady();
   }
 
@@ -408,6 +420,7 @@ export class PreviewPlayer {
   }
 
   dispose(): void {
+    this.disposed = true;
     this.pause();
     const allElements = new Set([...this.elements.values(), ...this.clipElements.values()]);
     for (const element of allElements) {

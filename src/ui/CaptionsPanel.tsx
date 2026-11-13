@@ -238,7 +238,7 @@ export function CaptionsPanel({
               </div>
               <textarea
                 className="textarea"
-                style={{ minHeight: 38, padding: 4, fontSize: 12.5, background: 'transparent', border: '1px solid transparent' }}
+                style={{ minHeight: 38, padding: 4, fontSize: 'var(--token-font-base)', background: 'transparent', border: '1px solid transparent' }}
                 defaultValue={cue.text}
                 onClick={(event) => event.stopPropagation()}
                 onBlur={(event) => {
@@ -307,7 +307,7 @@ export function CaptionsPanel({
           <div className="stack" style={{ gap: 4 }}>
             {glossarySuggestions.length === 0 && <div className="field-hint">Every glossary term already matches its canonical spelling.</div>}
             {glossarySuggestions.map((suggestion, index) => (
-              <div key={`${suggestion.cueId}-${index}`} className="row" style={{ justifyContent: 'space-between', fontSize: 12 }}>
+              <div key={`${suggestion.cueId}-${index}`} className="row" style={{ justifyContent: 'space-between', fontSize: 'var(--token-font-sm)' }}>
                 <span className="mono">
                   {suggestion.original} → {suggestion.canonical}
                 </span>
@@ -329,7 +329,7 @@ export function CaptionsPanel({
           <div className="stack" style={{ gap: 4 }}>
             {fillerSuggestions.length === 0 && <div className="field-hint">No filler words found. Removal is always a suggestion — speech is never deleted silently.</div>}
             {fillerSuggestions.slice(0, 40).map((suggestion, index) => (
-              <div key={`${suggestion.cueId}-${index}`} className="row" style={{ justifyContent: 'space-between', fontSize: 12 }}>
+              <div key={`${suggestion.cueId}-${index}`} className="row" style={{ justifyContent: 'space-between', fontSize: 'var(--token-font-sm)' }}>
                 <span className="mono" style={{ color: 'var(--text-2)' }}>
                   “{suggestion.context}”
                 </span>

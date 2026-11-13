@@ -32,8 +32,8 @@ export function captureDimensions(resolution: CaptureResolution): CaptureDimensi
 }
 
 /**
- * Bitrate that keeps terminal text sharp in a 4× smaller Ultra-Compact VBR file
- * (~3.6 Mbps at 4K30 and ~1.2 Mbps at 1080p30) using modern AV1/HEVC/VP9/H.264
+ * Bitrate that keeps terminal text sharp at a quarter of the standard screen bitrate
+ * (~3.7 Mbps at 4K30 and ~0.93 Mbps at 1080p30) using modern AV1/HEVC/VP9/H.264
  * High VBR encoders, while keeping 1080p far below 4K.
  */
 export function recordingBitrate(

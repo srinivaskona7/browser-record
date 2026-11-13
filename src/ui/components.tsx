@@ -1,4 +1,5 @@
 import { type ButtonHTMLAttributes, type ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { trapTab } from './focusTrap';
 
 export function Button({
   variant = 'default',
@@ -12,11 +13,30 @@ export function Button({
 }) {
   const variantClass = variant === 'default' ? '' : `btn-${variant}`;
   const sizeClass = size === 'sm' ? 'btn-sm' : size === 'icon' ? 'btn-icon' : '';
+  // A glyph or one short word (✕, +, ▶, "Split") cannot reach 44px wide on its own; the class
+  // gives it the touch width floor (styles.css, pointer: coarse) without touching longer labels.
+  const glyphClass = size !== 'icon' && isShortLabel(children) ? 'btn-glyph' : '';
   return (
-    <button type="button" className={`btn ${variantClass} ${sizeClass} ${className}`.trim()} {...props}>
+    <button
+      type="button"
+      className={`btn ${variantClass} ${sizeClass} ${glyphClass} ${className}`.replace(/\s+/g, ' ').trim()}
+      {...props}
+    >
       {children}
     </button>
   );
+}
+
+/** At most this many visible characters gets the 44px width floor on touch screens. */
+export const SHORT_LABEL_GRAPHEMES = 5;
+
+/** True for a glyph or one short word: a plain-text label of at most five visible characters. */
+export function isShortLabel(children: ReactNode): boolean {
+  if (typeof children !== 'string' && typeof children !== 'number') return false;
+  const label = String(children).trim();
+  // Several words can wrap, so a width floor could undercut them; only a single word qualifies.
+  if (!label || /\s/.test(label)) return false;
+  return [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(label)].length <= SHORT_LABEL_GRAPHEMES;
 }
 
 export function Panel({
@@ -142,7 +162,7 @@ export function Toggle({
         borderRadius: 8,
         border: '1px solid var(--line)',
         background: 'var(--surface-0)',
-        fontSize: 12.5,
+        fontSize: 'var(--token-font-base)',
         cursor: disabled ? 'not-allowed' : 'pointer',
         opacity: disabled ? 0.5 : 1,
       }}
@@ -184,7 +204,7 @@ export function Slider({
       {label && (
         <div className="row" style={{ justifyContent: 'space-between' }}>
           <span className="field-label">{label}</span>
-          <span className="mono" style={{ fontSize: 12 }}>
+          <span className="mono" style={{ fontSize: 'var(--token-font-sm)' }}>
             {format ? format(value) : value}
           </span>
         </div>
@@ -220,7 +240,7 @@ export function ProgressBar({ value, label }: { value: number; label?: string })
   return (
     <div>
       <div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(value * 100)} aria-label={label ?? 'Progress'}>
-        <div className="progress-fill" style={{ width: `${Math.min(100, Math.max(0, value * 100))}%` }} />
+        <div className="progress-fill" style={{ transform: `scaleX(${(Math.min(100, Math.max(0, value * 100))) / 100})` }} />
       </div>
     </div>
   );
@@ -246,21 +266,9 @@ export function Dialog({
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
-      if (event.key === 'Tab' && ref.current) {
-        const focusables = ref.current.querySelectorAll<HTMLElement>(
-          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-        );
-        if (focusables.length === 0) return;
-        const first = focusables[0]!;
-        const last = focusables[focusables.length - 1]!;
-        if (event.shiftKey && document.activeElement === first) {
-          event.preventDefault();
-          last.focus();
-        } else if (!event.shiftKey && document.activeElement === last) {
-          event.preventDefault();
-          first.focus();
-        }
-      }
+      // Disabled buttons and closed <details> content are skipped, and focus that fell to
+      // <body> is pulled back in (src/ui/focusTrap.ts).
+      if (ref.current) trapTab(event, ref.current);
     };
     document.addEventListener('keydown', onKey);
     const previous = document.activeElement as HTMLElement | null;
@@ -275,7 +283,7 @@ export function Dialog({
     <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div className={`dialog ${wide ? 'dialog-wide' : ''}`} role="dialog" aria-modal="true" aria-label={typeof title === 'string' ? title : 'Dialog'} tabIndex={-1} ref={ref}>
         <header className="panel-head">
-          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 650 }}>{title}</h2>
+          <h2 style={{ margin: 0, fontSize: 'var(--token-font-lg)', fontWeight: 650 }}>{title}</h2>
           <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close dialog">
             ✕
           </Button>
@@ -303,8 +311,8 @@ export function EmptyState({
   const content = children ?? body;
   return (
     <div style={{ textAlign: 'center', padding: '36px 20px', color: 'var(--text-2)' }}>
-      <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-1)', marginBottom: 6 }}>{title}</div>
-      {content && <div style={{ fontSize: 13, lineHeight: 1.6, maxWidth: 52 + 'ch', margin: '0 auto 14px' }}>{content}</div>}
+      <div style={{ fontSize: 'var(--token-font-lg)', fontWeight: 600, color: 'var(--text-1)', marginBottom: 6 }}>{title}</div>
+      {content && <div style={{ fontSize: 'var(--token-font-base)', lineHeight: 1.6, maxWidth: 52 + 'ch', margin: '0 auto 14px' }}>{content}</div>}
       {action}
     </div>
   );
@@ -326,7 +334,7 @@ export function Stat({
     <div className="stat">
       <span className="stat-label">{label}</span>
       <span className="stat-value">{value}</span>
-      {caption && <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{caption}</span>}
+      {caption && <span style={{ fontSize: 'var(--token-font-xs)', color: 'var(--text-3)' }}>{caption}</span>}
     </div>
   );
 }
@@ -338,7 +346,7 @@ export function Spinner({ label }: { label?: string }) {
     return () => clearInterval(timer);
   }, []);
   return (
-    <span className="row" style={{ color: 'var(--text-2)', fontSize: 12.5 }}>
+    <span className="row" style={{ color: 'var(--text-2)', fontSize: 'var(--token-font-base)' }}>
       <span aria-hidden="true" className="mono">
         {'⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'[tick % 10]}
       </span>

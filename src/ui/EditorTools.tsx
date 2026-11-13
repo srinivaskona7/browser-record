@@ -25,6 +25,7 @@ import {
   type TextStylePresetSpec,
 } from '../effects/catalog';
 import { SFX_PRESETS } from '../audio/sfx';
+import { VOICE_PRESET_LABELS } from '../audio/chain';
 import { TICKS_PER_SECOND } from '../core/time';
 import { formatSelectionScopeChip } from '../editor/selection';
 import { Badge, Button, Slider, Toggle } from './components';
@@ -108,7 +109,7 @@ function renderCatalogPreview(
         style={{
           background: `linear-gradient(160deg, #3a86ff 0%, #ffbe0b 52%, #fb5607 100%)`,
           filter: `brightness(${b}) contrast(${c}) saturate(${s}) sepia(${sep}) hue-rotate(${hue}deg)`,
-          fontSize: 11,
+          fontSize: 'var(--token-font-xs)',
           fontWeight: 600,
         }}
       >
@@ -125,7 +126,7 @@ function renderCatalogPreview(
         className="catalog-art"
         style={{
           background: `linear-gradient(135deg, ${lut.shadowsHex} 0%, ${lut.highlightsHex} 100%)`,
-          fontSize: 11,
+          fontSize: 'var(--token-font-xs)',
           fontWeight: 600,
         }}
       >
@@ -143,7 +144,7 @@ function renderCatalogPreview(
         className="catalog-art"
         style={{
           background: 'linear-gradient(90deg, #1e293b 0%, #334155 48%, #0f172a 52%, #1e293b 100%)',
-          fontSize: 13,
+          fontSize: 'var(--token-font-base)',
           fontWeight: 600,
         }}
       >
@@ -170,7 +171,7 @@ function renderCatalogPreview(
             : fx.category === 'geometric-dynamics'
               ? 'linear-gradient(140deg, #3b0764, #0f172a)'
               : 'linear-gradient(140deg, #064e3b, #0f172a)',
-        fontSize: 11,
+        fontSize: 'var(--token-font-xs)',
         fontWeight: 600,
       }}
     >
@@ -747,7 +748,7 @@ export function EditorToolLibrary({
           </Button>
           {onOpenVoiceover && (
             <Button size="sm" variant="primary" onClick={onOpenVoiceover}>
-              🎙 Record voiceover…
+              Record voiceover…
             </Button>
           )}
         </div>
@@ -774,9 +775,9 @@ export function EditorToolLibrary({
             <Button
               key={preset}
               disabled={!clip}
-              onClick={() => apply(`Voice: ${preset}`, (p) => ops.applyVoicePreset(p, preset, clip?.id))}
+              onClick={() => apply(`Voice: ${VOICE_PRESET_LABELS[preset]}`, (p) => ops.applyVoicePreset(p, preset, clip?.id))}
             >
-              {preset.replaceAll('-', ' ')}
+              {VOICE_PRESET_LABELS[preset]}
             </Button>
           ))}
         </div>

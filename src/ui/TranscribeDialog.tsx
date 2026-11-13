@@ -23,14 +23,22 @@ export function TranscribeDialog({ open, onClose, project }: { open: boolean; on
   const model = useMemo(() => TRANSCRIPTION_MODELS.find((m) => m.id === modelId)!, [modelId]);
   const hasWebGpu = useSession((state) => state.features.webGpu);
 
-  useEffect(() => {
+  // Closing resets the dialog during render (no effect-driven second pass) and cancels any run;
+  // the cancelled run sees it is no longer current and leaves the reset state alone.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (wasOpen !== open) {
+    setWasOpen(open);
     if (!open) {
-      abortRef.current?.abort();
       setPhase('idle');
       setProgress(0);
       setError(null);
       setDetail('');
     }
+  }
+  useEffect(() => {
+    if (open) return;
+    abortRef.current?.abort();
+    abortRef.current = null;
   }, [open]);
 
   const run = async () => {
@@ -38,7 +46,8 @@ export function TranscribeDialog({ open, onClose, project }: { open: boolean; on
     setError(null);
     setProgress(0.01);
     setDetail('Mixing narration for recognition');
-    abortRef.current = new AbortController();
+    const controller = new AbortController();
+    abortRef.current = controller;
     try {
       const resolver = {
         getBuffer: async (assetId: string) => {
@@ -68,7 +77,7 @@ export function TranscribeDialog({ open, onClose, project }: { open: boolean; on
         {
           modelId,
           language,
-          signal: abortRef.current.signal,
+          signal: controller.signal,
           onProgress: (value, label) => {
             setProgress(value);
             setDetail(label);
@@ -86,6 +95,7 @@ export function TranscribeDialog({ open, onClose, project }: { open: boolean; on
       setDetail(`Added ${cues.length} captions.`);
       toast(`Transcription added ${cues.length} captions. Review the glossary suggestions.`, 'success');
     } catch (err) {
+      if (abortRef.current !== controller) return;
       const message = (err as Error).message;
       setPhase('error');
       setError(message);
@@ -175,7 +185,7 @@ export function TranscribeDialog({ open, onClose, project }: { open: boolean; on
         {busy && (
           <div className="stack" style={{ gap: 6 }}>
             <ProgressBar value={progress} label="Transcription progress" />
-            <div className="row" style={{ justifyContent: 'space-between', fontSize: 12, color: 'var(--text-2)' }}>
+            <div className="row" style={{ justifyContent: 'space-between', fontSize: 'var(--token-font-sm)', color: 'var(--text-2)' }}>
               <span>{detail}</span>
               <span className="mono">{Math.round(progress * 100)}%</span>
             </div>

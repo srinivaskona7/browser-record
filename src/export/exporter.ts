@@ -57,9 +57,9 @@ export interface ExportResult {
   warnings: string[];
   /** Whether the audio track exists in the output. */
   hasAudio: boolean;
-  /** Whether 4× Turbo Hardware Acceleration pipeline was active. */
+  /** Whether the faster export pipeline was active. */
   turboMode?: boolean;
-  /** Whether 4× Smaller Ultra-Compact VBR encoding was active. */
+  /** Whether the quarter-bitrate compact encode was active. */
   compactSizeMode?: boolean;
 }
 
@@ -83,15 +83,15 @@ export interface ExportRequest {
   /** Mixdown loudness target in dBFS peak; applied as a master trim. */
   normalizePeakDb?: number;
   /**
-   * 4× Turbo Export (default true): uses sequential single-pass packet decoding,
-   * hardware-accelerated realtime WebCodecs encoding, and 4-frame async encode
-   * pipelining to achieve 4×+ faster export throughput.
+   * Faster pipeline (default true): sequential single-pass packet decoding, realtime
+   * prefer-hardware WebCodecs encoding, up to 4 frames in flight, and decode canvases capped
+   * near the output size. The speed-up is not fixed; it depends on the machine.
    */
   turboMode?: boolean;
   /**
-   * 4× Smaller Size (default true): uses high-efficiency HEVC/AV1/H.264 High VBR,
-   * 8-second long-GOP keyframe interval, `contentHint: 'detail'`, and 0.25× target
-   * bitrate so exported files are ~4× smaller while keeping UI & terminal text sharp.
+   * Compact encode (default true): HEVC/AV1 when available, else H.264 High, an 8-second
+   * keyframe interval, `contentHint: 'detail'`, and a 0.25× target bitrate (350 kbps floor,
+   * `applyCompactBitrateBudget`). The file-size saving depends on the footage.
    */
   compactSizeMode?: boolean;
 }
@@ -168,7 +168,7 @@ export async function exportProject(request: ExportRequest): Promise<ExportResul
   const videoBitrate = compactBitrates.videoBitrate;
   const audioBitrate = compactBitrates.audioBitrate;
 
-  // Codec selection is measured, not assumed. In 4× Smaller mode, prefer HEVC/AV1 first
+  // Codec selection is measured, not assumed. In compact mode, prefer HEVC/AV1 first
   // when the target container is MP4 so hardware HEVC/AV1 encoders deliver maximum compression.
   const effectivePreference: Array<CodecCandidate['family']> =
     compactSizeMode && preset.container === 'mp4'
@@ -410,11 +410,11 @@ export async function exportProject(request: ExportRequest): Promise<ExportResul
           etaSeconds: remaining,
           detail:
             turboMode && compactSizeMode
-              ? '⚡ 4× Turbo Hardware Pipeline · 📦 4× Smaller Ultra-Compact VBR'
+              ? 'Faster pipeline · ¼-bitrate compact encode'
               : turboMode
-                ? '⚡ 4× Turbo Hardware Pipeline'
+                ? 'Faster pipeline'
                 : compactSizeMode
-                  ? '📦 4× Smaller Ultra-Compact VBR'
+                  ? '¼-bitrate compact encode'
                   : undefined,
         });
       }

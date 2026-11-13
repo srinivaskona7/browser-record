@@ -32,35 +32,24 @@ export function EditStart() {
   const project = useEditor((state) => state.project);
   const importInput = useRef<HTMLInputElement>(null);
   const [rows, setRows] = useState<RecentRow[]>([]);
-  const [loading, setLoading] = useState(false);
+  // Recent projects load on mount and again whenever the workspace or project folder changes.
+  const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const loadKey = `${session.workspace?.info.name ?? ''}\u0000${session.projectFolder ?? ''}`;
+  const [requestedKey, setRequestedKey] = useState(loadKey);
+  if (requestedKey !== loadKey) {
+    setRequestedKey(loadKey);
+    setLoading(true);
+    setError(null);
+  }
 
   const refresh = async () => {
     setLoading(true);
     setError(null);
     try {
-      const workspace = await ensureWorkspace();
-      const projects = (await listProjects(workspace.root))
-        .filter((row): row is { folder: string; project: Project } => Boolean(row.project))
-        .sort((a, b) => b.project.updatedAt.localeCompare(a.project.updatedAt))
-        .slice(0, 8);
-      const enriched: RecentRow[] = [];
-      for (const row of projects) {
-        const takes = await listTakes(workspace.root, row.folder).catch(() => []);
-        enriched.push({
-          folder: row.folder,
-          project: row.project,
-          takes: takes.length,
-          interrupted: takes.filter((take) => take.interrupted).length,
-          bytes: takes.reduce(
-            (sum, take) => sum + take.manifest.assets.reduce((inner, asset) => inner + asset.committedBytes, 0),
-            0,
-          ),
-        });
-      }
-      setRows(enriched);
+      setRows(await loadRecentRows());
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -69,8 +58,23 @@ export function EditStart() {
   };
 
   useEffect(() => {
-    void refresh();
-  }, [session.workspace?.info.name, session.projectFolder]);
+    let cancelled = false;
+    loadRecentRows()
+      .then(
+        (next) => {
+          if (!cancelled) setRows(next);
+        },
+        (err: unknown) => {
+          if (!cancelled) setError((err as Error).message);
+        },
+      )
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadKey]);
 
   const startRecording = async () => {
     setBusy(true);
@@ -106,7 +110,7 @@ export function EditStart() {
       <div className="stack" style={{ gap: 16, maxWidth: 1000 }}>
         <Panel title="Start editing" bodyClassName="stack">
           <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-            <Button variant="primary" onClick={() => importInput.current?.click()} disabled={importing || busy}>
+            <Button variant="primary" data-magnetic onClick={() => importInput.current?.click()} disabled={importing || busy}>
               {importing ? 'Importing…' : 'Import a video or audio file'}
             </Button>
             <Button onClick={() => void startRecording()} disabled={busy || importing}>
@@ -206,11 +210,11 @@ export function EditStart() {
                 >
                   <div style={{ minWidth: 220, flex: 1 }}>
                     <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                      <strong style={{ fontSize: 13 }}>{row.project.name}</strong>
+                      <strong style={{ fontSize: 'var(--token-font-base)' }}>{row.project.name}</strong>
                       {row.interrupted > 0 && <Badge tone="warn">{row.interrupted} interrupted recording</Badge>}
                       {row.takes > 0 && <Badge>{row.takes} recording{row.takes === 1 ? '' : 's'}</Badge>}
                     </div>
-                    <div className="field-hint mono" style={{ fontSize: 10.5 }}>
+                    <div className="field-hint mono" style={{ fontSize: 'var(--token-font-xs)' }}>
                       {row.project.canvas.width}×{row.project.canvas.height} · {formatClock(row.project.durationTicks)} ·{' '}
                       {formatBytes(row.bytes)} recorded · updated {new Date(row.project.updatedAt).toLocaleString()}
                     </div>
@@ -257,4 +261,28 @@ export function EditStart() {
       </div>
     </div>
   );
+}
+
+/** The eight most recently updated projects with their take counts and sizes. */
+async function loadRecentRows(): Promise<RecentRow[]> {
+  const workspace = await ensureWorkspace();
+  const projects = (await listProjects(workspace.root))
+    .filter((row): row is { folder: string; project: Project } => Boolean(row.project))
+    .sort((a, b) => b.project.updatedAt.localeCompare(a.project.updatedAt))
+    .slice(0, 8);
+  const enriched: RecentRow[] = [];
+  for (const row of projects) {
+    const takes = await listTakes(workspace.root, row.folder).catch(() => []);
+    enriched.push({
+      folder: row.folder,
+      project: row.project,
+      takes: takes.length,
+      interrupted: takes.filter((take) => take.interrupted).length,
+      bytes: takes.reduce(
+        (sum, take) => sum + take.manifest.assets.reduce((inner, asset) => inner + asset.committedBytes, 0),
+        0,
+      ),
+    });
+  }
+  return enriched;
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useEditor } from '../project/store';
 import { useSession } from '../app/session';
 import { Dialog, Button, Field, Toggle, Select, Badge } from './components';
@@ -47,7 +47,15 @@ export function VoiceoverDialog({
   const apply = useEditor((state) => state.apply);
   const playhead = useEditor((state) => state.playheadTicks);
 
-  const cleanup = () => {
+  // Teardown reads the player through a ref so it fires only on close/unmount, never
+  // because the editor swapped its player while the dialog was shut.
+  const playerRef = useRef(player);
+  useEffect(() => {
+    playerRef.current = player;
+  }, [player]);
+
+  /** Releases the mic, meter, timer, countdown and any pending mic request. Refs only: stable. */
+  const releaseCapture = useCallback(() => {
     runRef.current += 1;
     micRequestRef.current += 1;
     if (timerRef.current) clearInterval(timerRef.current);
@@ -58,11 +66,8 @@ export function VoiceoverDialog({
     streamRef.current = null;
     recorderRef.current = null;
     chunksRef.current = [];
-    setCountdown(0);
-    setStarting(false);
-    setReady(false);
-    player?.pause();
-  };
+    playerRef.current?.pause();
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -73,19 +78,25 @@ export function VoiceoverDialog({
     })();
   }, [open, deviceId]);
 
-  useEffect(() => {
+  // Closing resets the visible state during render; the effect releases the hardware.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (wasOpen !== open) {
+    setWasOpen(open);
     if (!open) {
-      cleanup();
+      setCountdown(0);
+      setStarting(false);
+      setReady(false);
       setRecording(false);
       setElapsed(0);
       setLevel(null);
       setError(null);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }
+  useEffect(() => {
+    if (!open) releaseCapture();
+  }, [open, releaseCapture]);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => () => cleanup(), []);
+  useEffect(() => releaseCapture, [releaseCapture]);
 
   const attachMic = async () => {
     const request = ++micRequestRef.current;
@@ -276,9 +287,9 @@ export function VoiceoverDialog({
           </div>
         </Field>
         <div className="meter" aria-label="Microphone level">
-          <div className="meter-fill" style={{ width: `${Math.round(meterPosition(level?.peakDb ?? -Infinity) * 100)}%` }} />
+          <div className="meter-fill" style={{ transform: `scaleX(${meterPosition(level?.peakDb ?? -Infinity).toFixed(3)})` }} />
         </div>
-        <div className="row" style={{ justifyContent: 'space-between', fontSize: 11.5, color: 'var(--text-3)' }}>
+        <div className="row" style={{ justifyContent: 'space-between', fontSize: 'var(--token-font-sm)', color: 'var(--text-3)' }}>
           <span className="mono">{level ? `${level.peakDb.toFixed(1)} dBFS` : 'no signal'}</span>
           {level?.clipping && <Badge tone="danger">clipping</Badge>}
           <span>{ready ? 'Mic active' : 'Mic idle'}</span>

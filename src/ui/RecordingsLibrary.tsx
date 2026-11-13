@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSession } from '../app/session';
 import { useEditor } from '../project/store';
 import { downloadBlob, formatBytes } from '../app/actions';
@@ -99,70 +99,29 @@ export function RecordingsLibrary({
     return map;
   }, [currentProjectFolder, editorProject]);
 
-  const refresh = useCallback(async () => {
-    if (!workspace || typeof listProjectFolders !== 'function') return;
-    let folders: string[];
-    try {
-      folders = await listProjectFolders(workspace.root);
-    } catch {
-      return;
-    }
-    const options: Array<{ value: string; label: string }> = [{ value: 'all', label: 'All projects' }];
-    const collected: EnrichedTakeItem[] = [];
+  const publishLibrary = (library: LibraryListing | null) => {
+    if (!library) return;
+    setProjectOptions(library.options);
+    setItems(library.items);
+  };
 
-    for (const folder of folders) {
-      let proj: Project | null = currentProjectsMap.get(folder) ?? null;
-      if (!proj) {
-        try {
-          const loaded = await loadProject(workspace.root, folder);
-          proj = loaded.project;
-        } catch {
-          proj = null;
-        }
-      }
-      const projectName = proj?.name ?? folder;
-      options.push({ value: folder, label: projectName });
-      const referencedIds = new Set<string>(proj ? takeIdsOf(proj) : []);
-      const takes = await listTakes(workspace.root, folder);
-      for (const take of takes) {
-        const isActive = activeSet.has(take.takeId);
-        const isUsed = referencedIds.has(take.takeId);
-        const isRecoverable = take.interrupted || take.manifest.status === 'recording';
-        const status: TakeStatusKind = isActive
-          ? 'Active'
-          : isUsed
-            ? 'Used in timeline'
-            : isRecoverable
-              ? 'Recoverable'
-              : 'Saved';
-        collected.push({
-          projectFolder: folder,
-          projectName,
-          take,
-          label: take.manifest.label || take.takeId,
-          startedAt: take.manifest.startedAt,
-          durationSeconds: computeDurationSeconds(take),
-          bytes: committedBytes(take.manifest),
-          sourceSummary: take.manifest.assets.map((a) => a.kind).join(' + ') || 'recording',
-          status,
-        });
-      }
-    }
-
-    // Pin Active takes first, then sort newest first
-    collected.sort((a, b) => {
-      if (a.status === 'Active' && b.status !== 'Active') return -1;
-      if (b.status === 'Active' && a.status !== 'Active') return 1;
-      return b.startedAt.localeCompare(a.startedAt);
-    });
-
-    setProjectOptions(options);
-    setItems(collected);
-  }, [workspace, currentProjectsMap, activeSet]);
+  const refresh = async () => {
+    if (!workspace) return;
+    publishLibrary(await collectLibrary(workspace.root, currentProjectsMap, activeSet));
+  };
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    if (!workspace) return;
+    let cancelled = false;
+    void collectLibrary(workspace.root, currentProjectsMap, activeSet).then((library) => {
+      if (cancelled || !library) return;
+      setProjectOptions(library.options);
+      setItems(library.items);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspace, currentProjectsMap, activeSet]);
 
   useEffect(() => {
     return () => {
@@ -667,7 +626,7 @@ export function RecordingsLibrary({
               <Field label="Affected projects">
                 <div className="stack" style={{ gap: 4 }}>
                   {clearPlan.affectedProjects.map((proj) => (
-                    <div key={proj.folder} className="row" style={{ justifyContent: 'space-between', fontSize: 12.5 }}>
+                    <div key={proj.folder} className="row" style={{ justifyContent: 'space-between', fontSize: 'var(--token-font-base)' }}>
                       <span>{proj.name}</span>
                       <span className="mono">
                         {proj.count} take(s) · {formatBytes(proj.bytes)}
@@ -687,7 +646,7 @@ export function RecordingsLibrary({
                     <div
                       key={`${cand.projectFolder}/${cand.takeId}`}
                       className="row"
-                      style={{ justifyContent: 'space-between', fontSize: 12.5 }}
+                      style={{ justifyContent: 'space-between', fontSize: 'var(--token-font-base)' }}
                     >
                       <span>
                         <strong>{cand.label}</strong> ({cand.projectName}) · {cand.sourceSummary}
@@ -710,7 +669,7 @@ export function RecordingsLibrary({
                   {clearPlan.excluded
                     .filter((e) => e.reason === 'recoverable-unselected')
                     .map((exc) => (
-                      <label key={exc.takeId} className="row" style={{ gap: 8, fontSize: 12.5 }}>
+                      <label key={exc.takeId} className="row" style={{ gap: 8, fontSize: 'var(--token-font-base)' }}>
                         <input
                           type="checkbox"
                           checked={selectedRecoverableIds.has(exc.takeId)}
@@ -801,4 +760,77 @@ export function RecordingsLibrary({
       </Dialog>
     </Panel>
   );
+}
+
+interface LibraryListing {
+  options: Array<{ value: string; label: string }>;
+  items: EnrichedTakeItem[];
+}
+
+/**
+ * Every take in every project folder, Active first then newest first. Pure: no React state.
+ * The open project's in-memory copy wins over its file so unsaved timeline use counts.
+ */
+async function collectLibrary(
+  root: Parameters<typeof listProjectFolders>[0],
+  currentProjectsMap: ReadonlyMap<string, Project>,
+  activeSet: ReadonlySet<string>,
+): Promise<LibraryListing | null> {
+  if (typeof listProjectFolders !== 'function') return null;
+  let folders: string[];
+  try {
+    folders = await listProjectFolders(root);
+  } catch {
+    return null;
+  }
+  const options: Array<{ value: string; label: string }> = [{ value: 'all', label: 'All projects' }];
+  const collected: EnrichedTakeItem[] = [];
+
+  for (const folder of folders) {
+    let proj: Project | null = currentProjectsMap.get(folder) ?? null;
+    if (!proj) {
+      try {
+        const loaded = await loadProject(root, folder);
+        proj = loaded.project;
+      } catch {
+        proj = null;
+      }
+    }
+    const projectName = proj?.name ?? folder;
+    options.push({ value: folder, label: projectName });
+    const referencedIds = new Set<string>(proj ? takeIdsOf(proj) : []);
+    const takes = await listTakes(root, folder);
+    for (const take of takes) {
+      const isActive = activeSet.has(take.takeId);
+      const isUsed = referencedIds.has(take.takeId);
+      const isRecoverable = take.interrupted || take.manifest.status === 'recording';
+      const status: TakeStatusKind = isActive
+        ? 'Active'
+        : isUsed
+          ? 'Used in timeline'
+          : isRecoverable
+            ? 'Recoverable'
+            : 'Saved';
+      collected.push({
+        projectFolder: folder,
+        projectName,
+        take,
+        label: take.manifest.label || take.takeId,
+        startedAt: take.manifest.startedAt,
+        durationSeconds: computeDurationSeconds(take),
+        bytes: committedBytes(take.manifest),
+        sourceSummary: take.manifest.assets.map((a) => a.kind).join(' + ') || 'recording',
+        status,
+      });
+    }
+  }
+
+  // Pin Active takes first, then sort newest first
+  collected.sort((a, b) => {
+    if (a.status === 'Active' && b.status !== 'Active') return -1;
+    if (b.status === 'Active' && a.status !== 'Active') return 1;
+    return b.startedAt.localeCompare(a.startedAt);
+  });
+
+  return { options, items: collected };
 }

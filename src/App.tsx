@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { ROUTES, routeFromHash, sessionKindOf, storageDescription, useSession } from './app/session';
 import { useEditor } from './project/store';
 import {
@@ -16,6 +16,29 @@ import { ExportPage } from './ui/ExportPage';
 import { DiagnosticsPanel } from './ui/DiagnosticsPanel';
 import { Badge, Button } from './ui/components';
 import { AboutDialog } from './ui/AboutDialog';
+import { installPopoverPlacement } from './ui/popoverPlacement';
+import { installMagnetic } from './ui/magnetic';
+import { trapTab } from './ui/focusTrap';
+
+/** Below this width the top bar collapses to brand + a drawer toggle. */
+const COMPACT_CHROME_QUERY = '(max-width: 860px)';
+
+function useMediaQuery(query: string): boolean {
+  const subscribe = useCallback(
+    (notify: () => void) => {
+      if (typeof window.matchMedia !== 'function') return () => {};
+      const list = window.matchMedia(query);
+      list.addEventListener('change', notify);
+      return () => list.removeEventListener('change', notify);
+    },
+    [query],
+  );
+  return useSyncExternalStore(
+    subscribe,
+    () => typeof window.matchMedia === 'function' && window.matchMedia(query).matches,
+    () => false,
+  );
+}
 
 export function App() {
   const route = useSession((state) => state.route);
@@ -32,6 +55,67 @@ export function App() {
   const dirty = useEditor((state) => state.dirty);
   const [booted, setBooted] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const compactChrome = useMediaQuery(COMPACT_CHROME_QUERY);
+  const [drawerRequested, setDrawerRequested] = useState(false);
+  // Widening past 860px forgets the request, so narrowing again does not reopen the drawer.
+  const [wasCompact, setWasCompact] = useState(compactChrome);
+  if (wasCompact !== compactChrome) {
+    setWasCompact(compactChrome);
+    if (!compactChrome) setDrawerRequested(false);
+  }
+  const drawerOpen = compactChrome && drawerRequested;
+  const drawerRef = useRef<HTMLDivElement>(null);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const routeLabel = ROUTES.find((item) => item.id === route)?.label ?? 'Menu';
+  const attention = saveState === 'error' ? ', save failed' : dirty ? ', unsaved changes' : '';
+
+  const closeDrawer = useCallback((restoreFocus: boolean) => {
+    setDrawerRequested(false);
+    if (restoreFocus) toggleRef.current?.focus();
+  }, []);
+
+  // Anything that closes the drawer from inside it hands focus to the toggle first: the
+  // focused button is about to become inert, which would drop focus to <body>.
+  const leaveDrawer = () => {
+    if (drawerOpen) toggleRef.current?.focus();
+    setDrawerRequested(false);
+  };
+
+  const go = (next: typeof route) => {
+    leaveDrawer();
+    setRoute(next);
+  };
+
+  useEffect(() => installPopoverPlacement(), []);
+  useEffect(() => installMagnetic(), []);
+
+  // While the drawer is open it is modal: focus moves in (to the current page's tab), Tab
+  // stays in, and Escape closes an open menu first, then the drawer. Listening on the
+  // document (capture) keeps this working when focus has fallen to <body>, and keeps the
+  // editor's own shortcuts from seeing these keys.
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const drawer = drawerRef.current;
+    if (!drawer) return;
+    (drawer.querySelector<HTMLElement>('[aria-current="page"]') ?? drawer.querySelector<HTMLElement>('.nav-tab'))?.focus();
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        const openMenu = drawer.querySelector<HTMLDetailsElement>('details[open]');
+        if (openMenu) {
+          openMenu.open = false;
+          openMenu.querySelector<HTMLElement>(':scope > summary')?.focus();
+        } else {
+          closeDrawer(true);
+        }
+        return;
+      }
+      if (trapTab(event, drawer)) event.stopPropagation();
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [drawerOpen, closeDrawer]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -105,6 +189,46 @@ export function App() {
           </span>
           <span>Browser 4K Studio</span>
         </div>
+        <button
+          ref={toggleRef}
+          type="button"
+          className="btn btn-ghost nav-toggle"
+          aria-expanded={drawerOpen}
+          aria-controls="app-drawer"
+          data-attention={attention ? 'true' : undefined}
+          aria-label={`${routeLabel}, navigation menu${attention}`}
+          title={attention ? `Navigation${attention} — open the menu to save` : 'Open navigation'}
+          onClick={() => setDrawerRequested((open) => !open)}
+        >
+          <span className="nav-toggle-bars" aria-hidden />
+          <span>{routeLabel}</span>
+        </button>
+        {compactChrome && (
+          <div
+            className="topbar-scrim"
+            data-open={drawerOpen ? 'true' : undefined}
+            aria-hidden
+            onClick={() => closeDrawer(true)}
+          />
+        )}
+        <div
+          id="app-drawer"
+          ref={drawerRef}
+          className="topbar-drawer"
+          data-open={drawerOpen ? 'true' : undefined}
+          role={compactChrome ? 'dialog' : undefined}
+          aria-modal={drawerOpen ? true : undefined}
+          aria-label={compactChrome ? 'Navigation and session' : undefined}
+          inert={compactChrome && !drawerOpen}
+        >
+        {compactChrome && (
+          <div className="topbar-drawer-head">
+            <span>Browser 4K Studio</span>
+            <Button size="sm" variant="ghost" onClick={() => closeDrawer(true)} aria-label="Close navigation">
+              ✕
+            </Button>
+          </div>
+        )}
         <nav className="nav-tabs" aria-label="Main">
           {ROUTES.filter((item) => item.id !== 'diagnostics').map((item) => (
             <button
@@ -112,7 +236,7 @@ export function App() {
               type="button"
               className="nav-tab"
               aria-current={route === item.id ? 'page' : undefined}
-              onClick={() => setRoute(item.id)}
+              onClick={() => go(item.id)}
               title={item.id === 'export' && !project ? 'Add a recording or import a video first' : undefined}
             >
               {item.label}
@@ -140,7 +264,7 @@ export function App() {
               <Button
                 size="sm"
                 variant={route === 'diagnostics' ? 'primary' : 'ghost'}
-                onClick={() => setRoute('diagnostics')}
+                onClick={() => go('diagnostics')}
               >
                 Diagnostics
               </Button>
@@ -157,7 +281,10 @@ export function App() {
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={() => setAboutOpen(true)}
+                onClick={() => {
+                  leaveDrawer();
+                  setAboutOpen(true);
+                }}
                 aria-label="About and walkthrough"
                 title="Features and walkthrough"
               >
@@ -174,10 +301,11 @@ export function App() {
             </div>
           </details>
         </div>
+        </div>
       </header>
       <AboutDialog open={aboutOpen} onClose={() => setAboutOpen(false)} />
 
-      <main className="app-main">
+      <main className="app-main" inert={drawerOpen}>
         <RecordPage hidden={route !== 'record'} />
         {!booted && !workspace && route === 'projects' ? (
           <div className="page">

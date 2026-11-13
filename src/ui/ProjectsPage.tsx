@@ -65,23 +65,23 @@ export function ProjectsPage() {
 
   const refresh = async () => {
     if (!workspace) return;
-    const rows = await listProjects(workspace.root);
-    const summaries: ProjectSummary[] = rows
-      .filter((row): row is { folder: string; project: NonNullable<typeof row.project> } => Boolean(row.project))
-      .map((row) => ({
-        id: row.project.id,
-        name: row.project.name,
-        folder: row.folder,
-        updatedAt: row.project.updatedAt,
-        durationTicks: row.project.durationTicks,
-      }));
-    setProjects(summaries);
+    setProjects(await loadProjectSummaries(workspace.root));
   };
 
+  // Re-list when the workspace changes or the open project is saved or renamed. The extra
+  // deps are triggers only; a stale listing never overwrites a newer one.
+  const currentUpdatedAt = currentProject?.updatedAt;
+  const currentName = currentProject?.name;
   useEffect(() => {
-    void refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspace, currentFolder, currentProject?.updatedAt, currentProject?.name]);
+    if (!workspace) return;
+    let cancelled = false;
+    void loadProjectSummaries(workspace.root).then((rows) => {
+      if (!cancelled) setProjects(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspace, currentFolder, currentUpdatedAt, currentName]);
 
   const handleCreate = async () => {
     const selectedPreset = CANVAS_PRESETS.find((p) => p.id === preset) ?? CANVAS_PRESETS[2]!;
@@ -167,7 +167,7 @@ export function ProjectsPage() {
         subtitle="Start a new recording, import video, or open a recent project and saved takes."
         actions={
           <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-            <Button variant="primary" onClick={() => setRoute('record')}>
+            <Button variant="primary" data-magnetic onClick={() => setRoute('record')}>
               ● New recording
             </Button>
             <ImportMediaButton label="Import video" navigateToEdit />
@@ -330,15 +330,15 @@ export function ProjectsPage() {
                       <div className="storyboard-list">
                         {(currentProject.storyboard ?? []).map((shot) => (
                           <div key={shot.id} className={`storyboard-item ${shot.done ? 'done' : ''}`}>
-                            <input
-                              type="checkbox"
-                              checked={shot.done}
-                              aria-label={`Mark ${shot.title} complete`}
-                              onChange={() => apply('Toggle storyboard shot', (p) => ops.toggleStoryboardItem(p, shot.id))}
-                            />
-                            <span className="storyboard-text" style={{ flex: 1 }}>
-                              {shot.title}
-                            </span>
+                            <label className="storyboard-check" style={{ flex: 1 }}>
+                              <input
+                                type="checkbox"
+                                checked={shot.done}
+                                aria-label={`Mark ${shot.title} complete`}
+                                onChange={() => apply('Toggle storyboard shot', (p) => ops.toggleStoryboardItem(p, shot.id))}
+                              />
+                              <span className="storyboard-text">{shot.title}</span>
+                            </label>
                             {shot.durationSeconds && <Badge>{shot.durationSeconds}s</Badge>}
                             <Button
                               size="sm"
@@ -603,4 +603,18 @@ export function ProjectsPage() {
       </Dialog>
     </div>
   );
+}
+
+/** Every readable project in the workspace, newest data straight from disk. Pure: no React state. */
+async function loadProjectSummaries(root: Parameters<typeof listProjects>[0]): Promise<ProjectSummary[]> {
+  const rows = await listProjects(root);
+  return rows
+    .filter((row): row is { folder: string; project: NonNullable<typeof row.project> } => Boolean(row.project))
+    .map((row) => ({
+      id: row.project.id,
+      name: row.project.name,
+      folder: row.folder,
+      updatedAt: row.project.updatedAt,
+      durationTicks: row.project.durationTicks,
+    }));
 }

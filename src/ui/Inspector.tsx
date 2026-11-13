@@ -23,6 +23,8 @@ import {
   saveUserTextStylePreset,
 } from '../effects/catalog';
 import { Badge, Button, Field, Panel, Select, Slider, Toggle } from './components';
+import { VOICE_PRESET_LABELS } from '../audio/chain';
+import { COLOR_LOOK_LABELS, PIP_PLACEMENT_LABELS, SHADOW_GLOW_LABELS } from './labels';
 import { DeleteProjectDialog } from './DeleteProjectDialog';
 import { ColorWheelsPanel, HslBandsPanel, ToneCurvePanel } from './ColorGrading';
 import {
@@ -108,10 +110,10 @@ export function Inspector({
       <div className="panel" style={{ boxShadow: 'none' }}>
         <div className="panel-body" style={{ padding: 12 }}>
           <div className="row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
-            <strong style={{ fontSize: 13 }}>{clip.label ?? clip.kind}</strong>
+            <strong style={{ fontSize: 'var(--token-font-base)' }}>{clip.label ?? clip.kind}</strong>
             <Badge>{trackKind}</Badge>
           </div>
-          <div style={{ fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.6 }} className="mono">
+          <div style={{ fontSize: 'var(--token-font-sm)', color: 'var(--text-3)', lineHeight: 1.6 }} className="mono">
             start {formatClock(clip.startTicks)} · dur {formatClock(clip.durationTicks)}
             <br />
             in {formatClock(clip.inTicks)} · {clip.speed.toFixed(2)}×{clip.reverse ? ' · reversed' : ''}
@@ -294,9 +296,9 @@ export function Inspector({
                   key={preset}
                   size="sm"
                   variant="ghost"
-                  onClick={() => apply(`PiP: ${preset}`, (p) => ops.applyPipPreset(p, clip.id, preset))}
+                  onClick={() => apply(`PiP: ${PIP_PLACEMENT_LABELS[preset]}`, (p) => ops.applyPipPreset(p, clip.id, preset))}
                 >
-                  {preset}
+                  {PIP_PLACEMENT_LABELS[preset]}
                 </Button>
               ))}
             </div>
@@ -308,9 +310,9 @@ export function Inspector({
                   key={preset}
                   size="sm"
                   variant="ghost"
-                  onClick={() => apply(`Glow: ${preset}`, (p) => ops.applyShadowGlowPreset(p, clip.id, preset))}
+                  onClick={() => apply(`Glow: ${SHADOW_GLOW_LABELS[preset]}`, (p) => ops.applyShadowGlowPreset(p, clip.id, preset))}
                 >
-                  {preset}
+                  {SHADOW_GLOW_LABELS[preset]}
                 </Button>
               ))}
             </div>
@@ -663,7 +665,7 @@ export function Inspector({
             <div className="stack" style={{ gap: 4 }}>
               <span className="field-label">Uploaded project fonts ({project.customFonts.length})</span>
               {project.customFonts.map((f) => (
-                <div key={f.id} className="row" style={{ justifyContent: 'space-between', fontSize: 12 }}>
+                <div key={f.id} className="row" style={{ justifyContent: 'space-between', fontSize: 'var(--token-font-sm)' }}>
                   <span>
                     {f.family} <span className="mono">(.{f.format})</span>
                   </span>
@@ -899,9 +901,9 @@ export function Inspector({
                 key={look}
                 size="sm"
                 variant="ghost"
-                onClick={() => apply(`Look: ${look}`, (p) => ops.applyColorLookPreset(p, look, clip.id))}
+                onClick={() => apply(`Look: ${COLOR_LOOK_LABELS[look]}`, (p) => ops.applyColorLookPreset(p, look, clip.id))}
               >
-                {look}
+                {COLOR_LOOK_LABELS[look]}
               </Button>
             ))}
           </div>
@@ -937,9 +939,9 @@ export function Inspector({
                 key={vp}
                 size="sm"
                 variant="ghost"
-                onClick={() => apply(`Voice: ${vp}`, (p) => ops.applyVoicePreset(p, vp, clip.id))}
+                onClick={() => apply(`Voice: ${VOICE_PRESET_LABELS[vp]}`, (p) => ops.applyVoicePreset(p, vp, clip.id))}
               >
-                {vp}
+                {VOICE_PRESET_LABELS[vp]}
               </Button>
             ))}
             <Button
@@ -1086,7 +1088,7 @@ export function Inspector({
         </div>
         {clip.keyframes.length === 0 && <div className="field-hint">No keyframes.</div>}
         {clip.keyframes.map((group) => (
-          <div key={group.target} className="row" style={{ justifyContent: 'space-between', fontSize: 12 }}>
+          <div key={group.target} className="row" style={{ justifyContent: 'space-between', fontSize: 'var(--token-font-sm)' }}>
             <span className="mono">
               {group.target} · {group.keyframes.length}
             </span>
@@ -1116,7 +1118,7 @@ function InspectorSection({ title, children }: { title: string; children: React.
         style={{
           cursor: 'pointer',
           padding: '9px 12px',
-          fontSize: 11.5,
+          fontSize: 'var(--token-font-sm)',
           fontWeight: 650,
           letterSpacing: '0.07em',
           textTransform: 'uppercase',

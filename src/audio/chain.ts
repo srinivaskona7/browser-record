@@ -145,6 +145,16 @@ export function meterLabel(): string {
 
 export type VoiceChainPresetId = 'podcast-warm' | 'crisp-tech' | 'broadcast-punch' | 'de-reverb-tight' | 'flat';
 
+/** What each voice preset is called in buttons and undo history (the ids are storage keys). */
+export const VOICE_PRESET_LABELS: Record<VoiceChainPresetId, string> = {
+  'podcast-warm': 'Warm podcast',
+  'crisp-tech': 'Crisp tutorial',
+  'broadcast-punch': 'Broadcast punch',
+  // An EQ cut at 300/550 Hz plus a 115 Hz high-pass: it tames a boxy room, it does not remove reverb.
+  'de-reverb-tight': 'Tame boxy room (EQ)',
+  flat: 'Off (no processing)',
+};
+
 /**
  * Curated voice mastering presets for YouTube tutorials and Instagram Reels.
  */

@@ -136,7 +136,11 @@ export function CameraBubble({
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
       style={{
-        ...(position ? { left: position.x, top: position.y, right: 'auto', bottom: 'auto' } : {}),
+        // Dragging moves the bubble on the compositor: anchor at 0,0 and translate, so a
+        // pointer-rate drag never re-runs layout.
+        ...(position
+          ? { left: 0, top: 0, right: 'auto', bottom: 'auto', transform: `translate3d(${position.x}px, ${position.y}px, 0)` }
+          : {}),
         width: dims.width,
         height: dims.height,
         borderRadius,
@@ -191,10 +195,10 @@ export function CameraBubble({
               filter: filterCss !== 'none' ? filterCss : undefined,
             }}
           >
-            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.04em', opacity: 0.9 }}>
+            <span style={{ fontSize: 'var(--token-font-xs)', fontWeight: 700, letterSpacing: '0.04em', opacity: 0.9 }}>
               CAMERA BUBBLE
             </span>
-            <span style={{ fontSize: 10.5, color: '#b2abc4', lineHeight: 1.3 }}>
+            <span style={{ fontSize: 'var(--token-font-xs)', color: '#b2abc4', lineHeight: 1.3 }}>
               Drag anywhere · {presenter.shape}
             </span>
             {onStartPreview && (

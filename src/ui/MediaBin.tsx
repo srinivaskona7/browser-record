@@ -11,6 +11,8 @@ import { Badge, Button, EmptyState, Panel, Select } from './components';
 import { importMediaFiles, relinkAsset } from '../app/actions';
 import { detectSilences, mixdownProject } from '../audio/mixdown';
 import { SFX_PRESETS, synthesizeSfxSamples, type SfxKind } from '../audio/sfx';
+import { VOICE_PRESET_LABELS } from '../audio/chain';
+import { COLOR_LOOK_LABELS } from './labels';
 import { buildProjectAudioResolver } from './TranscribeDialog';
 import { newId } from '../core/ids';
 
@@ -186,14 +188,14 @@ export function MediaBin({ project, onOpenVoiceover, initialTab = 'uploads' }: {
                 }}
                 title={`${asset.name} · ${formatClock(asset.durationTicks)}${asset.missing ? ' · missing' : ''}`}
               >
-                <div style={{ flex: '0 0 auto', width: 30, height: 30, borderRadius: 6, background: 'var(--surface-3)', display: 'grid', placeItems: 'center', fontSize: 11 }}>
+                <div style={{ flex: '0 0 auto', width: 30, height: 30, borderRadius: 6, background: 'var(--surface-3)', display: 'grid', placeItems: 'center', fontSize: 'var(--token-font-xs)' }}>
                   {asset.kind === 'audio' ? '♪' : asset.kind === 'image' ? '▣' : '▶'}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 550, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <div style={{ fontSize: 'var(--token-font-base)', fontWeight: 550, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {asset.name}
                   </div>
-                  <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>
+                  <div className="mono" style={{ fontSize: 'var(--token-font-xs)', color: 'var(--text-3)' }}>
                     {asset.width ? `${asset.width}×${asset.height} · ` : ''}
                     {formatClock(asset.durationTicks)}
                   </div>
@@ -321,17 +323,17 @@ export function MediaBin({ project, onOpenVoiceover, initialTab = 'uploads' }: {
               size="sm"
               onClick={() => apply('Add warning banner', (p) => ops.addAlertBanner(p, playhead, 'warning').project)}
             >
-              ⚠️ Warning
+              Warning banner
             </Button>
             <Button
               size="sm"
               onClick={() =>
-                apply('Add pro tip banner', (p) =>
-                  ops.addAlertBanner(p, playhead, 'tip', 'Use --dry-run=client before applying to prod').project,
+                apply('Add tip banner', (p) =>
+                  ops.addAlertBanner(p, playhead, 'tip', 'Pause here and try this step yourself').project,
                 )
               }
             >
-              💡 Pro tip
+              Tip banner
             </Button>
             <Button
               size="sm"
@@ -341,7 +343,7 @@ export function MediaBin({ project, onOpenVoiceover, initialTab = 'uploads' }: {
             </Button>
             <Button
               size="sm"
-              onClick={() => apply('Add countdown timer', (p) => ops.addCountdownOverlay(p, playhead, 10, 'Deploy in').project)}
+              onClick={() => apply('Add countdown timer', (p) => ops.addCountdownOverlay(p, playhead, 10).project)}
             >
               Countdown (10s)
             </Button>
@@ -609,7 +611,7 @@ export function MediaBin({ project, onOpenVoiceover, initialTab = 'uploads' }: {
                   }
                 }}
               >
-                🔊 {sfx.label}
+                {sfx.label}
               </Button>
             ))}
           </div>
@@ -619,9 +621,11 @@ export function MediaBin({ project, onOpenVoiceover, initialTab = 'uploads' }: {
                 key={vp}
                 size="sm"
                 variant="ghost"
-                onClick={() => apply(`Voice preset: ${vp}`, (p) => ops.applyVoicePreset(p, vp, selectedClipId ?? undefined))}
+                onClick={() =>
+                  apply(`Voice preset: ${VOICE_PRESET_LABELS[vp]}`, (p) => ops.applyVoicePreset(p, vp, selectedClipId ?? undefined))
+                }
               >
-                🎙 {vp}
+                {VOICE_PRESET_LABELS[vp]}
               </Button>
             ))}
             <Button
@@ -650,9 +654,13 @@ export function MediaBin({ project, onOpenVoiceover, initialTab = 'uploads' }: {
                 key={look}
                 size="sm"
                 variant="ghost"
-                onClick={() => apply(`Colour look: ${look}`, (p) => ops.applyColorLookPreset(p, look, selectedClipId ?? undefined))}
+                onClick={() =>
+                  apply(`Colour look: ${COLOR_LOOK_LABELS[look]}`, (p) =>
+                    ops.applyColorLookPreset(p, look, selectedClipId ?? undefined),
+                  )
+                }
               >
-                🎨 {look}
+                {COLOR_LOOK_LABELS[look]}
               </Button>
             ))}
             <Button
@@ -804,7 +812,7 @@ export function MediaBin({ project, onOpenVoiceover, initialTab = 'uploads' }: {
               return (
                 <div className="stack" style={{ gap: 4, padding: 8, border: '1px solid var(--line)', borderRadius: 6 }}>
                   <div className="row" style={{ justifyContent: 'space-between' }}>
-                    <strong style={{ fontSize: 11.5 }}>Creator Pacing Score</strong>
+                    <strong style={{ fontSize: 'var(--token-font-sm)' }}>Creator Pacing Score</strong>
                     <Badge tone={audit.score >= 80 ? 'ok' : audit.score >= 55 ? 'warn' : 'danger'}>
                       {audit.score}/100
                     </Badge>
@@ -845,8 +853,8 @@ export function MediaBin({ project, onOpenVoiceover, initialTab = 'uploads' }: {
               .map((marker) => (
                 <button key={marker.id} type="button" className="list-item" onClick={() => useEditor.getState().setPlayhead(marker.atTicks)}>
                   <span className="dot" style={{ background: marker.color }} />
-                  <span style={{ flex: 1, fontSize: 12 }}>{marker.label}</span>
-                  <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>
+                  <span style={{ flex: 1, fontSize: 'var(--token-font-sm)' }}>{marker.label}</span>
+                  <span className="mono" style={{ fontSize: 'var(--token-font-xs)', color: 'var(--text-3)' }}>
                     {formatClock(marker.atTicks)}
                   </span>
                 </button>
@@ -859,7 +867,7 @@ export function MediaBin({ project, onOpenVoiceover, initialTab = 'uploads' }: {
             {ops.markerSegments(project).map((seg) => (
               <div key={seg.id} className="stack" style={{ gap: 4, padding: 6, border: '1px solid var(--line)', borderRadius: 6 }}>
                 <div className="row" style={{ justifyContent: 'space-between' }}>
-                  <strong style={{ fontSize: 11.5 }}>{seg.label}</strong>
+                  <strong style={{ fontSize: 'var(--token-font-sm)' }}>{seg.label}</strong>
                   <Badge tone={seg.withinShortsCap ? 'ok' : 'warn'}>
                     {formatClock(seg.durationTicks)} {seg.withinShortsCap ? '≤60s' : '>60s'}
                   </Badge>
